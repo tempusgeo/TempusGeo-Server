@@ -787,6 +787,33 @@ class DataManager {
         return client;
     }
 
+    async deleteBusiness(companyId) {
+        // 1. Remove from clients array
+        const initialLen = CACHE.clients.length;
+        CACHE.clients = CACHE.clients.filter(c => c.id !== companyId);
+
+        if (CACHE.clients.length === initialLen) {
+            throw new Error('Business not found');
+        }
+        await this.saveClients();
+
+        // 2. Remove from active cache
+        if (CACHE.companies[companyId]) {
+            delete CACHE.companies[companyId];
+        }
+
+        // 3. Delete from filesystem
+        const companyDir = path.join(this.dataDir, 'companies', companyId);
+        try {
+            await fs.rm(companyDir, { recursive: true, force: true });
+        } catch (e) {
+            console.error(`[DataManager] Error deleting directory for ${companyId}:`, e.message);
+        }
+
+        await this.updateLastWriteTime();
+        return true;
+    }
+
     // --- MAINTENANCE TASKS ---
 
     async performAutoCheckout() {
