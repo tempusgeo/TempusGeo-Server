@@ -757,12 +757,15 @@ class DataManager {
             newId = Math.floor(1000 + Math.random() * 9000).toString();
         } while (CACHE.companies[newId] || CACHE.clients.find(c => c.id === newId));
 
+        // Clean data
+        const safePassword = data.password ? data.password.toString() : '';
+
         const client = {
             id: newId,
             businessName: data.businessName,
             email: data.email,
             phone: data.phone,
-            password: data.password, // Hash this in real app!
+            password: safePassword, // Store password here for admin login
             subscriptionExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days trial
             joinedAt: new Date().toISOString()
         };
@@ -774,9 +777,9 @@ class DataManager {
             companyId: newId,
             businessName: data.businessName,
             settings: {},
-            polygon: [],
+            polygon: data.polygon || [],
             adminEmail: data.email,
-            logoUrl: data.logoUrl
+            logoUrl: data.logoUrl || null
         };
 
         await this.updateCompanyConfig(newId, config);
