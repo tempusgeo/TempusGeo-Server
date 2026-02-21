@@ -1,15 +1,11 @@
 const dataManager = require('./DataManager');
-const uuid = require('uuid');
+const emailService = require('./EmailService');
 
 class AuthService {
 
-    // Admin Login (Company Owner)
-    // Returns { success: true, token: '...', config: ... }
     async adminLogin(identifier, password) {
-        // Use the public method to get all clients safely
         const allClients = await dataManager.getAllClients();
 
-        // Find by ID or email, with matching password
         const client = allClients.find(c =>
             (c.id === identifier || c.email === identifier) && c.password === password
         );
@@ -18,7 +14,6 @@ class AuthService {
             return { success: false, error: "תעודת זהות או סיסמה שגויה" };
         }
 
-        // Check Subscription Expiry
         const now = new Date();
         const expiry = new Date(client.subscriptionExpiry);
         const isExpired = expiry < now;
@@ -52,30 +47,20 @@ class AuthService {
     }
 
     async forgotAdminPassword(companyId) {
-        // Lazy require to avoid any module initialization order issues
-        const emailService = require('./EmailService');
-
         const client = await dataManager.getClientById(companyId);
         if (!client) return { success: false, error: "Company not found" };
-
         if (!client.email) return { success: false, error: "No email associated with this account" };
 
+        // Generate new password and save immediately
         const newPass = Math.random().toString(36).slice(-8);
         client.password = newPass;
         await dataManager.saveClients();
 
-        if (typeof emailService.sendRecoveryEmail !== 'function') {
-            console.error('[AuthService] emailService.sendRecoveryEmail not available:', typeof emailService);
-            return { success: false, error: "Email service unavailable" };
-        }
+        // Queue email in background (NON-BLOCKING) via EmailService → GAS → sends email
+        // Client gets an immediate response; the email is sent asynchronously
+        emailService.sendRecoveryEmail(client.email, newPass);
 
-        const emailResult = await emailService.sendRecoveryEmail(client.email, newPass);
-
-        if (emailResult.success) {
-            return { success: true, message: "New password sent to email" };
-        } else {
-            return { success: false, error: "Failed to send email: " + (emailResult.error || '') };
-        }
+        return { success: true, message: "New password sent to email" };
     }
 }
 
