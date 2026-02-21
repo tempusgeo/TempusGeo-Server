@@ -1,5 +1,4 @@
 const dataManager = require('./DataManager');
-const emailService = require('./EmailService');
 const uuid = require('uuid');
 
 class AuthService {
@@ -47,27 +46,35 @@ class AuthService {
         }
 
         client.password = newPassword;
-        await dataManager.saveClients(); // Persist
+        await dataManager.saveClients();
 
         return { success: true, message: "Password updated successfully" };
     }
 
     async forgotAdminPassword(companyId) {
+        // Lazy require to avoid any module initialization order issues
+        const emailService = require('./EmailService');
+
         const client = await dataManager.getClientById(companyId);
         if (!client) return { success: false, error: "Company not found" };
 
         if (!client.email) return { success: false, error: "No email associated with this account" };
 
         const newPass = Math.random().toString(36).slice(-8);
-        client.password = newPass; // Temporary reset
+        client.password = newPass;
         await dataManager.saveClients();
+
+        if (typeof emailService.sendRecoveryEmail !== 'function') {
+            console.error('[AuthService] emailService.sendRecoveryEmail not available:', typeof emailService);
+            return { success: false, error: "Email service unavailable" };
+        }
 
         const emailResult = await emailService.sendRecoveryEmail(client.email, newPass);
 
         if (emailResult.success) {
             return { success: true, message: "New password sent to email" };
         } else {
-            return { success: false, error: "Failed to send email" };
+            return { success: false, error: "Failed to send email: " + (emailResult.error || '') };
         }
     }
 }
