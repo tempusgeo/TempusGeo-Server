@@ -149,12 +149,9 @@ router.post('/dispatch', async (req, res) => {
 
             // === DANGER ZONE ===
             case 'adminDeleteBusiness': {
-                // We should theoretically verify password or god mode here, but AuthService or the caller usually does it
-                // We assume `authService.adminLogin` or similar was called if we want to be safe, 
-                // but the old architecture sends password on every request. Let's verify password if it exists
-                if (password) {
-                    const result = await authService.adminLogin(companyId, password);
-                    if (!result.success) return res.json({ success: false, error: 'Unauthorized to delete' });
+                // Validate using super-admin (god mode) password, not company password
+                if (!password || !isValidSuperAdminPassword(password)) {
+                    return res.json({ success: false, error: 'Unauthorized: Invalid super admin password' });
                 }
 
                 await dataManager.deleteBusiness(companyId);
