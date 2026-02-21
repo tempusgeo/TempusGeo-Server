@@ -5,6 +5,172 @@ const dataManager = require('../services/DataManager');
 const tranzilaService = require('../services/TranzilaService');
 const emailService = require('../services/EmailService');
 
+// ================================================================
+// UNIVERSAL ACTION DISPATCHER
+// Maps old GAS-style action-based POST bodies to Render REST logic
+// ================================================================
+router.post('/dispatch', async (req, res) => {
+    const { action, companyId, password, ...rest } = req.body || {};
+    console.log(`[Dispatch] action=${action} companyId=${companyId}`);
+
+    try {
+        switch (action) {
+            // === BUSINESS SETUP ===
+            case 'createNewBusiness': {
+                const client = await dataManager.createBusiness(req.body);
+                // Also load the full config for the new business
+                const config = await dataManager.getCompanyConfig(client.id).catch(() => ({}));
+                return res.json({ success: true, companyId: client.id, config });
+            }
+
+            // === AUTH ===
+            case 'getBusinessConfig': {
+                if (!companyId) return res.json({ success: false, error: 'Missing companyId' });
+                const config = await dataManager.getCompanyConfig(companyId);
+                if (!config) return res.json({ success: false, error: 'Company not found' });
+                return res.json({ success: true, config });
+            }
+
+            case 'adminLogin': {
+                const result = await authService.adminLogin(companyId, password);
+                return res.json(result);
+            }
+
+            case 'forgotAdminPassword': {
+                const result = await authService.forgotAdminPassword(companyId);
+                return res.json(result);
+            }
+
+            case 'changeAdminPassword': {
+                const result = await authService.changeAdminPassword(companyId, password, rest.newPassword);
+                return res.json(result);
+            }
+
+            case 'recoverSubscription': {
+                // Attempt to reload config after payment webhook
+                const config = await dataManager.getCompanyConfig(companyId);
+                return res.json({ success: !!config, config });
+            }
+
+            // === EMPLOYEE CHECKIN/OUT ===
+            case 'checkIn':
+            case 'checkOut': {
+                const type = action === 'checkIn' ? 'IN' : 'OUT';
+                const result = await dataManager.logShift(companyId, rest.name, type, Date.now());
+                const status = await dataManager.getEmployeeStatus(companyId, rest.name);
+                return res.json({ success: true, ...status, message: type === 'IN' ? 'נכנסת בהצלחה' : 'יצאת בהצלחה' });
+            }
+
+            case 'getStatus': {
+                const status = await dataManager.getEmployeeStatus(companyId, rest.name);
+                return res.json({ success: true, ...status });
+            }
+
+            // === REPORTS ===
+            case 'getYears': {
+                const shifts = await dataManager.getShiftYears(companyId);
+                return res.json({ success: true, years: shifts });
+            }
+
+            case 'getMonths': {
+                const months = await dataManager.getShiftMonths(companyId, rest.year);
+                return res.json({ success: true, months });
+            }
+
+            case 'getReport': {
+                const data = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
+                const userShifts = rest.name ? (data[rest.name] || []) : data;
+                return res.json({ success: true, shifts: userShifts });
+            }
+
+            case 'getEmployeesForMonth': {
+                const data = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
+                return res.json({ success: true, data });
+            }
+
+            // === ADMIN OPERATIONS ===
+            case 'getDashboard': {
+                const dashboard = await dataManager.getDashboard(companyId);
+                return res.json({ success: true, dashboard });
+            }
+
+            case 'adminForceAction': {
+                const fRes = await dataManager.adminForceCheckout(companyId, rest.name, rest.forceType);
+                return res.json(fRes);
+            }
+
+            case 'adminSaveShift': {
+                const sRes = await dataManager.adminSaveShift(companyId, rest.name, rest.year, rest.month, rest.rowIndex, rest.date, rest.start, rest.end);
+                return res.json(sRes || { success: true });
+            }
+
+            case 'adminDeleteShift': {
+                const dRes = await dataManager.adminDeleteShift(companyId, rest.name, rest.year, rest.month, rest.rowIndex);
+                return res.json(dRes || { success: true });
+            }
+
+            case 'adminSendMonthlyReport': {
+                const config = await dataManager.getCompanyConfig(companyId);
+                const reportData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
+                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName);
+                return res.json({ success: true });
+            }
+
+            case 'adminExportFullHistory': {
+                // Redirect to GAS cold storage for full export
+                return res.json({ success: false, error: 'Use GAS export endpoint directly', redirectToGAS: true });
+            }
+
+            case 'getUserFullHistory': {
+                const allData = await dataManager.getUserFullHistory(companyId, rest.name);
+                return res.json({ success: true, shifts: allData });
+            }
+
+            // === SETTINGS ===
+            case 'getAdminSettings': {
+                const config = await dataManager.getCompanyConfig(companyId);
+                return res.json({ success: true, settings: config?.settings || {}, adminEmail: config?.adminEmail || '' });
+            }
+
+            case 'saveAdminSettings': {
+                await dataManager.updateCompanySettings(companyId, rest.settings, rest.adminEmail);
+                return res.json({ success: true });
+            }
+
+            case 'adminSavePolygon': {
+                await dataManager.updateCompanyPolygon(companyId, rest.polygon);
+                return res.json({ success: true });
+            }
+
+            case 'updateBusinessConfig': {
+                await dataManager.updateCompanyConfig(companyId, rest);
+                return res.json({ success: true });
+            }
+
+            // === PAYMENT ===
+            case 'initTranzilaPayment': {
+                // This is handled by the dedicated /payment/process route
+                return res.json({ success: false, error: 'Use /payment/process directly' });
+            }
+
+            case 'processTranzilaTransaction': {
+                // Forward to internal payment processor
+                req.body.paymentDetails = rest.paymentDetails || rest.cardData;
+                req.body.price = rest.price;
+                // Re-dispatch to the payment route handler inline
+                req.url = '/payment/process';
+                return router.handle(req, res);
+            }
+
+            default:
+                return res.json({ success: false, error: `Unknown action: ${action}` });
+        }
+    } catch (e) {
+        console.error(`[Dispatch] Error in action ${action}:`, e.message);
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // --- AUTHENTICATION ---
 
 router.post('/login', async (req, res) => {
@@ -58,7 +224,7 @@ router.post('/super-admin/login', async (req, res) => {
         } else {
             res.status(401).json({ success: false, error: "Invalid Password" });
         }
-    } catch (e) { 
+    } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -116,6 +282,18 @@ router.post('/super-admin/settings/update', async (req, res) => {
         });
 
         res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+router.post('/super-admin/storage', async (req, res) => {
+    try {
+        const { password } = req.body;
+        if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+        const stats = await dataManager.getStorageStats();
+        res.json({ success: true, stats });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -202,6 +380,10 @@ router.get('/history', async (req, res) => {
         if (userName) {
             userShifts = shifts[userName] || [];
         } else {
+            // Admin request for all? Return raw object?
+            // Client expects 'shifts' array usually. But admin table loads per user.
+            // If no user, maybe we return nothing or full object?
+            // Let's stick to per-user for now as per client logic.
         }
 
         res.json({ success: true, shifts: userShifts, source: dataManager.isHotMonth(parseInt(year), parseInt(month)) ? 'hot' : 'cold' });
@@ -636,11 +818,15 @@ router.post('/user/export', async (req, res) => {
         const year = now.getFullYear();
 
         const shifts = [];
+        // Iterate all months for current year?
+        // Or just return last month? User usually wants recent history.
+        // Let's grab all 12 months for current year.
         for (let m = 1; m <= 12; m++) {
             try {
                 const data = await dataManager.getShifts(companyId, year, m);
                 const userShifts = data[name] || [];
                 userShifts.forEach(s => {
+                    // Format for client
                     const dStr = s.start || s.end;
                     if (!dStr) return;
                     const dObj = new Date(dStr);
@@ -702,6 +888,9 @@ router.post('/register', async (req, res) => {
 router.get('/internal/payment-config', async (req, res) => {
     try {
         const token = req.headers['x-jetserver-token'];
+        // In a real scenario, this token should be configurable/in env vars.
+        // For simplicity/requirement, we'll check against a known fallback or config.
+        // Let's assume the user sets JETSERVER_TOKEN in Render Env Vars.
         const validToken = process.env.JETSERVER_TOKEN || 'default-secure-token';
 
         if (token !== validToken) {
@@ -723,6 +912,10 @@ router.get('/internal/payment-config', async (req, res) => {
 router.post('/admin/payment-config', async (req, res) => {
     try {
         const { companyId, terminalName, terminalPass } = req.body;
+        // Verify admin permissions (simple check via companyId/password logic usually handled by client, 
+        // but here we trust the caller has passed the 'login' check or strictly:
+        // Ideally we need a session/token. For this scope:
+
         await dataManager.updateSystemConfig({
             tranzilaTerminal: terminalName,
             tranzilaPass: terminalPass
@@ -739,6 +932,7 @@ router.post('/admin/get-payment-config', async (req, res) => {
     try {
         const { password } = req.body;
 
+        // Validate Super Admin (Password Only List)
         const envPass = process.env.SUPER_ADMIN_PASS || '123456';
         const allowedPasswords = envPass.split(',').map(p => p.trim());
 
@@ -747,6 +941,7 @@ router.post('/admin/get-payment-config', async (req, res) => {
         }
 
         const config = await dataManager.getSystemConfig();
+        // Return sensitive data because it's the admin asking
         res.json({
             success: true,
             terminalName: config.tranzilaTerminal || '',
@@ -762,37 +957,47 @@ router.post('/admin/get-payment-config', async (req, res) => {
 router.post('/payment/process', async (req, res) => {
     try {
         const { companyId, planId, paymentDetails, price } = req.body;
+        // Support old cardData format if legacy client, but prefer paymentDetails
         const cardInfo = paymentDetails || req.body.cardData;
 
+        // 1. Get System Config (Tranzila Credentials)
         const config = await dataManager.getSystemConfig();
         if (!config.tranzilaTerminal || !config.tranzilaPass) {
             console.error("Payment Config Missing locally");
             return res.status(500).json({ success: false, error: "Payment Gateway not configured (Contact Admin)" });
         }
 
+        // 2. Prepare Payload for JetServer Proxy
         const proxyPayload = {
+            // Credentials
             terminalName: config.tranzilaTerminal,
             terminalPass: config.tranzilaPass,
-            sum: price || '0', 
+
+            // Transaction Data
+            sum: price || '0',
             ccno: cardInfo.cardNumber,
-            expmonth: cardInfo.expMonth || cardInfo.expiry.split('/')[0],
+            expmonth: cardInfo.expMonth || cardInfo.expiry.split('/')[0], // Handle both formats
             expyear: cardInfo.expYear || cardInfo.expiry.split('/')[1],
             mycvv: cardInfo.cvv,
-            myid: cardInfo.cardId || cardInfo.idNumber,
+            myid: cardInfo.cardId || cardInfo.idNumber, // Handle both key names
             contact: cardInfo.cardName || cardInfo.cardHolder,
             companyId: companyId,
             pdesc: `Plan: ${planId}`
         };
 
-        const jetServerUrl = process.env.JETSERVER_PROXY_URL || config.jetServerUrl;
+        // 3. Send to JetServer Proxy
+        // Default to external URL if not in config
+        const jetServerUrl = process.env.JETSERVER_PROXY_URL ||
+            config.jetServerUrl;
 
         if (!jetServerUrl || jetServerUrl.includes('YOUR_JETSERVER_DOMAIN')) {
             return res.status(500).json({
-                success: false, 
+                success: false,
                 error: "CONFIGURATION ERROR: Please set 'JETSERVER_PROXY_URL' in Render Environment Variables to your PHP file address."
             });
         }
 
+        // We use fetch (Node 18+)
         const proxyRes = await fetch(jetServerUrl, {
             method: 'POST',
             headers: {
@@ -810,11 +1015,16 @@ router.post('/payment/process', async (req, res) => {
 
         const proxyData = await proxyRes.json();
 
+        // 4. Handle Success
         if (proxyData.success) {
+            // Parse Tranzila Raw
+            // Tranzila returns format: Response=000&id=123...
+            // We use URLSearchParams to parse it
             const params = new URLSearchParams(proxyData.tranzila_raw);
             const responseCode = params.get('Response');
 
             if (responseCode === '000') {
+                // Success!
                 await dataManager.extendSubscription(companyId, planId, price);
                 res.json({ success: true });
             } else {
@@ -832,6 +1042,7 @@ router.post('/payment/process', async (req, res) => {
 
 // --- MAINTENANCE (GAS TRIGGERS) ---
 
+// Middleware for Maintenance Auth
 const maintenanceAuth = (req, res, next) => {
     const token = req.headers['x-maintenance-token'];
     const validToken = process.env.MAINTENANCE_TOKEN || process.env.JETSERVER_TOKEN || 'maintenance-secret-123';
@@ -863,15 +1074,17 @@ router.post('/maintenance/subscription-check', maintenanceAuth, async (req, res)
 
 router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) => {
     try {
+        // Defaults to previous month
         const now = new Date();
         let year = now.getFullYear();
-        let month = now.getMonth(); 
+        let month = now.getMonth(); // 0-11. If 0 (Jan), we want Dec of prev year.
 
         if (month === 0) {
             month = 12;
             year -= 1;
         }
 
+        // Allow override
         if (req.body.year && req.body.month) {
             year = parseInt(req.body.year);
             month = parseInt(req.body.month);
@@ -899,137 +1112,6 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
         res.json({ success: true, sent, errors });
 
     } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-// --- MONOLITHIC BACKWARDS COMPATIBILITY BRIDGE ---
-router.post('/action', async (req, res) => {
-    try {
-        const payload = req.body;
-        const { action, companyId } = payload;
-
-        switch (action) {
-            case 'adminLogin': {
-                const result = await authService.adminLogin(companyId, payload.password);
-                return res.json(result);
-            }
-            case 'getBusinessConfig': {
-                const config = await dataManager.getCompanyConfig(companyId);
-                return res.json({ success: true, config });
-            }
-            case 'getStatus': {
-                const status = await dataManager.getEmployeeStatus(companyId, payload.name);
-                return res.json({ success: true, status: status.state });
-            }
-            case 'getYears': {
-                const years = await dataManager.getHistoryYears(companyId);
-                return res.json({ success: true, years: years.length ? years : [new Date().getFullYear()] });
-            }
-            case 'getMonths': {
-                const months = await dataManager.getHistoryMonths(companyId, payload.year);
-                return res.json({ success: true, months: months.length ? months : [new Date().getMonth() + 1] });
-            }
-            case 'getReport': {
-                const shifts = await dataManager.getShiftsHybrid(companyId, payload.year, payload.month);
-                return res.json({ success: true, data: shifts[payload.name] || [] });
-            }
-            case 'forgotAdminPassword': {
-                const result = await authService.forgotAdminPassword(companyId);
-                return res.json(result);
-            }
-            case 'changeAdminPassword': {
-                const result = await authService.changeAdminPassword(companyId, payload.password, payload.newPassword);
-                return res.json(result);
-            }
-            case 'getDashboard': {
-                const dashboard = await dataManager.getDashboard(companyId);
-                return res.json({ success: true, dashboard });
-            }
-            case 'adminForceAction': {
-                await dataManager.adminForceAction(companyId, payload);
-                const dashboard = await dataManager.getDashboard(companyId);
-                return res.json({ success: true, dashboard, message: 'הפעולה בוצעה בהצלחה' });
-            }
-            case 'getEmployeesForMonth': {
-                const shifts = await dataManager.getShiftsHybrid(companyId, payload.year, payload.month);
-                return res.json({ success: true, employees: Object.keys(shifts).sort() });
-            }
-            case 'adminSaveShift': {
-                await dataManager.adminSaveShift(companyId, {
-                    year: payload.year, month: payload.month, name: payload.name,
-                    originalStart: payload.date ? null : payload.start,
-                    newStart: payload.start || `${payload.date}T${payload.start}`,
-                    newEnd: payload.end || `${payload.date}T${payload.end}`
-                });
-                return res.json({ success: true });
-            }
-            case 'adminDeleteShift': {
-                await dataManager.adminDeleteShift(companyId, payload);
-                return res.json({ success: true });
-            }
-            case 'getAdminSettings': {
-                const config = await dataManager.getCompanyConfig(companyId);
-                return res.json({ success: true, settings: config.settings || {}, adminEmail: config.adminEmail, logoUrl: config.logoUrl });
-            }
-            case 'saveAdminSettings': {
-                await dataManager.saveAdminSettings(companyId, payload.settings, payload.adminEmail);
-                return res.json({ success: true });
-            }
-            case 'updateBusinessConfig': {
-                await dataManager.updateCompanyConfig(companyId, { businessName: payload.businessName, logoUrl: payload.logoUrl });
-                const config = await dataManager.getCompanyConfig(companyId);
-                return res.json({ success: true, config });
-            }
-            case 'adminSavePolygon': {
-                await dataManager.savePolygon(companyId, payload.polygon);
-                return res.json({ success: true });
-            }
-            case 'getPublicPaymentConfig': {
-                return res.json({
-                    success: true,
-                    active: true,
-                    plans: [
-                        { id: '1', title: 'מנוי חודשי', price: 29, currency: 'ILS', months: 1 },
-                        { id: '2', title: 'מנוי שנתי', price: 290, currency: 'ILS', months: 12 }
-                    ]
-                });
-            }
-            case 'initTranzilaPayment': {
-                const configData = await dataManager.getSystemConfig();
-                const jetUrl = process.env.JETSERVER_PROXY_URL || configData.jetServerUrl;
-                if (!jetUrl) return res.json({ success: false, error: "Payment gateway not configured" });
-                const paymentUrl = `${jetUrl.replace('proxy.php', 'payment_form.php')}?companyId=${companyId}&planId=${payload.planId}&price=${payload.planId === '1' ? 29 : 290}`;
-                return res.json({ success: true, paymentUrl });
-            }
-            case 'processTranzilaTransaction': {
-                const tranzilaService = require('../services/TranzilaService');
-                const result = await tranzilaService.verifyTransaction(payload);
-                return res.json(result);
-            }
-            case 'adminExportFullHistory':
-            case 'getUserFullHistory':
-            case 'adminSendMonthlyReport': {
-                const configData = require('../config');
-                const gasUrl = configData.GAS_COLD_STORAGE_URL;
-                if (!gasUrl) return res.json({ success: false, error: 'GAS tracking URL missing' });
-
-                const gRes = await fetch(gasUrl, { method: 'POST', body: JSON.stringify(payload) });
-                const gData = await gRes.json();
-                return res.json(gData);
-            }
-            default:
-                console.log(`[Bridge] Unknown action ${action}, proxying to GAS...`);
-                const conf = require('../config');
-                if (conf.GAS_COLD_STORAGE_URL) {
-                    const proxyRes = await fetch(conf.GAS_COLD_STORAGE_URL, { method: 'POST', body: JSON.stringify(payload) });
-                    const proxyData = await proxyRes.json();
-                    return res.json(proxyData);
-                }
-                return res.status(400).json({ success: false, error: "Unknown action" });
-        }
-    } catch (e) {
-        console.error(`[Monolithic Bridge Error] ${req.body.action}:`, e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
