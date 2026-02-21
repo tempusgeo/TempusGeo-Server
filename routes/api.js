@@ -55,7 +55,8 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'forgotAdminPassword': {
-                const result = await authService.forgotAdminPassword(companyId);
+                // Pass emailService explicitly - AuthService no longer imports it (avoids circular require)
+                const result = await authService.forgotAdminPassword(companyId, emailService);
                 return res.json(result);
             }
 
