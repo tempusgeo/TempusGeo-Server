@@ -33,6 +33,24 @@ router.post('/dispatch', async (req, res) => {
 
             case 'adminLogin': {
                 const result = await authService.adminLogin(companyId, password);
+                if (result.success) {
+                    // Also include daysRemaining for admin panel subscription banner
+                    const expiry = new Date(result.expiryDate);
+                    const daysRemaining = Math.ceil((expiry - new Date()) / (1000 * 60 * 60 * 24));
+                    result.daysRemaining = daysRemaining;
+
+                    // Enrich response with additional data the admin panel expects
+                    try {
+                        const fullConfig = result.config || {};
+                        result.adminEmail = fullConfig.adminEmail || '';
+                        result.logoUrl = fullConfig.logoUrl || '';
+                        result.allEmployees = fullConfig.employees || [];
+                        result.availableHolidays = [];
+                        result.dashboard = await dataManager.getDashboard(result.companyId).catch(() => []);
+                    } catch (enrichErr) {
+                        console.error('[adminLogin] Enrich error:', enrichErr.message);
+                    }
+                }
                 return res.json(result);
             }
 
@@ -50,6 +68,18 @@ router.post('/dispatch', async (req, res) => {
                 // Attempt to reload config after payment webhook
                 const config = await dataManager.getCompanyConfig(companyId);
                 return res.json({ success: !!config, config });
+            }
+
+            case 'getPublicPaymentConfig': {
+                // Return the system payment config (for employees to initiate subscription renewal)
+                const sysConfig = await dataManager.getSystemConfig();
+                const active = !!(sysConfig.tranzilaTerminal && sysConfig.tranzilaPlans && sysConfig.tranzilaPlans.length > 0);
+                return res.json({
+                    success: true,
+                    active,
+                    adminWhatsapp: sysConfig.adminWhatsapp || '',
+                    plans: sysConfig.tranzilaPlans || []
+                });
             }
 
             // === EMPLOYEE CHECKIN/OUT ===
@@ -306,6 +336,52 @@ router.post('/super-admin/storage', async (req, res) => {
         const stats = await dataManager.getStorageStats();
         res.json({ success: true, stats });
     } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+router.post('/super-admin/record-payment', async (req, res) => {
+    try {
+        const { password, targetCompanyId, amount, months, method, reference } = req.body;
+        if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
+        if (!targetCompanyId) return res.status(400).json({ success: false, error: "Missing targetCompanyId" });
+
+        const client = await dataManager.getClientById(targetCompanyId);
+        if (!client) return res.status(404).json({ success: false, error: "Business not found" });
+
+        // Adjust subscription expiry
+        const currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : new Date();
+        const now = new Date();
+        // If already expired, start from now
+        const baseDate = currentExpiry < now ? now : currentExpiry;
+
+        // Add months (handle negative months for refund/shortening)
+        const newExpiry = new Date(baseDate);
+        newExpiry.setMonth(newExpiry.getMonth() + parseInt(months));
+        client.subscriptionExpiry = newExpiry.toISOString();
+
+        // Record in payment history
+        if (!client.paymentHistory) client.paymentHistory = [];
+        client.paymentHistory.push({
+            date: new Date().toLocaleDateString('he-IL'),
+            amount: Math.abs(amount),
+            currency: 'ILS',
+            period: Math.abs(months),
+            method: method || 'Manual',
+            reference: reference || '',
+            status: amount < 0 ? 'REFUND' : 'PAID',
+            isGodAction: true
+        });
+
+        await dataManager.saveClients();
+
+        res.json({
+            success: true,
+            newExpiry: newExpiry.toLocaleDateString('he-IL'),
+            message: months < 0 ? 'המנוי קוצר בהצלחה' : 'המנוי חודש בהצלחה'
+        });
+    } catch (e) {
+        console.error('[SuperAdmin] record-payment error:', e.message);
         res.status(500).json({ success: false, error: e.message });
     }
 });
