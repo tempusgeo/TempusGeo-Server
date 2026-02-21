@@ -544,55 +544,42 @@ class DataManager {
     }
 
     async getBackupData() {
-        console.log('[Backup] Generating full backup from disk...');
+        console.log('[Backup] Generating full generic backup from disk...');
         const backup = {
             timestamp: new Date().toISOString(),
             lastWriteTime: await this.getLastWriteTime(), // Sync Indicator
-            clients: CACHE.clients,
-            companies: {}
+            files: [] // GENERIC ARRAY
         };
 
-        const companiesDir = path.join(this.dataDir, 'companies');
-        try {
-            const companies = await fs.readdir(companiesDir);
-            for (const companyId of companies) {
-                const companyDir = path.join(companiesDir, companyId);
-                const stat = await fs.stat(companyDir);
-                if (!stat.isDirectory()) continue;
-
-                backup.companies[companyId] = { config: {}, shifts: {} };
-
-                // Read config
-                try {
-                    const configData = await fs.readFile(path.join(companyDir, 'config.json'), 'utf8');
-                    backup.companies[companyId].config = JSON.parse(configData);
-                } catch (e) { }
-
-                // Read shifts
-                try {
-                    const years = await fs.readdir(companyDir);
-                    for (const yearStr of years) {
-                        if (yearStr === 'config.json') continue;
-                        const yearDir = path.join(companyDir, yearStr);
-                        const yStat = await fs.stat(yearDir);
-                        if (!yStat.isDirectory()) continue;
-
-                        const months = await fs.readdir(yearDir);
-                        for (const monthFile of months) {
-                            if (!monthFile.endsWith('.json')) continue;
-                            const month = parseInt(monthFile.replace('.json', ''));
-                            const cacheKey = `${yearStr}-${month}`;
-                            try {
-                                const shiftData = await fs.readFile(path.join(yearDir, monthFile), 'utf8');
-                                backup.companies[companyId].shifts[cacheKey] = JSON.parse(shiftData);
-                            } catch (e) { }
+        const readDirRec = async (dir, relativePath = '') => {
+            try {
+                const items = await fs.readdir(dir);
+                for (const item of items) {
+                    const fullPath = path.join(dir, item);
+                    // Use forward slash for paths regardless of OS so GAS handles it consistently
+                    const relPath = relativePath ? `${relativePath}/${item}` : item;
+                    const stat = await fs.stat(fullPath);
+                    if (stat.isDirectory()) {
+                        await readDirRec(fullPath, relPath);
+                    } else if (item.endsWith('.json')) {
+                        try {
+                            const content = await fs.readFile(fullPath, 'utf8');
+                            backup.files.push({
+                                path: relPath,
+                                content: JSON.parse(content)
+                            });
+                        } catch (e) {
+                            console.error(`[Backup] Error reading/parsing ${relPath}:`, e);
                         }
                     }
-                } catch (e) { }
+                }
+            } catch (e) {
+                console.error(`[Backup] Error reading dir ${dir}:`, e);
             }
-        } catch (e) {
-            console.error('[Backup] Error generating full backup:', e);
-        }
+        };
+
+        await readDirRec(this.dataDir);
+        console.log(`[Backup] Collected ${backup.files.length} files for backup.`);
 
         return backup;
     }
@@ -686,38 +673,22 @@ class DataManager {
 
             console.log(`[Restore] Restoring from GAS (Remote ${remoteTime} > Local ${localTime})...`);
 
-            // 1. Restore Clients
-            if (backup.clients) {
-                CACHE.clients = backup.clients;
-                await fs.writeFile(this.clientsFile, JSON.stringify(CACHE.clients, null, 2)); // Don't update timestamp yet
-            }
-
-            // 2. Restore Companies
-            for (const [companyId, companyData] of Object.entries(backup.companies)) {
-                // Ensure dir
-                const companyDir = path.join(this.dataDir, 'companies', companyId);
-                await fs.mkdir(companyDir, { recursive: true });
-
-                // Config
-                if (companyData.config) {
-                    await fs.writeFile(path.join(companyDir, 'config.json'), JSON.stringify(companyData.config, null, 2));
-                    // Update Cache
-                    if (!CACHE.companies[companyId]) CACHE.companies[companyId] = { config: {}, shifts: {} };
-                    CACHE.companies[companyId].config = companyData.config;
-                }
-
-                // Shifts
-                if (companyData.shifts) {
-                    for (const [key, shifts] of Object.entries(companyData.shifts)) {
-                        const [year, month] = key.split('-');
-                        const yearDir = path.join(companyDir, year);
-                        await fs.mkdir(yearDir, { recursive: true });
-                        await fs.writeFile(path.join(yearDir, `${month}.json`), JSON.stringify(shifts, null, 2));
-
-                        // Update Cache
-                        CACHE.companies[companyId].shifts[key] = shifts;
+            // Generic Restore
+            if (backup.files && Array.isArray(backup.files)) {
+                console.log(`[Restore] Restoring ${backup.files.length} generic files...`);
+                for (const file of backup.files) {
+                    try {
+                        const fullPath = path.join(this.dataDir, file.path);
+                        const dirPath = path.dirname(fullPath);
+                        await fs.mkdir(dirPath, { recursive: true });
+                        await fs.writeFile(fullPath, JSON.stringify(file.content, null, 2));
+                    } catch (e) {
+                        console.error(`[Restore] Failed to write file ${file.path}:`, e);
                     }
                 }
+
+                // Reload Cache immediately after generic restore
+                await this.loadAllToCache();
             }
 
             // Sync Timestamp to match Remote
