@@ -80,6 +80,10 @@ class DataManager {
         return CACHE.clients.find(c => c.id === id);
     }
 
+    async getAllClients() {
+        return CACHE.clients;
+    }
+
     async saveClients() {
         await fs.writeFile(this.clientsFile, JSON.stringify(CACHE.clients, null, 2));
         await this.updateLastWriteTime();
