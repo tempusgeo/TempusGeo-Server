@@ -1,5 +1,4 @@
 const dataManager = require('./DataManager');
-const emailService = require('./EmailService');
 
 class AuthService {
 
@@ -46,18 +45,18 @@ class AuthService {
         return { success: true, message: "Password updated successfully" };
     }
 
-    async forgotAdminPassword(companyId) {
+    // emailService is injected from api.js to avoid any circular require issue.
+    // api.js is always the one that loads EmailService last (after all deps), so it's safe.
+    async forgotAdminPassword(companyId, emailService) {
         const client = await dataManager.getClientById(companyId);
         if (!client) return { success: false, error: "Company not found" };
         if (!client.email) return { success: false, error: "No email associated with this account" };
 
-        // Generate new password and save immediately
         const newPass = Math.random().toString(36).slice(-8);
         client.password = newPass;
         await dataManager.saveClients();
 
-        // Queue email in background (NON-BLOCKING) via EmailService → GAS → sends email
-        // Client gets an immediate response; the email is sent asynchronously
+        // NON-BLOCKING: queue email - EmailService worker handles GAS call in background with retries
         emailService.sendRecoveryEmail(client.email, newPass);
 
         return { success: true, message: "New password sent to email" };
