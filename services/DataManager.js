@@ -688,7 +688,18 @@ class DataManager {
                 }
 
                 // Reload Cache immediately after generic restore
-                await this.loadAllToCache();
+                try {
+                    const clientsData = await fs.readFile(this.clientsFile, 'utf8');
+                    CACHE.clients = JSON.parse(clientsData);
+                } catch (e) {
+                    console.log("[Restore] Could not reload clients.json into cache.");
+                }
+
+                // Clear companies cache and reload them
+                CACHE.companies = {};
+                for (const client of CACHE.clients) {
+                    await this.loadCompany(client.id);
+                }
             }
 
             // Sync Timestamp to match Remote
