@@ -422,7 +422,11 @@ class DataManager {
             const files = await fs.readdir(yearDir);
             for (const file of files) {
                 if (file.endsWith('.json')) {
-                    months.push(parseInt(file.replace('.json', '')));
+                    const parsed = parseInt(file.replace('.json', ''));
+                    // FIX: Ensure we only add valid numbers, ignore 'NaN.json' or 'undefined.json'
+                    if (!isNaN(parsed)) {
+                        months.push(parsed);
+                    }
                 }
             }
         } catch (e) { }
