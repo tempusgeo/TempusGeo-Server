@@ -903,9 +903,9 @@ class DataManager {
                 const year = now.getFullYear();
                 const month = now.getMonth() + 1;
 
-                // Load config to get max duration and admin email
+                // Load config to get constraints
                 const companyConfig = await this.getCompanyConfig(client.id);
-                const maxHours = companyConfig?.settings?.maxShiftDurationHours || 12;
+                const constraints = companyConfig?.settings?.constraints || {};
 
                 // Get shifts (Hot only for checkout)
                 const shiftsData = await this.getShifts(client.id, year, month);
@@ -917,16 +917,24 @@ class DataManager {
                             const startTime = new Date(parseInt(shift.start) || shift.start);
                             const durationHours = (now.getTime() - startTime.getTime()) / 3600000;
 
-                            // Close if > maxHours
-                            if (durationHours > maxHours) {
+                            // Check per-user constraints or fallback to 12
+                            const userConstraint = constraints[user] || {};
+                            const maxHours = userConstraint.maxDuration ? parseFloat(userConstraint.maxDuration) : 12;
+                            const enableAutoOut = userConstraint.enableAutoOut === true;
+                            const enableAlert = userConstraint.enableAlert === true;
+
+                            // Close if > maxHours AND auto-checkout is enabled (or fallback > 12h if no specific rule)
+                            const shouldAutoCheckout = (userConstraint.maxDuration && enableAutoOut && durationHours > maxHours) || (!userConstraint.maxDuration && durationHours > 12);
+
+                            if (shouldAutoCheckout) {
                                 // Store end time as a numeric timestamp to keep data structure consistent
                                 shift.end = new Date(startTime.getTime() + maxHours * 3600000).getTime();
                                 shift.note = (shift.note || "") + ` [Auto-Checkout: ${maxHours}h limit]`;
                                 changed = true;
                                 results.closed++;
 
-                                // Send Email Alert if enabled
-                                if (companyConfig.adminEmail && companyConfig.settings?.emailNotifications) {
+                                // Send Email Alert if configured to do so
+                                if (enableAlert && companyConfig.adminEmail) {
                                     emailService.sendShiftAlert(
                                         companyConfig.adminEmail,
                                         user,
