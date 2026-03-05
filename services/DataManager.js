@@ -722,6 +722,35 @@ class DataManager {
 
     // --- EXPORT ---
 
+    async getUserFullHistory(companyId, employeeName) {
+        const companyDir = path.join(this.dataDir, 'companies', companyId);
+        const allShifts = [];
+
+        try {
+            const years = await fs.readdir(companyDir);
+            for (const year of years) {
+                if (year === 'config.json') continue;
+                const yearDir = path.join(companyDir, year);
+                const stat = await fs.stat(yearDir);
+                if (!stat.isDirectory()) continue;
+
+                const months = await fs.readdir(yearDir);
+                for (const monthFile of months) {
+                    if (!monthFile.endsWith('.json')) continue;
+                    const shifts = await this.getShifts(companyId, parseInt(year), parseInt(monthFile.replace('.json', '')));
+                    if (shifts[employeeName]) {
+                        allShifts.push(...shifts[employeeName]);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`[DataManager] Error fetching full history for ${employeeName}:`, e.message);
+        }
+
+        // Sort by start time descending
+        return allShifts.sort((a, b) => new Date(b.start) - new Date(a.start));
+    }
+
     async getFullHistoryForExport(companyId) {
         // 1. Get all Hot Data from Disk
         // 2. Try to get Cold Data from GAS? (Might be too heavy)
