@@ -328,14 +328,15 @@ router.post('/super-admin/settings/get', async (req, res) => {
 
 router.post('/super-admin/settings/update', async (req, res) => {
     try {
-        const { password, phone, tranzilaTerminal, tranzilaPass, tranzilaPlans } = req.body;
+        const { password, phone, tranzilaTerminal, tranzilaPass, tranzilaPlans, supportEnabled } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
 
         await dataManager.updateSystemConfig({
             adminWhatsapp: phone,
             tranzilaTerminal,
             tranzilaPass,
-            tranzilaPlans
+            tranzilaPlans,
+            supportEnabled
         });
 
         res.json({ success: true });
