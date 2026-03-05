@@ -1055,6 +1055,7 @@ router.post('/admin/get-payment-config', async (req, res) => {
 });
 
 
+
 // 4. Process Payment via Proxy
 router.post('/payment/process', async (req, res) => {
     try {
@@ -1062,82 +1063,135 @@ router.post('/payment/process', async (req, res) => {
         // Support old cardData format if legacy client, but prefer paymentDetails
         const cardInfo = paymentDetails || req.body.cardData;
 
-        // 1. Get System Config (Tranzila Credentials)
-        const config = await dataManager.getSystemConfig();
-        if (!config.tranzilaTerminal || !config.tranzilaPass) {
-            console.error("Payment Config Missing locally");
-            return res.status(500).json({ success: false, error: "Payment Gateway not configured (Contact Admin)" });
+        console.log(`[Payment] Starting process for company: ${companyId}, plan: ${planId}`);
+
+        if (!cardInfo || !companyId || !planId) {
+            return res.status(400).json({ success: false, error: 'Missing required fields: companyId, planId, or paymentDetails' });
         }
 
-        // 2. Prepare Payload for JetServer Proxy (URL Encoded Form Data as PHP expects)
+        // 1. Get System Config (Tranzila Credentials)
+        const systemConfig = await dataManager.getSystemConfig();
+        console.log('[Payment] System config loaded. Terminal:', systemConfig.tranzilaTerminal ? 'OK' : 'MISSING');
+
+        if (!systemConfig.tranzilaTerminal || !systemConfig.tranzilaPass) {
+            return res.status(500).json({ success: false, error: 'Payment Gateway not configured - tranzilaTerminal or tranzilaPass missing in system config' });
+        }
+
+        // 2. Resolve plan price from system config if not provided
+        let resolvedPrice = price;
+        if (!resolvedPrice) {
+            const plan = systemConfig.plans?.find(p => p.id === planId);
+            if (plan) {
+                resolvedPrice = plan.price?.toString() || '0';
+                console.log(`[Payment] Resolved price for plan ${planId}: ${resolvedPrice}`);
+            } else {
+                console.warn(`[Payment] Plan ${planId} not found in system config, using price: 0`);
+                resolvedPrice = '0';
+            }
+        }
+
+        // 3. Prepare Payload for JetServer Proxy (URL Encoded Form Data as PHP expects)
         const params = new URLSearchParams();
-        params.append('terminalName', config.tranzilaTerminal);
-        params.append('terminalPass', config.tranzilaPass);
-        params.append('sum', price || '0');
+        params.append('terminalName', systemConfig.tranzilaTerminal);
+        params.append('terminalPass', systemConfig.tranzilaPass);
+        params.append('sum', resolvedPrice);
         params.append('ccno', cardInfo.cardNumber);
 
         // PHP expects expdate as MMYY
-        const mm = cardInfo.expMonth ? cardInfo.expMonth.toString().padStart(2, '0') : cardInfo.expiry.split('/')[0].padStart(2, '0');
-        const yy = cardInfo.expYear ? cardInfo.expYear.toString().slice(-2) : cardInfo.expiry.split('/')[1].slice(-2);
+        let mm, yy;
+        if (cardInfo.expMonth && cardInfo.expYear) {
+            mm = cardInfo.expMonth.toString().padStart(2, '0');
+            yy = cardInfo.expYear.toString().slice(-2);
+        } else if (cardInfo.expiry) {
+            const parts = cardInfo.expiry.split('/');
+            mm = (parts[0] || '').padStart(2, '0');
+            yy = (parts[1] || '').slice(-2);
+        } else {
+            return res.status(400).json({ success: false, error: 'Missing credit card expiry (expMonth+expYear or expiry)' });
+        }
         params.append('expdate', mm + yy);
 
-        params.append('mycvv', cardInfo.cvv);
-        params.append('myid', cardInfo.cardId || cardInfo.idNumber);
-        params.append('contact', cardInfo.cardName || cardInfo.cardHolder);
+        params.append('mycvv', cardInfo.cvv || '');
+        params.append('myid', cardInfo.cardId || cardInfo.idNumber || '');
+        params.append('contact', cardInfo.cardName || cardInfo.cardHolder || '');
         params.append('companyId', companyId);
         params.append('pdesc', `Plan: ${planId}`);
 
-        // 3. Send to JetServer Proxy
-        // Default to external URL if not in config
+        const payloadStr = params.toString();
+        console.log('[Payment] Payload prepared:', payloadStr.replace(/terminalPass=[^&]+/, 'terminalPass=***'));
+
+        // 4. Send to JetServer Proxy
         const jetServerUrl = process.env.JETSERVER_PROXY_URL ||
-            config.jetServerUrl || 'https://funz.co.il/TempusGeo/process_payment.php';
+            systemConfig.jetServerUrl || 'https://funz.co.il/TempusGeo/process_payment.php';
 
-        if (!jetServerUrl || jetServerUrl.includes('YOUR_JETSERVER_DOMAIN')) {
-            return res.status(500).json({
-                success: false,
-                error: "CONFIGURATION ERROR: Please set 'JETSERVER_PROXY_URL' in Render Environment Variables to your PHP file address."
-            });
-        }
+        console.log('[Payment] Sending to proxy:', jetServerUrl);
 
-        // We use fetch (Node 18+)
         const proxyRes = await fetch(jetServerUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'x-jetserver-token': process.env.JETSERVER_TOKEN || 'SysToken_2026_TranzilaLink'
             },
-            body: params.toString()
+            body: payloadStr
         });
 
+        const rawText = await proxyRes.text();
+        console.log('[Payment] Proxy HTTP status:', proxyRes.status);
+        console.log('[Payment] Proxy raw response:', rawText);
+
         if (!proxyRes.ok) {
-            const errText = await proxyRes.text();
-            console.error("Proxy Error:", errText);
-            throw new Error(`Proxy Failed: ${proxyRes.status}`);
+            return res.status(500).json({
+                success: false,
+                error: `Proxy server returned HTTP ${proxyRes.status}`,
+                proxyResponse: rawText
+            });
         }
 
-        const proxyData = await proxyRes.json();
+        // Parse response
+        let proxyData;
+        try {
+            proxyData = JSON.parse(rawText);
+        } catch (e) {
+            // If PHP returned plain text or URL-encoded params (Tranzila direct)
+            // Try parsing as URL-encoded
+            const urlParams = new URLSearchParams(rawText);
+            const responseCode = urlParams.get('Response');
+            if (responseCode === '000') {
+                await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                return res.json({ success: true, tranzilaResponse: Object.fromEntries(urlParams) });
+            } else if (responseCode) {
+                return res.json({
+                    success: false,
+                    error: `עסקה נדחתה קוד: ${responseCode} - ${urlParams.get('text') || 'סיבה לא ידועה'}`,
+                    tranzilaResponse: Object.fromEntries(urlParams)
+                });
+            }
+            // Unknown format
+            return res.status(500).json({ success: false, error: 'Proxy returned unrecognized format', proxyResponse: rawText });
+        }
 
-        // 4. Handle Success
+        // 5. Handle JSON response from our proxy
         if (proxyData.success) {
-            // Parse Tranzila Raw
-            // Tranzila returns format: Response=000&id=123...
-            // We use URLSearchParams to parse it
-            const params = new URLSearchParams(proxyData.tranzila_raw);
-            const responseCode = params.get('Response');
+            const tranzilaParams = new URLSearchParams(proxyData.tranzila_raw || '');
+            const responseCode = tranzilaParams.get('Response') || proxyData.responseCode;
+            console.log('[Payment] Tranzila Response Code:', responseCode);
 
             if (responseCode === '000') {
-                // Success!
-                await dataManager.extendSubscription(companyId, planId, price);
-                res.json({ success: true });
+                await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                return res.json({ success: true, tranzilaResponse: Object.fromEntries(tranzilaParams) });
             } else {
-                res.json({ success: false, error: "Declined: " + (params.get('text') || 'Unknown') });
+                return res.json({
+                    success: false,
+                    error: `עסקה נדחתה קוד: ${responseCode} - ${tranzilaParams.get('text') || proxyData.message || 'סיבה לא ידועה'}`,
+                    tranzilaResponse: Object.fromEntries(tranzilaParams)
+                });
             }
         } else {
-            res.status(500).json({ success: false, error: proxyData.error });
+            return res.status(500).json({ success: false, error: proxyData.error || proxyData.message || 'Proxy returned failure', proxyResponse: proxyData });
         }
 
     } catch (e) {
-        console.error("Payment Process Error:", e);
+        console.error('[Payment] FATAL Error:', e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
