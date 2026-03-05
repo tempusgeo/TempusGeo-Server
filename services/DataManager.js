@@ -278,11 +278,16 @@ class DataManager {
         const empShifts = shifts[employeeName] || [];
         const lastShift = empShifts[empShifts.length - 1];
 
+        // Fetch company config to check for hybrid status
+        const config = await this.getCompanyConfig(companyId);
+        const settings = config.settings || {};
+        const isHybrid = settings.isHybrid && settings.isHybrid[employeeName] ? true : false;
+
         if (lastShift && !lastShift.end) {
-            return { state: "IN", startTime: lastShift.start };
+            return { state: "IN", startTime: lastShift.start, isHybrid };
         }
 
-        return { state: "OUT" };
+        return { state: "OUT", isHybrid };
     }
 
     async getEmployees(companyId) {
