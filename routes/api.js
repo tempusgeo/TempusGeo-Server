@@ -1180,7 +1180,9 @@ router.post('/payment/process', async (req, res) => {
             const urlParams = new URLSearchParams(rawText);
             const responseCode = urlParams.get('Response');
             if (responseCode === '000') {
-                const newExpiry = await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                const newExpiry = updatedClient.subscriptionExpiry;
+                console.log(`[Payment] Subscription extended for ${companyId}, new expiry: ${newExpiry}`);
                 return res.json({ success: true, newExpiry, tranzilaResponse: Object.fromEntries(urlParams) });
             } else if (responseCode) {
                 return res.json({
@@ -1200,7 +1202,9 @@ router.post('/payment/process', async (req, res) => {
             console.log('[Payment] Tranzila Response Code:', responseCode);
 
             if (responseCode === '000') {
-                const newExpiry = await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                const newExpiry = updatedClient.subscriptionExpiry;
+                console.log(`[Payment] Subscription extended for ${companyId}, new expiry: ${newExpiry}`);
                 return res.json({ success: true, newExpiry, tranzilaResponse: Object.fromEntries(tranzilaParams) });
             } else {
                 if (proxyData.tranzila_raw && proxyData.tranzila_raw.toLowerCase().includes('amount zero')) {
