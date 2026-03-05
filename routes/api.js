@@ -134,6 +134,9 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'adminSaveShift': {
+                if (!rest.year || isNaN(parseInt(rest.year)) || !rest.month || isNaN(parseInt(rest.month)) || !rest.name) {
+                    return res.status(400).json({ success: false, error: 'Missing or invalid year/month/name' });
+                }
                 const sRes = await dataManager.adminSaveShift(companyId, {
                     year: rest.year,
                     month: rest.month,
@@ -146,6 +149,9 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'adminDeleteShift': {
+                if (!rest.year || isNaN(parseInt(rest.year)) || !rest.month || isNaN(parseInt(rest.month)) || !rest.name) {
+                    return res.status(400).json({ success: false, error: 'Missing or invalid year/month/name' });
+                }
                 const dRes = await dataManager.adminDeleteShift(companyId, {
                     year: rest.year,
                     month: rest.month,
