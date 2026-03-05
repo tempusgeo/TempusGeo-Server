@@ -246,9 +246,14 @@ class EmailService {
         return this.sendEmail(to, title + ` - ${businessName}`, this.getStyledTemplate(title, content));
     }
 
-    async sendShiftAlert(to, employeeName, action, time, location, businessName) {
-        const actionText = action === 'IN' ? 'כניסה למשמרת' : 'יציאה ממשמרת';
-        const color = action === 'IN' ? '#10b981' : '#ef4444'; // Green / Red (Tailwind colors)
+    async sendShiftAlert(to, employeeName, action, time, location, businessName, extraNote = '') {
+        let actionText = 'עדכון משמרת';
+        let color = '#64748b'; // Gray default
+
+        if (action === 'IN') { actionText = 'כניסה למשמרת'; color = '#10b981'; }
+        else if (action === 'OUT') { actionText = 'יציאה ממשמרת'; color = '#ef4444'; }
+        else if (action === 'FORCE_OUT') { actionText = 'הוצאה אוטומטית (חריגת זמן)'; color = '#f97316'; } // Orange
+        else if (action === 'ALERT_MAX') { actionText = 'התראת חריגה מזמן משמרת מירבי'; color = '#eab308'; } // Yellow
 
         const content = `
             <div style="text-align: center; margin-bottom: 10px;">
@@ -267,6 +272,12 @@ class EmailService {
                         <td style="padding: 8px 0; color: #64748b; font-weight: 500;">שעה:</td>
                         <td style="padding: 8px 0; color: #1e293b; text-align: left;">${new Date(time).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</td>
                     </tr>
+                    ${extraNote ? `
+                    <tr>
+                        <td style="padding: 8px 0; color: #ef4444; font-weight: 500;">הערה:</td>
+                        <td style="padding: 8px 0; color: #ef4444; font-weight: 600; text-align: left;">${extraNote}</td>
+                    </tr>
+                    ` : ''}
                     <tr>
                         <td style="padding: 8px 0; color: #64748b; font-weight: 500;">מיקום:</td>
                         <td style="padding: 8px 0; color: #1e293b; text-align: left;">${location || 'לא צוין'}</td>
