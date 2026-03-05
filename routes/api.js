@@ -113,14 +113,40 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'getReport': {
-                const data = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
-                const userShifts = rest.name ? (data[rest.name] || []) : data;
-                return res.json({ success: true, shifts: userShifts });
+                const rawData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
+                const rawShifts = rest.name ? (rawData[rest.name] || []) : [];
+
+                // Format shifts for admin table rendering (needs rowIndex, date, start, end as HH:MM)
+                let totalHours = 0;
+                const formattedShifts = rawShifts.map((s, idx) => {
+                    const startDate = s.start ? new Date(parseInt(s.start) || s.start) : null;
+                    const endDate = s.end ? new Date(parseInt(s.end) || s.end) : null;
+
+                    if (startDate && endDate) {
+                        totalHours += (endDate - startDate) / 3600000;
+                    }
+
+                    const pad = n => String(n).padStart(2, '0');
+                    return {
+                        rowIndex: idx,
+                        _raw: s, // Keep raw for save operations
+                        date: startDate ? `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}` : '',
+                        start: startDate ? `${pad(startDate.getHours())}:${pad(startDate.getMinutes())}` : '',
+                        end: endDate ? `${pad(endDate.getHours())}:${pad(endDate.getMinutes())}` : '',
+                        startRaw: s.start,
+                        endRaw: s.end,
+                        location: s.location || ''
+                    };
+                });
+
+                return res.json({ success: true, shifts: formattedShifts, totalHours: totalHours.toFixed(2) });
             }
 
             case 'getEmployeesForMonth': {
                 const data = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
-                return res.json({ success: true, data });
+                // Return sorted employee names array (not the full shifts object)
+                const employees = Object.keys(data).sort();
+                return res.json({ success: true, employees });
             }
 
             // === ADMIN OPERATIONS ===
@@ -564,11 +590,15 @@ router.post('/history/report', async (req, res) => {
         const shifts = await dataManager.getShiftsHybrid(companyId, parseInt(year), parseInt(month));
         const userShifts = shifts[name] || [];
 
-        // Calculate total hours
+        // Calculate total hours from start/end timestamps (shift.duration field does not exist)
         let totalHours = 0;
         userShifts.forEach(shift => {
-            if (shift.duration) {
-                totalHours += parseFloat(shift.duration);
+            if (shift.start && shift.end) {
+                const startMs = parseInt(shift.start) || new Date(shift.start).getTime();
+                const endMs = parseInt(shift.end) || new Date(shift.end).getTime();
+                if (endMs > startMs) {
+                    totalHours += (endMs - startMs) / 3600000; // milliseconds → hours
+                }
             }
         });
 
