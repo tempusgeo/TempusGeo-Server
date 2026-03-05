@@ -106,7 +106,9 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'getMonths': {
-                const months = await dataManager.getHistoryMonths(companyId, rest.year);
+                const rawMonths = await dataManager.getHistoryMonths(companyId, rest.year);
+                // Frontend expects array of objects with 'name' property
+                const months = rawMonths.map(m => ({ name: m }));
                 return res.json({ success: true, months });
             }
 
