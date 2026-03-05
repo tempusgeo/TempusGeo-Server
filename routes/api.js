@@ -956,16 +956,7 @@ router.post('/user/export', async (req, res) => {
     }
 });
 
-// --- PAYMENT PROXY ---
-router.post('/payment/process', async (req, res) => {
-    try {
-        const result = await tranzilaService.processPaymentProxy(req.body);
-        res.json(result);
-    } catch (e) {
-        console.error("Payment Process Error", e);
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
+// Route was removed due to duplication with the one below.
 
 router.get('/payment/config', (req, res) => {
     res.json({
@@ -1093,7 +1084,7 @@ router.post('/payment/process', async (req, res) => {
         // 3. Send to JetServer Proxy
         // Default to external URL if not in config
         const jetServerUrl = process.env.JETSERVER_PROXY_URL ||
-            config.jetServerUrl;
+            config.jetServerUrl || 'https://funz.co.il/TempusGeo/process_payment.php';
 
         if (!jetServerUrl || jetServerUrl.includes('YOUR_JETSERVER_DOMAIN')) {
             return res.status(500).json({
