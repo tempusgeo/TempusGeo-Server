@@ -35,14 +35,11 @@ class AuthService {
         const client = await dataManager.getClientById(companyId);
         if (!client) return { success: false, error: "Company not found" };
 
-        if (client.password !== oldPassword) {
-            return { success: false, error: "Old password incorrect" };
-        }
-
+        // No old password check needed — user is already authenticated as admin
         client.password = newPassword;
         await dataManager.saveClients();
 
-        return { success: true, message: "Password updated successfully" };
+        return { success: true, message: "הסיסמה שונתה בהצלחה" };
     }
 
     // emailService is injected from api.js to avoid any circular require issue.
