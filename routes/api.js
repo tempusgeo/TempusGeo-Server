@@ -1090,35 +1090,35 @@ router.post('/payment/process', async (req, res) => {
             }
         }
 
-        // 3. Prepare Payload for JetServer Proxy (URL Encoded Form Data as PHP expects)
-        const params = new URLSearchParams();
-        params.append('terminalName', systemConfig.tranzilaTerminal);
-        params.append('terminalPass', systemConfig.tranzilaPass);
-        params.append('sum', resolvedPrice);
-        params.append('ccno', cardInfo.cardNumber);
-
-        // PHP expects expdate as MMYY
+        // 3. Prepare Payload for JetServer Proxy EXACTLY like the simulator
         let mm, yy;
         if (cardInfo.expMonth && cardInfo.expYear) {
             mm = cardInfo.expMonth.toString().padStart(2, '0');
-            yy = cardInfo.expYear.toString().slice(-2);
+            yy = cardInfo.expYear.toString().padStart(4, '20'); // Ensure 4 digits
         } else if (cardInfo.expiry) {
             const parts = cardInfo.expiry.split('/');
             mm = (parts[0] || '').padStart(2, '0');
-            yy = (parts[1] || '').slice(-2);
+            yy = '20' + (parts[1] || '').slice(-2);
         } else {
             return res.status(400).json({ success: false, error: 'Missing credit card expiry (expMonth+expYear or expiry)' });
         }
-        params.append('expdate', mm + yy);
 
-        params.append('mycvv', cardInfo.cvv || '');
-        params.append('myid', cardInfo.cardId || cardInfo.idNumber || '');
-        params.append('contact', cardInfo.cardName || cardInfo.cardHolder || '');
-        params.append('companyId', companyId);
-        params.append('pdesc', `Plan: ${planId}`);
+        const payload = {
+            terminalName: systemConfig.tranzilaTerminal,
+            terminalPass: systemConfig.tranzilaPass,
+            sum: resolvedPrice,
+            ccno: cardInfo.cardNumber,
+            expmonth: mm,
+            expyear: yy,
+            mycvv: cardInfo.cvv || '',
+            myid: cardInfo.cardId || cardInfo.idNumber || '',
+            contact: cardInfo.cardName || cardInfo.cardHolder || 'TempusGeo Payment',
+            pdesc: `Plan: ${planId}`,
+            companyId: companyId
+        };
 
-        const payloadStr = params.toString();
-        console.log('[Payment] Payload prepared:', payloadStr.replace(/terminalPass=[^&]+/, 'terminalPass=***'));
+        const payloadStr = JSON.stringify(payload);
+        console.log('[Payment] Payload prepared (JSON):', payloadStr.replace(/"terminalPass":"[^"]+"/, '"terminalPass":"***"'));
 
         // 4. Send to JetServer Proxy
         const jetServerUrl = process.env.JETSERVER_PROXY_URL ||
@@ -1129,7 +1129,7 @@ router.post('/payment/process', async (req, res) => {
         const proxyRes = await fetch(jetServerUrl, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Type': 'application/json',
                 'x-jetserver-token': process.env.JETSERVER_TOKEN || 'SysToken_2026_TranzilaLink'
             },
             body: payloadStr
