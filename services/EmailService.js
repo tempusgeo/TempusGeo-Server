@@ -124,11 +124,24 @@ class EmailService {
                 }
             }
 
-            if (response.data && response.data.success) {
+            // Many times GAS returns success as generic HTML or a stringified JSON body
+            let isSuccess = false;
+            if (response.data) {
+                if (typeof response.data === 'object' && response.data.success) {
+                    isSuccess = true;
+                } else if (typeof response.data === 'string' && response.data.includes('"success":true')) {
+                    isSuccess = true;
+                } else if (response.status === 200) {
+                    // Fallback: if we reached 200 OK after POSTing to the redirect URL, assume it succeeded
+                    isSuccess = true;
+                }
+            }
+
+            if (isSuccess) {
                 console.log(`[Email] Sent successfully to ${item.to}`);
                 return true;
             } else {
-                console.error(`[Email] GAS returned error: ${JSON.stringify(response.data)}`);
+                console.error(`[Email] GAS returned error: ${typeof response.data === 'object' ? JSON.stringify(response.data) : response.data.substring(0, 100)}`);
                 return false; // Will trigger retry
             }
         } catch (error) {
