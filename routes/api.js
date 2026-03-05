@@ -1130,8 +1130,12 @@ router.post('/payment/process', async (req, res) => {
             expmonth: mm,
             expyear: yy,
             mycvv: cardInfo.cvv || '',
-            myid: cardInfo.cardId || cardInfo.idNumber || '',
-            contact: businessName,
+            // שם בעל הכרטיס (מהטופס) → contact
+            contact: cardInfo.cardName || cardInfo.cardHolder || '',
+            // שם העסק אוטומטי מהמערכת → company (שדה נפרד בטרנזילה)
+            company: businessName,
+            // ח"פ / עוסק מורשה (מהטופס) → myid (לחשבונית)
+            myid: cardInfo.businessId || cardInfo.cardId || cardInfo.idNumber || '',
             email: cardInfo.email || '',
             pdesc: planDesc,
             companyId: companyId
