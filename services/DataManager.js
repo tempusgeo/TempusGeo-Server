@@ -466,7 +466,15 @@ class DataManager {
         const shifts = await this.getShifts(companyId, parseInt(year), parseInt(month));
         if (!shifts[name]) return;
 
-        const shiftIndex = shifts[name].findIndex(s => s.start === originalStart || (new Date(s.start).getTime() === new Date(originalStart).getTime()));
+        // Make sure to parse numeric strings (Epoch) correctly, as new Date("17727...") becomes Invalid Date.
+        const safeGetTime = (t) => {
+            if (!t) return null;
+            if (typeof t === 'number') return new Date(t).getTime();
+            if (typeof t === 'string' && !isNaN(t)) return new Date(parseInt(t)).getTime();
+            return new Date(t).getTime();
+        };
+
+        const shiftIndex = shifts[name].findIndex(s => s.start === originalStart || s.start == originalStart || (safeGetTime(s.start) === safeGetTime(originalStart)));
         if (shiftIndex !== -1) {
             shifts[name][shiftIndex].start = newStart;
             shifts[name][shiftIndex].end = newEnd;
@@ -485,8 +493,15 @@ class DataManager {
         const shifts = await this.getShifts(companyId, parseInt(year), parseInt(month));
         if (!shifts[name]) return;
 
-        // Filter out by start time
-        shifts[name] = shifts[name].filter(s => s.start !== start && new Date(s.start).getTime() !== new Date(start).getTime());
+        const safeGetTime = (t) => {
+            if (!t) return null;
+            if (typeof t === 'number') return new Date(t).getTime();
+            if (typeof t === 'string' && !isNaN(t)) return new Date(parseInt(t)).getTime();
+            return new Date(t).getTime();
+        };
+
+        // Filter out by start time safely
+        shifts[name] = shifts[name].filter(s => s.start !== start && s.start != start && safeGetTime(s.start) !== safeGetTime(start));
         await this.saveShifts(companyId, parseInt(year), parseInt(month), shifts);
     }
 
@@ -924,6 +939,9 @@ class DataManager {
                             const hasCustomRule = !!userConstraint.maxDuration;
                             const maxHours = hasCustomRule ? parseFloat(userConstraint.maxDuration) : 12;
                             const enableAutoOut = hasCustomRule ? (userConstraint.enableAutoOut === true) : true; // default true for 12h fallback
+
+                            // Check global email setting as a fallback for Forced Checkouts
+                            const globalEmailEnabled = companyConfig?.settings?.emailNotifications === true;
                             const enableAlert = hasCustomRule ? (userConstraint.enableAlert === true) : false; // default false for 12h fallback
 
                             if (durationHours > maxHours) {
@@ -934,7 +952,8 @@ class DataManager {
                                     changed = true;
                                     results.closed++;
 
-                                    if (enableAlert && companyConfig.adminEmail) {
+                                    // Send alert if explicitly enabled for user, OR if global emails are on (managers want to know about forced checkouts)
+                                    if ((enableAlert || globalEmailEnabled) && companyConfig.adminEmail) {
                                         emailService.sendShiftAlert(
                                             companyConfig.adminEmail,
                                             user,
