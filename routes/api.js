@@ -44,7 +44,8 @@ router.post('/dispatch', async (req, res) => {
                         const fullConfig = result.config || {};
                         result.adminEmail = fullConfig.adminEmail || '';
                         result.logoUrl = fullConfig.logoUrl || '';
-                        result.allEmployees = fullConfig.employees || [];
+                        // Fix: get latest employees list from dataManager directly
+                        result.allEmployees = await dataManager.getEmployees(result.companyId).catch(() => []);
                         result.availableHolidays = [];
                         result.dashboard = await dataManager.getDashboard(result.companyId).catch(() => []);
                     } catch (enrichErr) {
@@ -79,6 +80,7 @@ router.post('/dispatch', async (req, res) => {
                     success: true,
                     active,
                     adminWhatsapp: sysConfig.adminWhatsapp || '',
+                    supportEnabled: sysConfig.supportEnabled === true,
                     plans: sysConfig.tranzilaPlans || []
                 });
             }
@@ -122,7 +124,8 @@ router.post('/dispatch', async (req, res) => {
             // === ADMIN OPERATIONS ===
             case 'getDashboard': {
                 const dashboard = await dataManager.getDashboard(companyId);
-                return res.json({ success: true, dashboard });
+                const allEmployees = await dataManager.getEmployees(companyId).catch(() => []);
+                return res.json({ success: true, dashboard, allEmployees });
             }
 
             case 'adminForceAction': {
