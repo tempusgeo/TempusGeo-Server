@@ -919,30 +919,49 @@ class DataManager {
 
                             // Check per-user constraints or fallback to 12
                             const userConstraint = constraints[user] || {};
-                            const maxHours = userConstraint.maxDuration ? parseFloat(userConstraint.maxDuration) : 12;
-                            const enableAutoOut = userConstraint.enableAutoOut === true;
-                            const enableAlert = userConstraint.enableAlert === true;
 
-                            // Close if > maxHours AND auto-checkout is enabled (or fallback > 12h if no specific rule)
-                            const shouldAutoCheckout = (userConstraint.maxDuration && enableAutoOut && durationHours > maxHours) || (!userConstraint.maxDuration && durationHours > 12);
+                            // Determine applicable rules based on Employee Constraints
+                            const hasCustomRule = !!userConstraint.maxDuration;
+                            const maxHours = hasCustomRule ? parseFloat(userConstraint.maxDuration) : 12;
+                            const enableAutoOut = hasCustomRule ? (userConstraint.enableAutoOut === true) : true; // default true for 12h fallback
+                            const enableAlert = hasCustomRule ? (userConstraint.enableAlert === true) : false; // default false for 12h fallback
 
-                            if (shouldAutoCheckout) {
-                                // Store end time as a numeric timestamp to keep data structure consistent
-                                shift.end = new Date(startTime.getTime() + maxHours * 3600000).getTime();
-                                shift.note = (shift.note || "") + ` [Auto-Checkout: ${maxHours}h limit]`;
-                                changed = true;
-                                results.closed++;
+                            if (durationHours > maxHours) {
+                                // CASE 1: Auto Checkout Enforced -> Close shift & Send FORCE_OUT Alert
+                                if (enableAutoOut) {
+                                    shift.end = new Date(startTime.getTime() + maxHours * 3600000).getTime();
+                                    shift.note = (shift.note || "") + ` [Auto-Checkout: ${maxHours}h limit]`;
+                                    changed = true;
+                                    results.closed++;
 
-                                // Send Email Alert if configured to do so
-                                if (enableAlert && companyConfig.adminEmail) {
-                                    emailService.sendShiftAlert(
-                                        companyConfig.adminEmail,
-                                        user,
-                                        "OUT",
-                                        shift.end,
-                                        shift.location || "-",
-                                        companyConfig.businessName || client.id
-                                    ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
+                                    if (enableAlert && companyConfig.adminEmail) {
+                                        emailService.sendShiftAlert(
+                                            companyConfig.adminEmail,
+                                            user,
+                                            "FORCE_OUT",
+                                            shift.end,
+                                            shift.location || "-",
+                                            companyConfig.businessName || client.id,
+                                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${maxHours} שעות.`
+                                        ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
+                                    }
+                                }
+                                // CASE 2: Auto Checkout NOT enforced, but Alert IS enabled -> Send ALERT_MAX (Once)
+                                else if (enableAlert && !shift.maxAlertSent) {
+                                    shift.maxAlertSent = true; // Mark to prevent spamming on next interval
+                                    changed = true;
+
+                                    if (companyConfig.adminEmail) {
+                                        emailService.sendShiftAlert(
+                                            companyConfig.adminEmail,
+                                            user,
+                                            "ALERT_MAX",
+                                            now.getTime(),
+                                            shift.location || "-",
+                                            companyConfig.businessName || client.id,
+                                            `העובד נמצא במשמרת פעילה מעל ${maxHours} שעות (נוכחי: ${durationHours.toFixed(1)} שעות).`
+                                        ).catch(e => console.error(`[Max Alert Email FAIL] ${e.message}`));
+                                    }
                                 }
                             }
                         }
