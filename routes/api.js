@@ -99,12 +99,12 @@ router.post('/dispatch', async (req, res) => {
 
             // === REPORTS ===
             case 'getYears': {
-                const shifts = await dataManager.getShiftYears(companyId);
+                const shifts = await dataManager.getHistoryYears(companyId);
                 return res.json({ success: true, years: shifts });
             }
 
             case 'getMonths': {
-                const months = await dataManager.getShiftMonths(companyId, rest.year);
+                const months = await dataManager.getHistoryMonths(companyId, rest.year);
                 return res.json({ success: true, months });
             }
 
@@ -126,17 +126,29 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'adminForceAction': {
-                const fRes = await dataManager.adminForceCheckout(companyId, rest.name, rest.forceType);
-                return res.json(fRes);
+                const fRes = await dataManager.adminForceAction(companyId, { name: rest.name, forceType: rest.forceType });
+                return res.json(fRes || { success: true });
             }
 
             case 'adminSaveShift': {
-                const sRes = await dataManager.adminSaveShift(companyId, rest.name, rest.year, rest.month, rest.rowIndex, rest.date, rest.start, rest.end);
+                const sRes = await dataManager.adminSaveShift(companyId, {
+                    year: rest.year,
+                    month: rest.month,
+                    name: rest.name,
+                    originalStart: rest.originalStart || rest.start,
+                    newStart: rest.start,
+                    newEnd: rest.end
+                });
                 return res.json(sRes || { success: true });
             }
 
             case 'adminDeleteShift': {
-                const dRes = await dataManager.adminDeleteShift(companyId, rest.name, rest.year, rest.month, rest.rowIndex);
+                const dRes = await dataManager.adminDeleteShift(companyId, {
+                    year: rest.year,
+                    month: rest.month,
+                    name: rest.name,
+                    start: rest.start
+                });
                 return res.json(dRes || { success: true });
             }
 
@@ -164,12 +176,12 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'saveAdminSettings': {
-                await dataManager.updateCompanySettings(companyId, rest.settings, rest.adminEmail);
+                await dataManager.saveAdminSettings(companyId, rest.settings, rest.adminEmail);
                 return res.json({ success: true });
             }
 
             case 'adminSavePolygon': {
-                await dataManager.updateCompanyPolygon(companyId, rest.polygon);
+                await dataManager.savePolygon(companyId, rest.polygon);
                 return res.json({ success: true });
             }
 
