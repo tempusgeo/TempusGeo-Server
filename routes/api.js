@@ -1080,12 +1080,14 @@ router.post('/payment/process', async (req, res) => {
             return res.status(500).json({ success: false, error: 'Payment Gateway not configured - tranzilaTerminal or tranzilaPass missing in system config' });
         }
 
-        // 2. Resolve plan price from system config if not provided
+        // 2. Resolve plan from system config (plans stored as tranzilaPlans)
+        const allPlans = systemConfig.tranzilaPlans || systemConfig.plans || [];
+        const selectedPlan = allPlans.find(p => String(p.id) === String(planId));
+
         let resolvedPrice = price;
         if (!resolvedPrice) {
-            const plan = systemConfig.plans?.find(p => String(p.id) === String(planId));
-            if (plan) {
-                resolvedPrice = plan.price?.toString() || '0';
+            if (selectedPlan) {
+                resolvedPrice = selectedPlan.price?.toString() || '0';
                 console.log(`[Payment] Resolved price for plan ${planId}: ${resolvedPrice}`);
             } else {
                 console.warn(`[Payment] Plan ${planId} not found in system config, using price: 0`);
@@ -1106,6 +1108,20 @@ router.post('/payment/process', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Missing credit card expiry (expMonth+expYear or expiry)' });
         }
 
+        // 3a. Fetch company name for contact field (Bug 1 fix)
+        let businessName = 'TempusGeo';
+        try {
+            const companyConfig = await dataManager.getCompanyConfig(companyId);
+            businessName = companyConfig.businessName || businessName;
+        } catch (e) {
+            console.warn('[Payment] Could not fetch businessName, using default:', e.message);
+        }
+
+        // 3b. Build proper plan description (Bug 2 fix)
+        const planDesc = selectedPlan
+            ? `TempusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
+            : `TempusGeo - Plan ${planId}`;
+
         const payload = {
             terminalName: systemConfig.tranzilaTerminal,
             terminalPass: systemConfig.tranzilaPass,
@@ -1115,9 +1131,9 @@ router.post('/payment/process', async (req, res) => {
             expyear: yy,
             mycvv: cardInfo.cvv || '',
             myid: cardInfo.cardId || cardInfo.idNumber || '',
-            contact: cardInfo.cardName || cardInfo.cardHolder || 'TempusGeo Payment',
+            contact: businessName,
             email: cardInfo.email || '',
-            pdesc: `Plan: ${planId}`,
+            pdesc: planDesc,
             companyId: companyId
         };
 
