@@ -1063,23 +1063,23 @@ router.post('/payment/process', async (req, res) => {
             return res.status(500).json({ success: false, error: "Payment Gateway not configured (Contact Admin)" });
         }
 
-        // 2. Prepare Payload for JetServer Proxy
-        const proxyPayload = {
-            // Credentials
-            terminalName: config.tranzilaTerminal,
-            terminalPass: config.tranzilaPass,
+        // 2. Prepare Payload for JetServer Proxy (URL Encoded Form Data as PHP expects)
+        const params = new URLSearchParams();
+        params.append('terminalName', config.tranzilaTerminal);
+        params.append('terminalPass', config.tranzilaPass);
+        params.append('sum', price || '0');
+        params.append('ccno', cardInfo.cardNumber);
 
-            // Transaction Data
-            sum: price || '0',
-            ccno: cardInfo.cardNumber,
-            expmonth: cardInfo.expMonth || cardInfo.expiry.split('/')[0], // Handle both formats
-            expyear: cardInfo.expYear || cardInfo.expiry.split('/')[1],
-            mycvv: cardInfo.cvv,
-            myid: cardInfo.cardId || cardInfo.idNumber, // Handle both key names
-            contact: cardInfo.cardName || cardInfo.cardHolder,
-            companyId: companyId,
-            pdesc: `Plan: ${planId}`
-        };
+        // PHP expects expdate as MMYY
+        const mm = cardInfo.expMonth ? cardInfo.expMonth.toString().padStart(2, '0') : cardInfo.expiry.split('/')[0].padStart(2, '0');
+        const yy = cardInfo.expYear ? cardInfo.expYear.toString().slice(-2) : cardInfo.expiry.split('/')[1].slice(-2);
+        params.append('expdate', mm + yy);
+
+        params.append('mycvv', cardInfo.cvv);
+        params.append('myid', cardInfo.cardId || cardInfo.idNumber);
+        params.append('contact', cardInfo.cardName || cardInfo.cardHolder);
+        params.append('companyId', companyId);
+        params.append('pdesc', `Plan: ${planId}`);
 
         // 3. Send to JetServer Proxy
         // Default to external URL if not in config
@@ -1097,10 +1097,10 @@ router.post('/payment/process', async (req, res) => {
         const proxyRes = await fetch(jetServerUrl, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
                 'x-jetserver-token': process.env.JETSERVER_TOKEN || 'SysToken_2026_TranzilaLink'
             },
-            body: JSON.stringify(proxyPayload)
+            body: params.toString()
         });
 
         if (!proxyRes.ok) {
