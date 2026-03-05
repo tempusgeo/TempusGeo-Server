@@ -215,7 +215,6 @@ class DataManager {
 
     async getShifts(companyId, year, month) {
         // key format: '2024-01'
-        // month is 0-indexed in JS Date, but let's use 1-12 for file names for clarity.
         // Actually, let's stick to the "Year" folder structure to match GAS.
 
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
@@ -229,15 +228,29 @@ class DataManager {
         // Load from Disk
         const companyDir = path.join(this.dataDir, 'companies', companyId);
         const yearDir = path.join(companyDir, year.toString());
-        const fileName = `${month}.json`; // e.g., "1.json" for January
-        const filePath = path.join(yearDir, fileName);
 
         let shifts = {};
         try {
-            const data = await fs.readFile(filePath, 'utf8');
-            shifts = JSON.parse(data);
+            // Check both naming conventions. Default is X.json, GAS is json.X
+            let filePath = path.join(yearDir, `${month}.json`);
+            let fileData = null;
+
+            try {
+                fileData = await fs.readFile(filePath, 'utf8');
+            } catch (e1) {
+                // If X.json doesn't exist, try json.X
+                filePath = path.join(yearDir, `json.${month}`);
+                try {
+                    fileData = await fs.readFile(filePath, 'utf8');
+                } catch (e2) {
+                    // Neither exists. File doesn't exist yet.
+                }
+            }
+
+            if (fileData) {
+                shifts = JSON.parse(fileData);
+            }
         } catch (e) {
-            // File doesn't exist yet
             shifts = {};
         }
 
@@ -257,8 +270,16 @@ class DataManager {
         const yearDir = path.join(companyDir, year.toString());
         await fs.mkdir(yearDir, { recursive: true });
 
-        const filePath = path.join(yearDir, `${month}.json`);
-        await fs.writeFile(filePath, JSON.stringify(shiftsData, null, 2));
+        // Prefer existing format, defaults to X.json
+        let targetFilePath = path.join(yearDir, `${month}.json`);
+        try {
+            await fs.access(path.join(yearDir, `json.${month}`));
+            // If json.X exists but X.json doesn't, overwrite json.X
+            try { await fs.access(targetFilePath); }
+            catch { targetFilePath = path.join(yearDir, `json.${month}`); }
+        } catch (e) { }
+
+        await fs.writeFile(targetFilePath, JSON.stringify(shiftsData, null, 2));
         await this.updateLastWriteTime();
     }
 
@@ -421,16 +442,21 @@ class DataManager {
         try {
             const files = await fs.readdir(yearDir);
             for (const file of files) {
+                // Support both "3.json" (Render default) and "json.3" (GAS format)
+                let parsedOpts = NaN;
                 if (file.endsWith('.json')) {
-                    const parsed = parseInt(file.replace('.json', ''));
-                    // FIX: Ensure we only add valid numbers, ignore 'NaN.json' or 'undefined.json'
-                    if (!isNaN(parsed)) {
-                        months.push(parsed);
-                    }
+                    parsedOpts = parseInt(file.replace('.json', ''));
+                } else if (file.startsWith('json.')) {
+                    parsedOpts = parseInt(file.split('.')[1]);
+                }
+
+                // FIX: Ensure we only add valid numbers, ignore 'NaN.json' or 'undefined.json'
+                if (!isNaN(parsedOpts)) {
+                    months.push(parsedOpts);
                 }
             }
         } catch (e) { }
-        return months.sort((a, b) => b - a);
+        return Array.from(new Set(months)).sort((a, b) => b - a); // Use Set to avoid duplicates if both exist
     }
 
     // --- ADMIN ACTIONS ---
@@ -745,8 +771,16 @@ class DataManager {
 
                 const months = await fs.readdir(yearDir);
                 for (const monthFile of months) {
-                    if (!monthFile.endsWith('.json')) continue;
-                    const shifts = await this.getShifts(companyId, parseInt(year), parseInt(monthFile.replace('.json', '')));
+                    let monthNum = NaN;
+                    if (monthFile.endsWith('.json')) {
+                        monthNum = parseInt(monthFile.replace('.json', ''));
+                    } else if (monthFile.startsWith('json.')) {
+                        monthNum = parseInt(monthFile.split('.')[1]);
+                    }
+
+                    if (isNaN(monthNum)) continue;
+
+                    const shifts = await this.getShifts(companyId, parseInt(year), monthNum);
                     if (shifts[employeeName]) {
                         allShifts.push(...shifts[employeeName]);
                     }
