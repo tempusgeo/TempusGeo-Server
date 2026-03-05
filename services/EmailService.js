@@ -92,8 +92,6 @@ class EmailService {
         try {
             console.log(`[Email] Processing queue item for ${item.to}...`);
 
-            // GAS exec URL returns 302 redirect, and axios converts POST→GET on 302 (HTTP standard).
-            // The POST body is lost during this redirect. Solution: send as GET with encoded query params.
             const emailData = {
                 action: 'sendEmail',
                 to: item.to,
@@ -101,13 +99,30 @@ class EmailService {
                 html: item.html,
                 name: item.name || config.APP_NAME
             };
-            const encodedData = encodeURIComponent(JSON.stringify(emailData));
-            const getUrl = `${this.gasUrl}?action=sendEmail&data=${encodedData}`;
 
-            const response = await axios.get(getUrl, {
-                timeout: 15000,
-                maxRedirects: 10
-            });
+            // GAS exec URL returns 302 redirect, and axios converts POST→GET on 302 (HTTP standard).
+            // Solution: Stop axios from following redirects, then manually POST to the Location URL.
+            let response;
+            try {
+                response = await axios.post(this.gasUrl, emailData, {
+                    timeout: 15000,
+                    maxRedirects: 0,
+                    validateStatus: status => status >= 200 && status <= 302
+                });
+            } catch (e) {
+                console.error(`[Email] Initial POST failed: ${e.message}`);
+                return false;
+            }
+
+            // Follow the 302 redirect manually to PRESERVE the POST body
+            if (response.status === 302 && response.headers.location) {
+                try {
+                    response = await axios.post(response.headers.location, emailData, { timeout: 15000 });
+                } catch (e) {
+                    console.error(`[Email] Redirect POST failed: ${e.message}`);
+                    return false;
+                }
+            }
 
             if (response.data && response.data.success) {
                 console.log(`[Email] Sent successfully to ${item.to}`);
