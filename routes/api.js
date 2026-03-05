@@ -1083,7 +1083,7 @@ router.post('/payment/process', async (req, res) => {
         // 2. Resolve plan price from system config if not provided
         let resolvedPrice = price;
         if (!resolvedPrice) {
-            const plan = systemConfig.plans?.find(p => p.id === planId);
+            const plan = systemConfig.plans?.find(p => String(p.id) === String(planId));
             if (plan) {
                 resolvedPrice = plan.price?.toString() || '0';
                 console.log(`[Payment] Resolved price for plan ${planId}: ${resolvedPrice}`);
@@ -1116,6 +1116,7 @@ router.post('/payment/process', async (req, res) => {
             mycvv: cardInfo.cvv || '',
             myid: cardInfo.cardId || cardInfo.idNumber || '',
             contact: cardInfo.cardName || cardInfo.cardHolder || 'TempusGeo Payment',
+            email: cardInfo.email || '',
             pdesc: `Plan: ${planId}`,
             companyId: companyId
         };
@@ -1155,13 +1156,16 @@ router.post('/payment/process', async (req, res) => {
         try {
             proxyData = JSON.parse(rawText);
         } catch (e) {
-            // If PHP returned plain text or URL-encoded params (Tranzila direct)
-            // Try parsing as URL-encoded
+            // PHP returned HTML error from Tranzila Direct
+            if (rawText.toLowerCase().includes('amount zero') || rawText.toLowerCase().includes('error message')) {
+                return res.json({ success: false, error: 'עסקה נדחתה: סכום שגוי (Amount Zero). אנא פנה לתמיכה.' });
+            }
+
             const urlParams = new URLSearchParams(rawText);
             const responseCode = urlParams.get('Response');
             if (responseCode === '000') {
-                await dataManager.extendSubscription(companyId, planId, resolvedPrice);
-                return res.json({ success: true, tranzilaResponse: Object.fromEntries(urlParams) });
+                const newExpiry = await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                return res.json({ success: true, newExpiry, tranzilaResponse: Object.fromEntries(urlParams) });
             } else if (responseCode) {
                 return res.json({
                     success: false,
@@ -1170,7 +1174,7 @@ router.post('/payment/process', async (req, res) => {
                 });
             }
             // Unknown format
-            return res.status(500).json({ success: false, error: 'Proxy returned unrecognized format', proxyResponse: rawText });
+            return res.status(500).json({ success: false, error: 'Proxy returned HTML formatting error.', proxyResponse: rawText.substring(0, 100) });
         }
 
         // 5. Handle JSON response from our proxy
@@ -1180,9 +1184,13 @@ router.post('/payment/process', async (req, res) => {
             console.log('[Payment] Tranzila Response Code:', responseCode);
 
             if (responseCode === '000') {
-                await dataManager.extendSubscription(companyId, planId, resolvedPrice);
-                return res.json({ success: true, tranzilaResponse: Object.fromEntries(tranzilaParams) });
+                const newExpiry = await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                return res.json({ success: true, newExpiry, tranzilaResponse: Object.fromEntries(tranzilaParams) });
             } else {
+                if (proxyData.tranzila_raw && proxyData.tranzila_raw.toLowerCase().includes('amount zero')) {
+                    return res.json({ success: false, error: 'עסקה נדחתה: סכום שגוי (Amount Zero) בטרנזילה.' });
+                }
+
                 return res.json({
                     success: false,
                     error: `עסקה נדחתה קוד: ${responseCode} - ${tranzilaParams.get('text') || proxyData.message || 'סיבה לא ידועה'}`,
@@ -1275,3 +1283,4 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
     }
 });
 
+module.exports = router;
