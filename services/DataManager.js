@@ -940,8 +940,9 @@ class DataManager {
         if (!client) throw new Error("Company not found");
 
         const systemConfig = await this.getSystemConfig();
-        const plan = systemConfig.plans?.find(p => String(p.id) === String(planId));
-        if (!plan) throw new Error("Plan not found");
+        // Plans are stored under tranzilaPlans key in system_config.json
+        const plan = (systemConfig.tranzilaPlans || systemConfig.plans)?.find(p => String(p.id) === String(planId));
+        if (!plan) throw new Error(`Plan not found: id=${planId}. Available plans: ${JSON.stringify((systemConfig.tranzilaPlans || systemConfig.plans || []).map(p => p.id))}`);
 
         const monthsToAdd = plan.months || 1;
         const now = new Date();
