@@ -909,12 +909,13 @@ class DataManager {
                 for (const [user, shifts] of Object.entries(shiftsData)) {
                     for (const shift of shifts) {
                         if (!shift.end && shift.start) {
-                            const startTime = new Date(shift.start);
+                            const startTime = new Date(parseInt(shift.start) || shift.start);
                             const durationHours = (now - startTime) / 3600000;
 
                             // Close if > 12 hours
                             if (durationHours > 12) {
-                                shift.end = new Date(startTime.getTime() + 12 * 3600000).toISOString();
+                                // Store end time as a numeric timestamp to keep data structure consistent
+                                shift.end = new Date(startTime.getTime() + 12 * 3600000).getTime();
                                 shift.note = (shift.note || "") + " [Auto-Checkout: 12h limit]";
                                 changed = true;
                                 results.closed++;
@@ -939,7 +940,7 @@ class DataManager {
         if (!client) throw new Error("Company not found");
 
         const systemConfig = await this.getSystemConfig();
-        const plan = systemConfig.plans?.find(p => p.id === planId);
+        const plan = systemConfig.plans?.find(p => String(p.id) === String(planId));
         if (!plan) throw new Error("Plan not found");
 
         const monthsToAdd = plan.months || 1;
