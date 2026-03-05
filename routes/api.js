@@ -318,7 +318,8 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 adminWhatsapp: config.adminWhatsapp || '',
                 tranzilaTerminal: config.tranzilaTerminal || '',
                 tranzilaPass: config.tranzilaPass || '',
-                tranzilaPlans: config.tranzilaPlans || []
+                tranzilaPlans: config.tranzilaPlans || [],
+                supportEnabled: config.supportEnabled || false
             }
         });
     } catch (e) {
