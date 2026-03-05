@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const config = require('../config');
 const axios = require('axios');
+const emailService = require('./EmailService');
 
 // --- IN-MEMORY CACHE ---
 // Structure: { companyId: { config: {}, shifts: { '2024-02': { ...data... } } } }
@@ -353,7 +354,7 @@ class DataManager {
         // --- EMAIL NOTIFICATION (If Enabled) ---
         try {
             const companyConfig = await this.getCompanyConfig(companyId);
-            if (companyConfig.settings && companyConfig.settings.emailOnShiftChange && companyConfig.adminEmail) {
+            if (companyConfig.settings && companyConfig.settings.emailNotifications && companyConfig.adminEmail) {
                 // Don't await this, let it run in background
                 emailService.sendShiftAlert(
                     companyConfig.adminEmail,
@@ -902,6 +903,10 @@ class DataManager {
                 const year = now.getFullYear();
                 const month = now.getMonth() + 1;
 
+                // Load config to get max duration and admin email
+                const companyConfig = await this.getCompanyConfig(client.id);
+                const maxHours = companyConfig?.settings?.maxShiftDurationHours || 12;
+
                 // Get shifts (Hot only for checkout)
                 const shiftsData = await this.getShifts(client.id, year, month);
                 let changed = false;
@@ -910,15 +915,27 @@ class DataManager {
                     for (const shift of shifts) {
                         if (!shift.end && shift.start) {
                             const startTime = new Date(parseInt(shift.start) || shift.start);
-                            const durationHours = (now - startTime) / 3600000;
+                            const durationHours = (now.getTime() - startTime.getTime()) / 3600000;
 
-                            // Close if > 12 hours
-                            if (durationHours > 12) {
+                            // Close if > maxHours
+                            if (durationHours > maxHours) {
                                 // Store end time as a numeric timestamp to keep data structure consistent
-                                shift.end = new Date(startTime.getTime() + 12 * 3600000).getTime();
-                                shift.note = (shift.note || "") + " [Auto-Checkout: 12h limit]";
+                                shift.end = new Date(startTime.getTime() + maxHours * 3600000).getTime();
+                                shift.note = (shift.note || "") + ` [Auto-Checkout: ${maxHours}h limit]`;
                                 changed = true;
                                 results.closed++;
+
+                                // Send Email Alert if enabled
+                                if (companyConfig.adminEmail && companyConfig.settings?.emailNotifications) {
+                                    emailService.sendShiftAlert(
+                                        companyConfig.adminEmail,
+                                        user,
+                                        "OUT",
+                                        shift.end,
+                                        shift.location || "-",
+                                        companyConfig.businessName || client.id
+                                    ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
+                                }
                             }
                         }
                     }
