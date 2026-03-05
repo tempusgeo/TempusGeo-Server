@@ -19,10 +19,12 @@ class EmailService {
     startWorker() {
         if (this.isWorkerRunning) return;
         this.isWorkerRunning = true;
+        this.isProcessing = false; // Guard against concurrent processing (prevents duplicate sends)
         console.log('[Email] Background Worker Started');
 
         setInterval(async () => {
             if (this.queue.length === 0) return;
+            if (this.isProcessing) return; // Already processing an email — skip this tick
 
             // Process one item
             const item = this.queue[0]; // Peek
@@ -31,6 +33,7 @@ class EmailService {
             const now = Date.now();
             if (item.nextRetry > now) return; // Wait longer
 
+            this.isProcessing = true;
             try {
                 const success = await this.processEmail(item);
                 if (success) {
@@ -53,6 +56,8 @@ class EmailService {
                 // Ensure we don't block forever, treat as retry-able failure
                 item.retries++;
                 item.nextRetry = now + 5000;
+            } finally {
+                this.isProcessing = false; // Release guard
             }
         }, 2000); // Check queue every 2 seconds
     }
