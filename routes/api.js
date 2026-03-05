@@ -132,7 +132,8 @@ router.post('/dispatch', async (req, res) => {
 
             case 'adminForceAction': {
                 const fRes = await dataManager.adminForceAction(companyId, { name: rest.name, forceType: rest.forceType });
-                return res.json(fRes || { success: true });
+                const dashboard = await dataManager.getDashboard(companyId);
+                return res.json({ success: true, dashboard, ...fRes });
             }
 
             case 'adminSaveShift': {
@@ -1274,4 +1275,3 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
     }
 });
 
-module.exports = router;
