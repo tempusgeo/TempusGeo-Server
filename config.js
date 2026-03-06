@@ -36,26 +36,29 @@ module.exports = {
 
     // System Config
     APP_NAME: "TempusGeo",
-    MAJOR_HOLIDAYS: ['׳¨׳ ׳© ׳”׳©׳ ׳”', '׳›׳™׳₪׳•׳¨', '׳¡׳•׳›׳•׳×', '׳₪׳¡׳—', '׳©׳‘׳•׳¢׳•׳×', '׳”׳¢׳¦׳ž׳ ׳•׳×'],
+    MAJOR_HOLIDAYS: [
+        'ראש השנה', 'יום כיפור', 'סוכות', 'פסח', 'שבועות', 'יום העצמאות',
+        'רמדאן', 'עיד אל-פיטר', 'עיד אל-אדחא', 'חג המולד', 'פסחא'
+    ],
     HOLIDAY_MAPPING: {
-        "Rosh Hashana": "׳¨׳ ׳© ׳”׳©׳ ׳”",
-        "Yom Kippur": "׳™׳•׳  ׳›׳™׳₪׳•׳¨",
-        "Sukkot": "׳¡׳•׳›׳•׳×",
-        "Simchat Torah": "׳©׳ž׳—׳× ׳×׳•׳¨׳”",
-        "Hanukkah": "׳—׳ ׳•׳›׳”",
-        "Purim": "׳₪׳•׳¨׳™׳ ",
-        "Passover": "׳₪׳¡׳—",
-        "Shavuot": "׳©׳‘׳•׳¢׳•׳×",
-        "Tisha B'Av": "׳×׳©׳¢׳” ׳‘׳ ׳‘",
-        "Tu B'Av": "׳˜׳´׳• ׳‘׳ ׳‘",
-        "Lag BaOmer": "׳œ׳´׳’ ׳‘׳¢׳•׳ž׳¨",
-        "Ramadan": "׳¨׳ž׳“׳ ׳Ÿ",
-        "Eid al-Fitr": "׳¢׳™׳“ ׳ ׳œ-׳₪׳™׳˜׳¨",
-        "Eid al-Adha": "׳¢׳™׳“ ׳ ׳œ-׳ ׳“׳—׳ ",
-        "Muharram": "׳¨׳ ׳© ׳”׳©׳ ׳” ׳”׳ž׳•׳¡׳œ׳ž׳™",
-        "Prophet's Birthday": "׳™׳•׳  ׳”׳•׳œ׳“׳× ׳”׳ ׳‘׳™׳ ",
-        "Independence Day": "׳™׳•׳  ׳”׳¢׳¦׳ž׳ ׳•׳×",
-        "Holocaust Remembrance Day": "׳™׳•׳  ׳”׳©׳•׳ ׳”",
-        "Memorial Day": "׳™׳•׳  ׳”׳–׳™׳›׳¨׳•׳Ÿ"
+        "Rosh Hashana": "ראש השנה",
+        "Yom Kippur": "יום כיפור",
+        "Sukkot": "סוכות",
+        "Simchat Torah": "שמחת תורה",
+        "Hanukkah": "חנוכה",
+        "Purim": "פורים",
+        "Passover": "פסח",
+        "Shavuot": "שבועות",
+        "Tisha B'Av": "תשעה באב",
+        "Tu B'Av": "ט\"ו באב",
+        "Lag BaOmer": "ל\"ג בעומר",
+        "Ramadan": "רמדאן",
+        "Eid al-Fitr": "עיד אל-פיטר",
+        "Eid al-Adha": "עיד אל-אדחא",
+        "Muharram": "ראש השנה המוסלמי",
+        "Prophet's Birthday": "יום הולדת הנביא",
+        "Independence Day": "יום העצמאות",
+        "Holocaust Remembrance Day": "יום השואה",
+        "Memorial Day": "יום הזיכרון"
     }
 };
