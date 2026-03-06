@@ -19,6 +19,10 @@ module.exports = {
     // JetServer Payment Proxy
     JETSERVER_PAYMENT_URL: process.env.JETSERVER_PAYMENT_URL || "https://your-domain.com/TempusGeo/process_payment.php",
 
+    // JetServer Mail Proxy (Bypasses Render SMTP Block)
+    JETSERVER_MAIL_URL: process.env.JETSERVER_MAIL_URL || "https://your-domain.com/TempusGeo/mail_proxy.php",
+    JETSERVER_MAIL_SECRET: process.env.JETSERVER_MAIL_SECRET || "tempusgeo_proxy_9988_secure",
+
     // Email Config
     // Optional: Use professional SMTP (SendGrid, Mailgun, SES, etc.)
     // If not set, falls back to GAS_COLD_STORAGE_URL (Google Apps Script)
