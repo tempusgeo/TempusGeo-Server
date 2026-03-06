@@ -70,6 +70,17 @@ class DataManager {
                 await this.loadCompany(client.id);
             }
 
+            // 5. Start Automatic Archiving Trigger (Every 24 hours)
+            setInterval(() => {
+                console.log(`[Auto-Archive] Starting daily cleanup cycle...`);
+                this.runGlobalArchiveCycle().catch(e => console.error(`[Auto-Archive] Global Cycle Failed:`, e.message));
+            }, 24 * 60 * 60 * 1000);
+
+            // Trigger once on startup after 1 minute
+            setTimeout(() => {
+                this.runGlobalArchiveCycle().catch(e => console.error(`[Startup Clean] Failed:`, e.message));
+            }, 60000);
+
         } catch (e) {
             console.error("Critical Error initializing DataManager:", e);
         }
@@ -107,6 +118,11 @@ class DataManager {
         } catch (e) {
             console.log(`No config for ${companyId}, using defaults.`);
             configData = { companyId, settings: {} };
+        }
+
+        // Ensure Config has employees array
+        if (!configData.employees) {
+            configData.employees = [];
         }
 
         CACHE.companies[companyId] = {
@@ -315,17 +331,38 @@ class DataManager {
     async getEmployees(companyId) {
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
+        const config = CACHE.companies[companyId].config;
+
+        // If config has employees, return them
+        if (config.employees && config.employees.length > 0) {
+            return config.employees.sort();
+        }
+
+        // Fallback: If employees list is empty in config, try to extract from current/previous months
+        // to migrate them into the config
         const now = new Date();
         const year = now.getFullYear();
         const month = now.getMonth() + 1;
 
-        // Ensure current month is loaded
-        await this.getShifts(companyId, year, month);
+        const monthsToCheck = [
+            { y: year, m: month },
+            { y: month === 1 ? year - 1 : year, m: month === 1 ? 12 : month - 1 }
+        ];
 
-        const currentShifts = CACHE.companies[companyId].shifts[`${year}-${month}`] || {};
-        const employees = Object.keys(currentShifts);
+        const employeeSet = new Set();
+        for (const m of monthsToCheck) {
+            const shifts = await this.getShifts(companyId, m.y, m.m);
+            Object.keys(shifts).forEach(name => employeeSet.add(name));
+        }
 
-        return employees.sort();
+        const employees = Array.from(employeeSet).sort();
+
+        if (employees.length > 0) {
+            config.employees = employees;
+            await this.updateCompanyConfig(companyId, config);
+        }
+
+        return employees;
     }
 
     async logShift(companyId, employeeName, action, timestamp, location, note) {
@@ -437,6 +474,25 @@ class DataManager {
             console.error(`[Holidays] Failed to fetch from GAS for ${companyId}:`, e.message);
         }
         return config.MAJOR_HOLIDAYS || [];
+    }
+
+    async getHolidayDatesForMonth(companyId, year, month) {
+        const allHolidays = await this.getAvailableHolidays(companyId);
+        if (!Array.isArray(allHolidays)) return [];
+
+        const bizConfig = await this.getBusinessConfig(companyId);
+        const selectedNames = bizConfig.salary?.holidays?.eligible || bizConfig.salary?.selectedHolidays || [];
+
+        // Filter for specific month/year AND user selection
+        return allHolidays
+            .filter(h => {
+                if (!h.date || !h.name) return false;
+                const hDate = new Date(h.date);
+                return hDate.getFullYear() === year &&
+                    (hDate.getMonth() + 1) === month &&
+                    selectedNames.includes(h.name);
+            })
+            .map(h => h.date); // Returns array of "yyyy-MM-dd"
     }
 
     // --- HISTORY META ---
@@ -687,9 +743,7 @@ class DataManager {
                 }
             }
 
-            // Clean up employee list now that old data is purged
-            await this.cleanupEmployeeList(companyId);
-
+            // Done
             return { success: true, archived: archivedCount };
         } catch (e) {
             console.error(`[Archive] Error processing company directory ${companyDir}:`, e.message);
@@ -721,6 +775,17 @@ class DataManager {
     // --- EMPLOYEE MANAGEMENT ---
 
     async addEmployee(companyId, name) {
+        if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
+        const config = CACHE.companies[companyId].config;
+
+        if (!config.employees) config.employees = [];
+
+        if (!config.employees.includes(name)) {
+            config.employees.push(name);
+            await this.updateCompanyConfig(companyId, config);
+        }
+
+        // Also add to current month to ensure UI updates
         const now = new Date();
         const year = now.getFullYear();
         const month = now.getMonth() + 1;
@@ -734,6 +799,14 @@ class DataManager {
     }
 
     async deleteEmployee(companyId, name) {
+        if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
+        const config = CACHE.companies[companyId].config;
+
+        if (config.employees) {
+            config.employees = config.employees.filter(e => e !== name);
+            await this.updateCompanyConfig(companyId, config);
+        }
+
         const now = new Date();
         const year = now.getFullYear();
         const month = now.getMonth() + 1;
@@ -1306,7 +1379,39 @@ class DataManager {
         sizes.items = sizes.items.slice(0, 100); // Only keep top 100 largest files
         return sizes;
     }
+
+    async runGlobalArchiveCycle() {
+        console.log(`[DataManager] Global Archive Cycle Triggered at ${new Date().toISOString()}`);
+        for (const client of CACHE.clients) {
+            try {
+                const res = await this.archiveAndCleanup(client.id);
+                if (res.archived > 0) {
+                    console.log(`[DataManager] Cleaned up ${res.archived} months for ${client.id}`);
+                }
+                // Also check subscriptions
+                await this.checkSubscriptions();
+            } catch (err) {
+                console.error(`[DataManager] Cleanup failed for ${client.id}:`, err.message);
+            }
+        }
+    }
 }
 
 
-module.exports = new DataManager();
+const manager = new DataManager();
+
+// --- AUTO-ARCHIVE TRIGGER (Once every 24 hours) ---
+// This runs the global archive cycle for all companies
+setTimeout(() => {
+    manager.runGlobalArchiveCycle().catch(err => {
+        console.error('[DataManager] Auto-Archive Initial Error:', err.message);
+    });
+}, 1000 * 60 * 5); // Start 5 mins after boot
+
+setInterval(() => {
+    manager.runGlobalArchiveCycle().catch(err => {
+        console.error('[DataManager] Auto-Archive Interval Error:', err.message);
+    });
+}, 24 * 60 * 60 * 1000);
+
+module.exports = manager;
