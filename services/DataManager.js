@@ -477,20 +477,43 @@ class DataManager {
                     return holidays.map(hName => {
                         const name = typeof hName === 'string' ? hName : hName.name;
 
-                        // Find all dates for this holiday
-                        const dates = Object.keys(events).filter(d => events[d].includes(name)).sort();
+                        // Current timestamp and threshold (60 days ago)
+                        const now = new Date();
+                        const threshold = new Date(now.getTime() - (60 * 24 * 60 * 60 * 1000));
+                        const thresholdStr = threshold.toISOString().split('T')[0];
+
+                        // 1. Find all dates for this holiday and filter for relevance (from 60 days ago onwards)
+                        const allDates = Object.keys(events).filter(d => events[d].includes(name)).sort();
+                        const relevantDates = allDates.filter(d => d >= thresholdStr);
 
                         let displayDate = null;
-                        if (dates.length > 0) {
+                        if (relevantDates.length > 0) {
+                            // 2. Identify the FIRST contiguous block (to avoid spanning multiple years)
+                            const firstBlock = [];
+                            firstBlock.push(relevantDates[0]);
+
+                            for (let i = 1; i < relevantDates.length; i++) {
+                                const prev = new Date(relevantDates[i - 1]);
+                                const curr = new Date(relevantDates[i]);
+                                const diffDays = (curr - prev) / (1000 * 60 * 60 * 24);
+
+                                if (diffDays <= 1) { // Same day or next day is part of the same holiday block
+                                    firstBlock.push(relevantDates[i]);
+                                } else {
+                                    // Gap found, we have our first occurrence block
+                                    break;
+                                }
+                            }
+
                             const format = (dStr) => {
                                 const [y, m, d] = dStr.split('-');
-                                return `${d}/${m}/${y}`;
+                                return `${d}/${m}/${y.slice(-2)}`;
                             };
 
-                            if (dates.length === 1) {
-                                displayDate = format(dates[0]);
+                            if (firstBlock.length === 1) {
+                                displayDate = format(firstBlock[0]);
                             } else {
-                                displayDate = `${format(dates[0])} - ${format(dates[dates.length - 1])}`;
+                                displayDate = `${format(firstBlock[0])} - ${format(firstBlock[firstBlock.length - 1])}`;
                             }
                         }
 
