@@ -254,7 +254,7 @@ class EmailService {
                     </tr>
                     <tr>
                         <td style="padding: 8px 0; color: #64748b; font-weight: 500;">שעה:</td>
-                        <td style="padding: 8px 0; color: #1e293b; text-align: left;">${new Date(time).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</td>
+                        <td style="padding: 8px 0; color: #1e293b; text-align: left;">${new Date(time).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' })}</td>
                     </tr>
                     ${extraNote ? `
                     <tr>
@@ -282,7 +282,7 @@ class EmailService {
             color = '#ef4444'; // Red
         }
 
-        const formattedDate = new Date(expiryDate).toLocaleDateString('he-IL');
+        const formattedDate = new Date(expiryDate).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' });
 
         const content = `
             <div style="text-align: center; margin-bottom: 20px;">
