@@ -1237,8 +1237,8 @@ router.post('/payment/process', async (req, res) => {
 
         // 3b. Build proper plan description (Bug 2 fix)
         const planDesc = selectedPlan
-            ? `TempusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
-            : `TempusGeo - Plan ${planId}`;
+            ? `${businessName} - מנוי ל-${selectedPlan.months || 1} חודשים`
+            : `${businessName} - Plan ${planId}`;
 
         const payload = {
             terminalName: systemConfig.tranzilaTerminal,
