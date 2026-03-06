@@ -137,8 +137,8 @@ class DataManager {
 
         const config = { ...CACHE.companies[companyId].config };
 
-        // DYNAMICALLY INJECT SUBSCRIPTION STATUS
-        // This overrides any stale 'subscriptionExpired' in the config file
+        // DYNAMICALLY INJECT SUBSCRIPTION STATUS AND BUSINESS NAME
+        // This overrides any stale data in the config file
         const client = await this.getClientById(companyId);
         if (client) {
             const now = new Date();
@@ -146,6 +146,11 @@ class DataManager {
 
             config.subscriptionExpired = expiry < now;
             config.expiryDate = expiry.toLocaleDateString('he-IL');
+
+            // Fix: Always use the master businessName from clients.json if available
+            if (client.businessName) {
+                config.businessName = client.businessName;
+            }
         }
 
         return config;
@@ -465,7 +470,32 @@ class DataManager {
                     timeout: 5000
                 });
                 if (response.data && response.data.success && Array.isArray(response.data.holidays)) {
-                    return response.data.holidays.map(h => typeof h === 'string' ? { name: h, date: null } : h);
+                    const holidays = response.data.holidays;
+                    const events = response.data.events || {}; // { 'YYYY-MM-DD': ['Holiday'] }
+
+                    // Map holidays to their date ranges
+                    return holidays.map(hName => {
+                        const name = typeof hName === 'string' ? hName : hName.name;
+
+                        // Find all dates for this holiday
+                        const dates = Object.keys(events).filter(d => events[d].includes(name)).sort();
+
+                        let displayDate = null;
+                        if (dates.length > 0) {
+                            const format = (dStr) => {
+                                const [y, m, d] = dStr.split('-');
+                                return `${d}/${m}`;
+                            };
+
+                            if (dates.length === 1) {
+                                displayDate = format(dates[0]);
+                            } else {
+                                displayDate = `${format(dates[0])} - ${format(dates[dates.length - 1])}`;
+                            }
+                        }
+
+                        return { name, displayDate };
+                    });
                 }
             }
         } catch (e) {
