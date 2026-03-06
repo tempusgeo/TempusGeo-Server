@@ -100,31 +100,15 @@ class EmailService {
                 name: item.name || config.APP_NAME
             };
 
-            // GAS exec URL returns 302 redirect, and axios converts POST→GET on 302 (HTTP standard).
-            // Solution: Stop axios from following redirects, then manually POST to the Location URL.
-            let response;
-            try {
-                response = await axios.post(this.gasUrl, emailData, {
-                    timeout: 15000,
-                    maxRedirects: 0,
-                    validateStatus: status => status >= 200 && status <= 302
-                });
-            } catch (e) {
-                console.error(`[Email] Initial POST failed: ${e.message}`);
-                return false;
-            }
+            // GAS exec URL returns a 302 redirect after executing the POST.
+            // Axios will correctly change to GET when following the 302 to retrieve the JSON result.
+            const response = await axios.post(this.gasUrl, emailData, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 15000,
+                maxRedirects: 5
+            });
 
-            // Follow the 302 redirect manually to PRESERVE the POST body
-            if (response.status === 302 && response.headers.location) {
-                try {
-                    response = await axios.post(response.headers.location, emailData, { timeout: 15000 });
-                } catch (e) {
-                    console.error(`[Email] Redirect POST failed: ${e.message}`);
-                    return false;
-                }
-            }
-
-            // Many times GAS returns success as generic HTML or a stringified JSON body
+            // GAS returns the actual stringified JSON or HTML on the redirect destination
             let isSuccess = false;
             if (response.data) {
                 if (typeof response.data === 'object' && response.data.success) {
@@ -132,7 +116,7 @@ class EmailService {
                 } else if (typeof response.data === 'string' && response.data.includes('"success":true')) {
                     isSuccess = true;
                 } else if (response.status === 200) {
-                    // Fallback: if we reached 200 OK after POSTing to the redirect URL, assume it succeeded
+                    // Fallback: if we reached 200 OK after POSTing/GETing the redirect URL
                     isSuccess = true;
                 }
             }
@@ -141,7 +125,7 @@ class EmailService {
                 console.log(`[Email] Sent successfully to ${item.to}`);
                 return true;
             } else {
-                console.error(`[Email] GAS returned error: ${typeof response.data === 'object' ? JSON.stringify(response.data) : response.data.substring(0, 100)}`);
+                console.error(`[Email] GAS returned error: ${typeof response.data === 'object' ? JSON.stringify(response.data) : (response.data ? response.data.toString().substring(0, 100) : 'Unknown')}`);
                 return false; // Will trigger retry
             }
         } catch (error) {
