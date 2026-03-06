@@ -190,23 +190,28 @@ class EmailService {
         return this.sendEmail(to, `איפוס סיסמה - ${config.APP_NAME}`, this.getStyledTemplate(title, content));
     }
 
-    async sendMonthlyReport(to, reportData, year, month, businessName) {
+    async sendMonthlyReport(to, reportData, year, month, businessName, salaryConfig = {}) {
         const title = `דוח שעות חודשי: ${month}/${year}`;
+        const WageCalculator = require('./WageCalculator');
 
         // Construct HTML Table
         let tableRows = '';
         for (const [employee, shifts] of Object.entries(reportData)) {
-            let totalHours = 0;
-            shifts.forEach(s => {
-                if (s.start && s.end) {
-                    totalHours += (new Date(s.end) - new Date(s.start)) / 3600000;
-                }
-            });
+            const wageResult = WageCalculator.calculateBreakdown(shifts, salaryConfig);
+
+            let breakdownHtml = '';
+            for (const [rate, hours] of Object.entries(wageResult.breakdown)) {
+                breakdownHtml += `<div style="font-size: 11px; margin-bottom: 2px;">
+                    <span style="font-weight: bold; color: #3b82f6;">${rate}%:</span> ${hours} שעות
+                </div>`;
+            }
+
             tableRows += `
                 <tr style="border-bottom: 1px solid #e5e7eb;">
-                    <td style="padding: 12px;">${employee}</td>
+                    <td style="padding: 12px; font-weight: bold;">${employee}</td>
                     <td style="padding: 12px; text-align: center;">${shifts.length}</td>
-                    <td style="padding: 12px; text-align: center;">${totalHours.toFixed(2)}</td>
+                    <td style="padding: 12px; text-align: center; color: #10b981; font-weight: bold;">${wageResult.totalHours}</td>
+                    <td style="padding: 12px; text-align: right; direction: rtl;">${breakdownHtml}</td>
                 </tr>
             `;
         }
@@ -221,10 +226,11 @@ class EmailService {
                             <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb;">עובד</th>
                             <th style="padding: 12px; text-align: center; border-bottom: 2px solid #e5e7eb;">משמרות</th>
                             <th style="padding: 12px; text-align: center; border-bottom: 2px solid #e5e7eb;">סה"כ שעות</th>
+                            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb;">פירוט שעות שכר</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${tableRows || '<tr><td colspan="3" style="padding:20px; text-align:center; color: #6b7280;">אין נתונים לחודש זה</td></tr>'}
+                        ${tableRows || '<tr><td colspan="4" style="padding:20px; text-align:center; color: #6b7280;">אין נתונים לחודש זה</td></tr>'}
                     </tbody>
                 </table>
             </div>
