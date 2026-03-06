@@ -233,7 +233,8 @@ router.post('/dispatch', async (req, res) => {
             // === SETTINGS ===
             case 'getAdminSettings': {
                 const config = await dataManager.getCompanyConfig(companyId);
-                return res.json({ success: true, settings: config?.settings || {}, adminEmail: config?.adminEmail || '' });
+                const holidays = await dataManager.getAvailableHolidays(companyId).catch(() => []);
+                return res.json({ success: true, settings: config?.settings || {}, adminEmail: config?.adminEmail || '', availableHolidays: holidays });
             }
 
             case 'saveAdminSettings': {
