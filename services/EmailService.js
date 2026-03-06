@@ -1,16 +1,32 @@
+const nodemailer = require('nodemailer');
 const axios = require('axios');
 const config = require('../config');
 
 class EmailService {
     constructor() {
-        this.gasUrl = config.GAS_COLD_STORAGE_URL; // Using the main GAS Web App URL
+        this.gasUrl = config.GAS_COLD_STORAGE_URL;
         this.queue = [];
         this.isWorkerRunning = false;
 
-        if (!this.gasUrl) {
-            console.error('[Email] ⚠️  GAS_COLD_STORAGE_URL is NOT configured! Email sending will not work. Set this env var in Render to your GAS Web App URL.');
+        // Initialize SMTP Transporter if configured
+        this.transporter = null;
+        if (config.SMTP.HOST && config.SMTP.USER && config.SMTP.PASS) {
+            this.transporter = nodemailer.createTransport({
+                host: config.SMTP.HOST,
+                port: config.SMTP.PORT,
+                secure: config.SMTP.PORT == 465, // true for 465, false for other ports
+                auth: {
+                    user: config.SMTP.USER,
+                    pass: config.SMTP.PASS
+                }
+            });
+            console.log(`[Email] SMTP Provider configured: ${config.SMTP.HOST}`);
         } else {
-            console.log(`[Email] GAS relay configured: ${this.gasUrl.substring(0, 50)}...`);
+            console.log('[Email] No SMTP configured. Using GAS Relay as primary engine.');
+        }
+
+        if (!this.gasUrl && !this.transporter) {
+            console.error('[Email] ⚠️  No email provider (SMTP or GAS) configured! Emails will fail.');
         }
 
         this.startWorker();
@@ -19,119 +35,104 @@ class EmailService {
     startWorker() {
         if (this.isWorkerRunning) return;
         this.isWorkerRunning = true;
-        this.isProcessing = false; // Guard against concurrent processing (prevents duplicate sends)
+        this.isProcessing = false;
         console.log('[Email] Background Worker Started');
 
         setInterval(async () => {
-            if (this.queue.length === 0) return;
-            if (this.isProcessing) return; // Already processing an email — skip this tick
+            if (this.queue.length === 0 || this.isProcessing) return;
 
-            // Process one item
-            const item = this.queue[0]; // Peek
-
-            // Check if ready for retry
+            const item = this.queue[0];
             const now = Date.now();
-            if (item.nextRetry > now) return; // Wait longer
+            if (item.nextRetry > now) return;
 
             this.isProcessing = true;
             try {
                 const success = await this.processEmail(item);
                 if (success) {
-                    this.queue.shift(); // Remove from queue
+                    this.queue.shift();
                 } else {
-                    // Handle Retry
                     item.retries++;
                     if (item.retries >= 5) {
-                        console.error(`[Email] Failed to send to ${item.to} after 5 attempts. Dropping.`);
-                        this.queue.shift(); // Drop
+                        console.error(`[Email] Failed after 5 attempts to ${item.to}. Dropping.`);
+                        this.queue.shift();
                     } else {
-                        // Exponential Backoff: 5s, 10s, 20s, 40s...
                         const delay = 5000 * Math.pow(2, item.retries - 1);
                         item.nextRetry = now + delay;
-                        console.log(`[Email] Retry #${item.retries} for ${item.to} scheduled in ${delay}ms`);
+                        console.log(`[Email] Retry #${item.retries} for ${item.to} in ${delay}ms`);
                     }
                 }
             } catch (e) {
                 console.error(`[Email] Worker Error: ${e.message}`);
-                // Ensure we don't block forever, treat as retry-able failure
                 item.retries++;
                 item.nextRetry = now + 5000;
             } finally {
-                this.isProcessing = false; // Release guard
+                this.isProcessing = false;
             }
-        }, 2000); // Check queue every 2 seconds
+        }, 2000);
     }
 
     addToQueue(to, subject, html, attachments = [], name = null) {
-        this.queue.push({
-            to,
-            subject,
-            html,
-            attachments,
-            name,
-            retries: 0,
-            nextRetry: Date.now()
-        });
-        console.log(`[Email] Added to queue. Queue size: ${this.queue.length}`);
+        this.queue.push({ to, subject, html, attachments, name, retries: 0, nextRetry: Date.now() });
+        console.log(`[Email] Queued. Size: ${this.queue.length}`);
     }
 
-    // Public API - Non-Blocking
     async sendEmail(to, subject, html, attachments = [], name = null) {
-        if (!this.gasUrl) {
-            console.error('[Email] GAS URL not configured');
-            return { success: false, error: 'GAS URL missing' };
-        }
-
-        // Add to Queue immediately and return success
         this.addToQueue(to, subject, html, attachments, name || config.APP_NAME);
         return { success: true, message: 'Queued' };
     }
 
-    // Internal Processor (The actual sender)
     async processEmail(item) {
-        try {
-            console.log(`[Email] Processing queue item for ${item.to}...`);
-
-            const emailData = {
-                action: 'sendEmail',
-                to: item.to,
-                subject: item.subject,
-                html: item.html,
-                name: item.name || config.APP_NAME
-            };
-
-            // GAS exec URL returns a 302 redirect after executing the POST.
-            // Axios will correctly change to GET when following the 302 to retrieve the JSON result.
-            const response = await axios.post(this.gasUrl, emailData, {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 15000,
-                maxRedirects: 5
-            });
-
-            // GAS returns the actual stringified JSON or HTML on the redirect destination
-            let isSuccess = false;
-            if (response.data) {
-                if (typeof response.data === 'object' && response.data.success) {
-                    isSuccess = true;
-                } else if (typeof response.data === 'string' && response.data.includes('"success":true')) {
-                    isSuccess = true;
-                } else if (response.status === 200) {
-                    // Fallback: if we reached 200 OK after POSTing/GETing the redirect URL
-                    isSuccess = true;
-                }
-            }
-
-            if (isSuccess) {
-                console.log(`[Email] Sent successfully to ${item.to}`);
+        // PRIORITY 1: SMTP
+        if (this.transporter) {
+            try {
+                const info = await this.transporter.sendMail({
+                    from: `"${item.name || config.APP_NAME}" <${config.SMTP.FROM}>`,
+                    to: item.to,
+                    subject: item.subject,
+                    html: item.html
+                });
+                console.log(`[Email] Sent via SMTP to ${item.to}: ${info.messageId}`);
                 return true;
-            } else {
-                console.error(`[Email] GAS returned error: ${typeof response.data === 'object' ? JSON.stringify(response.data) : (response.data ? response.data.toString().substring(0, 100) : 'Unknown')}`);
-                return false; // Will trigger retry
+            } catch (error) {
+                console.error(`[Email] SMTP Fail: ${error.message}. Trying GAS fallback...`);
+                // Fall through to GAS
             }
-        } catch (error) {
-            console.error(`[Email] Network/GAS Error: ${error.message}`);
-            return false; // Will trigger retry
         }
+
+        // PRIORITY 2: GAS Fallback
+        if (this.gasUrl) {
+            try {
+                const emailData = {
+                    action: 'sendEmail',
+                    to: item.to,
+                    subject: item.subject,
+                    html: item.html,
+                    name: item.name || config.APP_NAME
+                };
+
+                const response = await axios.post(this.gasUrl, emailData, {
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 15000,
+                    maxRedirects: 5
+                });
+
+                let isSuccess = false;
+                if (response.data) {
+                    if (typeof response.data === 'object' && response.data.success) isSuccess = true;
+                    else if (typeof response.data === 'string' && response.data.includes('"success":true')) isSuccess = true;
+                    else if (response.status === 200) isSuccess = true;
+                }
+
+                if (isSuccess) {
+                    console.log(`[Email] Sent via GAS to ${item.to}`);
+                    return true;
+                }
+            } catch (error) {
+                console.error(`[Email] GAS Fail: ${error.message}`);
+            }
+        }
+
+        return false;
     }
 
     // Helper for consistent styling
