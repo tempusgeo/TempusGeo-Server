@@ -11,16 +11,22 @@ class EmailService {
         // Initialize SMTP Transporter if configured
         this.transporter = null;
         if (config.SMTP.HOST && config.SMTP.USER && config.SMTP.PASS) {
+            const isSecure = String(config.SMTP.PORT) === '465';
             this.transporter = nodemailer.createTransport({
                 host: config.SMTP.HOST,
-                port: config.SMTP.PORT,
-                secure: config.SMTP.PORT == 465, // true for 465, false for other ports
+                port: parseInt(config.SMTP.PORT) || 587,
+                secure: isSecure, // true for 465, false for other ports
                 auth: {
                     user: config.SMTP.USER,
                     pass: config.SMTP.PASS
-                }
+                },
+                tls: {
+                    rejectUnauthorized: false // Helps bypass some cloud provider strict SSL blocks
+                },
+                connectionTimeout: 10000, // 10 seconds (fail fast to fallback)
+                greetingTimeout: 5000
             });
-            console.log(`[Email] SMTP Provider configured: ${config.SMTP.HOST}`);
+            console.log(`[Email] SMTP Provider configured: ${config.SMTP.HOST}:${config.SMTP.PORT} (Secure: ${isSecure})`);
         } else {
             console.log('[Email] No SMTP configured. Using GAS Relay as primary engine.');
         }
