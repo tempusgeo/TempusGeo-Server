@@ -4,6 +4,7 @@ const authService = require('../services/AuthService');
 const dataManager = require('../services/DataManager');
 const tranzilaService = require('../services/TranzilaService');
 const emailService = require('../services/EmailService');
+const WageCalculator = require('../services/WageCalculator');
 
 // ================================================================
 // UNIVERSAL ACTION DISPATCHER
@@ -116,6 +117,9 @@ router.post('/dispatch', async (req, res) => {
                 const rawData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
                 const rawShifts = rest.name ? (rawData[rest.name] || []) : [];
 
+                // Get business config for Wage Calculator
+                const bizConfig = await dataManager.getBusinessConfig(companyId);
+
                 // Format shifts for admin table rendering (needs rowIndex, date, start, end as HH:MM)
                 let totalHours = 0;
                 const formattedShifts = rawShifts.map((s, idx) => {
@@ -142,7 +146,15 @@ router.post('/dispatch', async (req, res) => {
                     };
                 });
 
-                return res.json({ success: true, shifts: formattedShifts, totalHours: totalHours.toFixed(2) });
+                // Calculate precise wage breakdown using matrices
+                const wageResult = WageCalculator.calculateBreakdown(rawShifts, bizConfig.salary);
+
+                return res.json({
+                    success: true,
+                    shifts: formattedShifts,
+                    totalHours: wageResult.totalHours.toFixed(2),
+                    wageBreakdown: wageResult.breakdown
+                });
             }
 
             case 'getEmployeesForMonth': {
@@ -196,12 +208,18 @@ router.post('/dispatch', async (req, res) => {
             case 'adminSendMonthlyReport': {
                 const config = await dataManager.getCompanyConfig(companyId);
                 const reportData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
-                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName);
+                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName, config.salary);
+
+                // When finishing a month, trigger the garbage collection to purge old month files out of Render and push to GAS
+                dataManager.archiveAndCleanup(companyId).catch(err => {
+                    console.error(`[Archive] Background archive failed for ${companyId}:`, err);
+                });
+
                 return res.json({ success: true });
             }
 
             case 'adminExportFullHistory': {
-                // Redirect to GAS cold storage for full export
+                // Redirect to GAS cold storage for full export (Render only holds recent data)
                 return res.json({ success: false, error: 'Use GAS export endpoint directly', redirectToGAS: true });
             }
 
@@ -1324,8 +1342,16 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
             if (!client.email) continue;
             try {
                 const reportData = await dataManager.getShiftsHybrid(client.id, year, month);
-                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName);
+                const bizConfig = await dataManager.getBusinessConfig(client.id);
+
+                // Pass salary config for breakdown
+                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary);
                 sent++;
+
+                // Auto Archive past 30 days data to GAS
+                console.log(`[Maintenance] Triggering Auto-Archive for ${client.id}`);
+                await dataManager.archiveAndCleanup(client.id);
+
             } catch (e) {
                 console.error(`Failed report for ${client.id}: ${e.message}`);
                 errors++;
@@ -1345,3 +1371,5 @@ module.exports = router;
 // Forced commit update to ensure file is pushed completely to Render
 
 // Triggering Render upload update for SMTP TLS patch
+
+// History Export Local Migration Patch
