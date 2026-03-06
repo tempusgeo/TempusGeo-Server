@@ -44,72 +44,94 @@ class WageCalculator {
             let totalShiftHours = diffMs / 3600000;
             totalHoursAll += totalShiftHours;
 
-            // Date processing for Special Days (Shabbat / Holidays)
-            const dayOfWeek = shiftStart.getDay(); // 0 = Sunday, 5 = Friday, 6 = Saturday
-            const shiftStartMins = shiftStart.getHours() * 60 + shiftStart.getMinutes();
+            // Helper to check if a specific timestamp is "Special" (Shabbat/Holiday)
+            const getIsSpecial = (timestamp) => {
+                const d = new Date(timestamp);
+                const dayOfWeek = d.getDay(); // 0 = Sun, 5 = Fri, 6 = Sat
+                const minsFromMidnight = d.getHours() * 60 + d.getMinutes();
+                const isoDate = d.toISOString().split('T')[0];
 
-            // Format today's date for holiday lookup (yyyy-MM-dd)
-            const isoDate = shiftStart.toISOString().split('T')[0];
-            const isTodayHoliday = holidayDates.includes(isoDate);
+                const isTodayHoliday = holidayDates.includes(isoDate);
 
-            // Determine if shift starts in a "Special Day" window (Shabbat or Holiday)
-            let isSpecialDay = false;
+                // 1. Shabbat Check
+                if (dayOfWeek === 5 && minsFromMidnight >= weStartMins) return true; // Fri Eve
+                if (dayOfWeek === 6 && minsFromMidnight < weEndMins) return true; // Sat
 
-            // Shabbat check
-            if (dayOfWeek === 5 && shiftStartMins >= weStartMins) {
-                isSpecialDay = true;
-            } else if (dayOfWeek === 6 && shiftStartMins < weEndMins) {
-                isSpecialDay = true;
-            }
+                // 2. Holiday Check
+                // We need tomorrow/yesterday to detect Eves and Ends
+                const tomorrowIso = new Date(d.getTime() + 86400000).toISOString().split('T')[0];
+                const isTomorrowHoliday = holidayDates.includes(tomorrowIso);
 
-            // Holiday check (Erev Chag or Chag day)
-            // Note: Simplistic detection - if today is holiday, we check start window. 
-            // Better: if today is holiday, it stays special day until holEndMins.
-            if (isTodayHoliday && shiftStartMins < weEndMins) {
-                isSpecialDay = true;
-            }
-            // Erev Chag check is harder without knowing tomorrow's holiday. 
-            // For now, if the user explicitly marks a day in the holiday dates, we treat it as the Special Day.
-
-            // Iterate hour by hour to assign the precise rate
-            for (let i = 1; i <= Math.ceil(totalShiftHours); i++) {
-                // If it's the last fractional hour, we only add the fraction
-                let hoursInThisSlot = 1;
-                if (i > totalShiftHours && i - 1 < totalShiftHours) {
-                    hoursInThisSlot = totalShiftHours - (i - 1);
-                } else if (i > totalShiftHours) {
-                    break;
+                if (!isTodayHoliday && isTomorrowHoliday) {
+                    // EVE: Today NOT holiday, Tomorrow IS. Starts at weStartMins.
+                    if (minsFromMidnight >= weStartMins) return true;
+                } else if (isTodayHoliday && isTomorrowHoliday) {
+                    // MIDDLE: Both IS holiday. Full day.
+                    return true;
+                } else if (isTodayHoliday && !isTomorrowHoliday) {
+                    // END: Today IS holiday, Tomorrow NOT. Ends at weEndMins.
+                    if (minsFromMidnight < weEndMins) return true;
                 }
 
-                let ratePercent = 100; // Base 100%
+                return false;
+            };
 
-                if (isSpecialDay) {
-                    // Special Day Map (Unified Shabbat & Holiday matrix)
-                    let addedRate = 0.5; // Default Special Day base is 150%
-                    if (weMapObj[`h${i}`] !== undefined) {
-                        addedRate = parseFloat(weMapObj[`h${i}`]);
-                    } else if (i >= 9) {
-                        addedRate = 0.75; // Default 175% from 9th hour
+            // Iterate minute by minute
+            const totalMinutes = Math.floor(diffMs / 60000);
+            for (let m = 0; m < totalMinutes; m++) {
+                const currentTs = startMs + (m * 60000);
+                const isSpecialNow = getIsSpecial(currentTs);
+
+                // Which hour of the shift are we in? (1-indexed)
+                const hourIndex = Math.floor(m / 60) + 1;
+
+                let ratePercent = 100;
+
+                if (isSpecialNow) {
+                    let addedRate = 0.5; // Default 150%
+                    if (weMapObj[`h${hourIndex}`] !== undefined) {
+                        addedRate = parseFloat(weMapObj[`h${hourIndex}`]);
+                    } else if (hourIndex >= 9) {
+                        addedRate = 0.75; // Default 175%
                     }
                     ratePercent = 100 + (addedRate * 100);
                 } else {
-                    // Regular Overtime Map
                     let addedRate = 0;
-                    if (otMapObj[`h${i}`] !== undefined) {
-                        addedRate = parseFloat(otMapObj[`h${i}`]);
+                    if (otMapObj[`h${hourIndex}`] !== undefined) {
+                        addedRate = parseFloat(otMapObj[`h${hourIndex}`]);
                     } else {
-                        // User: 8-9 = 125% (+0.25), 10+ = 150% (+0.5)
-                        if (i === 8 || i === 9) addedRate = 0.25;
-                        else if (i >= 10) addedRate = 0.5;
-                        else if (otMapArr && otMapArr[i - 1] !== undefined) {
-                            addedRate = parseFloat(otMapArr[i - 1]);
+                        if (hourIndex === 8 || hourIndex === 9) addedRate = 0.25;
+                        else if (hourIndex >= 10) addedRate = 0.5;
+                        else if (otMapArr && otMapArr[hourIndex - 1] !== undefined) {
+                            addedRate = parseFloat(otMapArr[hourIndex - 1]);
                         }
                     }
                     ratePercent = 100 + (addedRate * 100);
                 }
 
                 if (!breakdown[ratePercent]) breakdown[ratePercent] = 0;
-                breakdown[ratePercent] += hoursInThisSlot;
+                breakdown[ratePercent] += (1 / 60); // Add 1 minute as fraction of hour
+            }
+
+            // Handle remaining seconds/fractional minute if any
+            const remainingMs = diffMs % 60000;
+            if (remainingMs > 0) {
+                const currentTs = startMs + (totalMinutes * 60000);
+                const isSpecialNow = getIsSpecial(currentTs);
+                const hourIndex = Math.floor(totalMinutes / 60) + 1;
+                const fractionOfHour = remainingMs / 3600000;
+
+                let ratePercent = 100;
+                // Same rate logic as above (DRY note: in production this would be a function)
+                if (isSpecialNow) {
+                    let addedRate = weMapObj[`h${hourIndex}`] !== undefined ? parseFloat(weMapObj[`h${hourIndex}`]) : (hourIndex >= 9 ? 0.75 : 0.5);
+                    ratePercent = 100 + (addedRate * 100);
+                } else {
+                    let addedRate = otMapObj[`h${hourIndex}`] !== undefined ? parseFloat(otMapObj[`h${hourIndex}`]) : ((hourIndex === 8 || hourIndex === 9) ? 0.25 : (hourIndex >= 10 ? 0.5 : (otMapArr[hourIndex - 1] || 0)));
+                    ratePercent = 100 + (addedRate * 100);
+                }
+                if (!breakdown[ratePercent]) breakdown[ratePercent] = 0;
+                breakdown[ratePercent] += fractionOfHour;
             }
         });
 
