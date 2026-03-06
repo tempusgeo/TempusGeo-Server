@@ -484,7 +484,7 @@ class DataManager {
                         if (dates.length > 0) {
                             const format = (dStr) => {
                                 const [y, m, d] = dStr.split('-');
-                                return `${d}/${m}`;
+                                return `${d}/${m}/${y}`;
                             };
 
                             if (dates.length === 1) {
