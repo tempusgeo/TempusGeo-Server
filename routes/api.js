@@ -126,13 +126,16 @@ router.post('/dispatch', async (req, res) => {
                         totalHours += (endDate - startDate) / 3600000;
                     }
 
-                    const pad = n => String(n).padStart(2, '0');
+                    const tz = 'Asia/Jerusalem';
+                    const formatDate = d => d ? new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d) : '';
+                    const formatTime = d => d ? d.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+
                     return {
                         rowIndex: idx,
                         _raw: s, // Keep raw for save operations
-                        date: startDate ? `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}` : '',
-                        start: startDate ? `${pad(startDate.getHours())}:${pad(startDate.getMinutes())}` : '',
-                        end: endDate ? `${pad(endDate.getHours())}:${pad(endDate.getMinutes())}` : '',
+                        date: formatDate(startDate),
+                        start: formatTime(startDate),
+                        end: formatTime(endDate),
                         startRaw: s.start,
                         endRaw: s.end,
                         location: s.location || ''
@@ -1335,6 +1338,3 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
-});
-
-module.exports = router;
