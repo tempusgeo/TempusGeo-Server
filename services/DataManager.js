@@ -131,6 +131,10 @@ class DataManager {
         };
     }
 
+    async getAvailableHolidays(companyId) {
+        return config.MAJOR_HOLIDAYS || [];
+    }
+
     async getCompanyConfig(companyId) {
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
