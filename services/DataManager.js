@@ -1065,71 +1065,148 @@ class DataManager {
     // --- EXPORT ---
 
     async getUserFullHistory(companyId, employeeName) {
-        const companyDir = path.join(this.dataDir, 'companies', companyId);
         const allShifts = [];
+        const seenKeys = new Set(); // Deduplicate by shift start timestamp
 
+        const addShift = (s) => {
+            const key = String(s.start);
+            if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                allShifts.push(s);
+            }
+        };
+
+        // 1. Fetch Cold (Archived) Data from GAS
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
+            try {
+                console.log(`[History] Fetching full archive from GAS for ${companyId}/${employeeName}`);
+                const response = await axios.get(`${gasUrl}?action=getFullUserHistory&companyId=${companyId}&name=${encodeURIComponent(employeeName)}`, {
+                    timeout: 20000
+                });
+                if (response.data && response.data.success && Array.isArray(response.data.shifts)) {
+                    console.log(`[History] GAS returned ${response.data.shifts.length} cold shifts`);
+                    response.data.shifts.forEach(addShift);
+                } else {
+                    // Fallback: fetch full archive and filter by employee
+                    console.log('[History] Trying getFullArchive fallback...');
+                    const r2 = await axios.get(`${gasUrl}?action=getFullArchive&companyId=${companyId}`, { timeout: 30000 });
+                    if (r2.data && r2.data.success && Array.isArray(r2.data.data)) {
+                        r2.data.data.forEach(s => {
+                            // GAS getFullArchive stores all users' shifts together, filter by name
+                            if (s.name === employeeName || !s.name) addShift(s);
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error(`[History] GAS fetch failed:`, e.message);
+            }
+        } else {
+            console.warn('[History] GAS_COLD_STORAGE_URL not configured, cold data unavailable');
+        }
+
+        // 2. Merge with Hot (Local) Data from Render disk
         try {
-            const years = await fs.readdir(companyDir);
+            const companyDir = path.join(this.dataDir, 'companies', companyId);
+            const years = await fs.readdir(companyDir).catch(() => []);
             for (const year of years) {
                 if (year === 'config.json') continue;
                 const yearDir = path.join(companyDir, year);
-                const stat = await fs.stat(yearDir);
-                if (!stat.isDirectory()) continue;
+                const stat = await fs.stat(yearDir).catch(() => null);
+                if (!stat || !stat.isDirectory()) continue;
 
-                const months = await fs.readdir(yearDir);
+                const months = await fs.readdir(yearDir).catch(() => []);
                 for (const monthFile of months) {
                     let monthNum = NaN;
-                    if (monthFile.endsWith('.json')) {
-                        monthNum = parseInt(monthFile.replace('.json', ''));
-                    } else if (monthFile.startsWith('json.')) {
-                        monthNum = parseInt(monthFile.split('.')[1]);
-                    }
-
+                    if (monthFile.endsWith('.json')) monthNum = parseInt(monthFile.replace('.json', ''));
+                    else if (monthFile.startsWith('json.')) monthNum = parseInt(monthFile.split('.')[1]);
                     if (isNaN(monthNum)) continue;
 
-                    const shifts = await this.getShifts(companyId, parseInt(year), monthNum);
+                    const shifts = await this.getShifts(companyId, parseInt(year), monthNum).catch(() => ({}));
                     if (shifts[employeeName]) {
-                        allShifts.push(...shifts[employeeName]);
+                        shifts[employeeName].forEach(addShift);
                     }
                 }
             }
         } catch (e) {
-            console.error(`[DataManager] Error fetching full history for ${employeeName}:`, e.message);
+            console.error(`[History] Local disk read failed:`, e.message);
         }
 
-        // Sort by start time descending
-        return allShifts.sort((a, b) => new Date(b.start) - new Date(a.start));
+        return allShifts.sort((a, b) => parseInt(b.start) - parseInt(a.start));
     }
 
     async getFullHistoryForExport(companyId) {
-        // 1. Get all Hot Data from Disk
-        // 2. Try to get Cold Data from GAS? (Might be too heavy)
-        // 3. For MVP: Just Zip what we have locally (Hot Storage)
+        // Returns all shift data as a combined object keyed by employee name
+        const combined = {}; // { employeeName: [shifts...] }
+        const seenByEmployee = {};
 
-        // Ideally we should have a way to ask GAS for a full dump URL, 
-        // but User wants Render to be the boss.
-        // Let's iterate all local files first.
+        const addShift = (employeeName, shift) => {
+            if (!combined[employeeName]) { combined[employeeName] = []; seenByEmployee[employeeName] = new Set(); }
+            const key = String(shift.start);
+            if (!seenByEmployee[employeeName].has(key)) {
+                seenByEmployee[employeeName].add(key);
+                combined[employeeName].push(shift);
+            }
+        };
 
-        const companyDir = path.join(this.dataDir, 'companies', companyId);
-        // We'll return paths of files to be zipped
-        const filePaths = [];
+        // 1. Get Cold Data from GAS
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
+            try {
+                const r = await axios.get(`${gasUrl}?action=getFullArchive&companyId=${companyId}`, { timeout: 30000 });
+                if (r.data && r.data.success && Array.isArray(r.data.data)) {
+                    // GAS getFullArchive returns a flat array -- but we need per-employee
+                    // Fetch by months instead for structured data
+                }
+                // Better: fetch years and iterate months
+                const yearsRes = await axios.get(`${gasUrl}?action=getYears&companyId=${companyId}`, { timeout: 10000 });
+                if (yearsRes.data && yearsRes.data.success && Array.isArray(yearsRes.data.years)) {
+                    for (const year of yearsRes.data.years) {
+                        const monthsRes = await axios.get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${year}`, { timeout: 10000 });
+                        if (monthsRes.data && monthsRes.data.success && Array.isArray(monthsRes.data.months)) {
+                            for (const month of monthsRes.data.months) {
+                                const mRes = await axios.get(`${gasUrl}?action=getArchivedMonth&companyId=${companyId}&year=${year}&month=${month}`, { timeout: 15000 });
+                                if (mRes.data && mRes.data.success && mRes.data.data) {
+                                    const parsed = typeof mRes.data.data === 'string' ? JSON.parse(mRes.data.data) : mRes.data.data;
+                                    for (const [emp, shifts] of Object.entries(parsed)) {
+                                        if (Array.isArray(shifts)) shifts.forEach(s => addShift(emp, s));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('[FullExport] GAS fetch failed:', e.message);
+            }
+        }
 
+        // 2. Merge Hot (Local) Data
         try {
-            const years = await fs.readdir(companyDir);
+            const companyDir = path.join(this.dataDir, 'companies', companyId);
+            const years = await fs.readdir(companyDir).catch(() => []);
             for (const year of years) {
                 if (year === 'config.json') continue;
                 const yearDir = path.join(companyDir, year);
-                const months = await fs.readdir(yearDir);
-                for (const month of months) {
-                    filePaths.push({
-                        name: `${year}_${month}`,
-                        path: path.join(yearDir, month)
-                    });
+                const stat = await fs.stat(yearDir).catch(() => null);
+                if (!stat || !stat.isDirectory()) continue;
+                const months = await fs.readdir(yearDir).catch(() => []);
+                for (const monthFile of months) {
+                    let monthNum = NaN;
+                    if (monthFile.endsWith('.json')) monthNum = parseInt(monthFile.replace('.json', ''));
+                    else if (monthFile.startsWith('json.')) monthNum = parseInt(monthFile.split('.')[1]);
+                    if (isNaN(monthNum)) continue;
+                    const shifts = await this.getShifts(companyId, parseInt(year), monthNum).catch(() => ({}));
+                    for (const [emp, empShifts] of Object.entries(shifts)) {
+                        if (Array.isArray(empShifts)) empShifts.forEach(s => addShift(emp, s));
+                    }
                 }
             }
-        } catch (e) { }
+        } catch (e) {
+            console.error('[FullExport] Local disk read failed:', e.message);
+        }
 
-        return filePaths;
+        return combined;
     }
 
     async createBusiness(data) {
