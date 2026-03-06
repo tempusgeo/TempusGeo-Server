@@ -8,27 +8,15 @@ class EmailService {
         this.queue = [];
         this.isWorkerRunning = false;
 
-        // Initialize SMTP Transporter if configured
-        this.transporter = null;
-        if (config.SMTP.HOST && config.SMTP.USER && config.SMTP.PASS) {
-            const isSecure = String(config.SMTP.PORT) === '465';
-            this.transporter = nodemailer.createTransport({
-                host: config.SMTP.HOST,
-                port: parseInt(config.SMTP.PORT) || 587,
-                secure: isSecure, // true for 465, false for other ports
-                auth: {
-                    user: config.SMTP.USER,
-                    pass: config.SMTP.PASS
-                },
-                tls: {
-                    rejectUnauthorized: false // Helps bypass some cloud provider strict SSL blocks
-                },
-                connectionTimeout: 10000, // 10 seconds (fail fast to fallback)
-                greetingTimeout: 5000
-            });
-            console.log(`[Email] SMTP Provider configured: ${config.SMTP.HOST}:${config.SMTP.PORT} (Secure: ${isSecure})`);
+        // Initialize JetServer Mail Proxy configuration
+        this.jetserverUrl = config.JETSERVER_MAIL_URL;
+        this.jetserverSecret = config.JETSERVER_MAIL_SECRET;
+
+        // Try to identify if we are configured to use Jetserver
+        if (this.jetserverUrl && !this.jetserverUrl.includes('your-domain.com')) {
+            console.log(`[Email] Primary Provider Configured: JetServer SMTP Proxy`);
         } else {
-            console.log('[Email] No SMTP configured. Using GAS Relay as primary engine.');
+            console.log(`[Email] JetServer Proxy not configured. Using GAS Relay as primary engine.`);
         }
 
         if (!this.gasUrl && !this.transporter) {
@@ -88,19 +76,25 @@ class EmailService {
     }
 
     async processEmail(item) {
-        // PRIORITY 1: SMTP
-        if (this.transporter) {
+        // PRIORITY 1: JetServer SMTP Proxy
+        if (this.jetserverUrl && !this.jetserverUrl.includes('your-domain.com')) {
             try {
-                const info = await this.transporter.sendMail({
-                    from: `"${item.name || config.APP_NAME}" <${config.SMTP.FROM}>`,
+                const response = await axios.post(this.jetserverUrl, {
+                    secret: this.jetserverSecret,
                     to: item.to,
                     subject: item.subject,
-                    html: item.html
-                });
-                console.log(`[Email] Sent via SMTP to ${item.to}: ${info.messageId}`);
-                return true;
+                    html: item.html,
+                    name: item.name || config.APP_NAME
+                }, { timeout: 15000 });
+
+                if (response.data && response.data.success) {
+                    console.log(`[Email] Sent via JetServer SMTP Proxy to ${item.to}`);
+                    return true;
+                } else {
+                    console.error(`[Email] JetServer Proxy Fail: ${response.data.error || 'Unknown error'}. Trying GAS fallback...`);
+                }
             } catch (error) {
-                console.error(`[Email] SMTP Fail: ${error.message}. Trying GAS fallback...`);
+                console.error(`[Email] JetServer Proxy Request Error: ${error.message}. Trying GAS fallback...`);
                 // Fall through to GAS
             }
         }
