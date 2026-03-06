@@ -23,9 +23,6 @@ class WageCalculator {
         const weStartMins = timeToMinutes(salarySettings.weekend?.startHour || salarySettings.weekendStart || '15:00');
         const weEndMins = timeToMinutes(salarySettings.weekend?.endHour || salarySettings.weekendEnd || '20:00');
 
-        const holStartMins = timeToMinutes(salarySettings.holidays?.startHour || salarySettings.holidayStart || '17:00');
-        const holEndMins = timeToMinutes(salarySettings.holidays?.endHour || salarySettings.holidayEnd || '19:00');
-
         // Overtime configuration (Fallback to default Israeli law 100% 8h, 125% 2h, 150% rest)
         const otMapObj = salarySettings.overtimeRates || {};
         const otMapArr = salarySettings.overtimeMapping || [0, 0, 0, 0, 0, 0, 0, 0, 0.25, 0.25, 0.5, 0.5]; // Support legacy
@@ -68,7 +65,7 @@ class WageCalculator {
             // Holiday check (Erev Chag or Chag day)
             // Note: Simplistic detection - if today is holiday, we check start window. 
             // Better: if today is holiday, it stays special day until holEndMins.
-            if (isTodayHoliday && shiftStartMins < holEndMins) {
+            if (isTodayHoliday && shiftStartMins < weEndMins) {
                 isSpecialDay = true;
             }
             // Erev Chag check is harder without knowing tomorrow's holiday. 
@@ -91,8 +88,8 @@ class WageCalculator {
                     let addedRate = 0.5; // Default Special Day base is 150%
                     if (weMapObj[`h${i}`] !== undefined) {
                         addedRate = parseFloat(weMapObj[`h${i}`]);
-                    } else if (i >= 8) {
-                        addedRate = 0.75; // Default 175% from 8th hour
+                    } else if (i >= 9) {
+                        addedRate = 0.75; // Default 175% from 9th hour
                     }
                     ratePercent = 100 + (addedRate * 100);
                 } else {
