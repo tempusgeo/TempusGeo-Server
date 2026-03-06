@@ -1062,8 +1062,29 @@ router.post('/user/export', async (req, res) => {
     }
 });
 
-// Route was removed due to duplication with the one below.
+// Route was removed due to duplication with the one
+// Health Check
+router.get('/health', (req, res) => {
+    res.json({ status: 'OK', timestamp: new Date(), version: config.VERSION });
+});
 
+// Diagnostic Endpoint (Internal Use)
+router.get('/diag', async (req, res) => {
+    const holidays = await dataManager.getAvailableHolidays('diag_test').catch(e => e.message);
+    res.json({
+        nodeVersion: process.version,
+        env: {
+            NODE_ENV: process.env.NODE_ENV,
+            GAS_URL: !!process.env.GAS_COLD_STORAGE_URL, // Sanitized
+            DATA_DIR: process.env.DATA_DIR || './data'
+        },
+        config: {
+            MAJOR_HOLIDAYS_LEN: (config.MAJOR_HOLIDAYS || []).length,
+            GAS_COLD_STORAGE_URL: !!config.GAS_COLD_STORAGE_URL // Sanitized
+        },
+        testFetch: holidays
+    });
+});
 router.get('/payment/config', (req, res) => {
     res.json({
         success: true,
