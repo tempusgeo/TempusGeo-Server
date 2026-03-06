@@ -147,11 +147,13 @@ router.post('/dispatch', async (req, res) => {
                 });
 
                 // Calculate precise wage breakdown using matrices
-                const wageResult = WageCalculator.calculateBreakdown(rawShifts, bizConfig.salary);
+                const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, parseInt(rest.year), parseInt(rest.month));
+                const wageResult = WageCalculator.calculateBreakdown(rawShifts, bizConfig.salary, holidayDates);
 
                 return res.json({
                     success: true,
                     shifts: formattedShifts,
+                    holidayDates, // Send back for UI if needed
                     totalHours: wageResult.totalHours.toFixed(2),
                     wageBreakdown: wageResult.breakdown
                 });
