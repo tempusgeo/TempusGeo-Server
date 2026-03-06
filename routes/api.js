@@ -214,6 +214,16 @@ router.post('/dispatch', async (req, res) => {
                 return res.json({ success: true, dashboard, allEmployees });
             }
 
+            case 'adminAddEmployee': {
+                const addRes = await dataManager.addEmployee(companyId, rest.employeeName);
+                if (!addRes.success) return res.json(addRes);
+
+                // Refresh data for the client
+                const allEmployees = await dataManager.getEmployees(companyId).catch(() => []);
+                const dashboard = await dataManager.getDashboard(companyId).catch(() => []);
+                return res.json({ success: true, allEmployees, dashboard });
+            }
+
             case 'adminForceAction': {
                 const fRes = await dataManager.adminForceAction(companyId, { name: rest.name, forceType: rest.forceType });
                 const dashboard = await dataManager.getDashboard(companyId);
