@@ -1338,3 +1338,8 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
+});
+
+module.exports = router;
+
+// Forced commit update to ensure file is pushed completely to Render
