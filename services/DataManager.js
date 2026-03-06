@@ -418,13 +418,36 @@ class DataManager {
         return dashboard;
     }
 
+    async getAvailableHolidays(companyId) {
+        try {
+            const configObj = await this.getCompanyConfig(companyId);
+            const gasUrl = configObj ? configObj.gasUrl : null;
+            if (!gasUrl) {
+                return config.MAJOR_HOLIDAYS || [];
+            }
+
+            const response = await axios.get(`${gasUrl}?action=getHolidays&companyId=${companyId}&password=${configObj.password}`, {
+                timeout: 5000
+            });
+
+            if (response.data && response.data.success && response.data.holidays) {
+                return response.data.holidays;
+            }
+        } catch (e) {
+            console.error(`[Holidays] Failed to fetch from GAS for ${companyId}:`, e.message);
+        }
+        return config.MAJOR_HOLIDAYS || [];
+    }
+
     // --- HISTORY META ---
     async getHistoryYears(companyId) {
         // Try getting from Hot Storage fs
         const companyDir = path.join(this.dataDir, 'companies', companyId);
         const years = new Set();
+        let config = null;
 
         try {
+            config = await this.getCompanyConfig(companyId);
             const files = await fs.readdir(companyDir);
             for (const file of files) {
                 if (file === 'config.json') continue;
@@ -434,13 +457,28 @@ class DataManager {
             }
         } catch (e) { }
 
+        // Fetch from GAS Cold Storage
+        if (config && config.gasUrl) {
+            try {
+                const response = await axios.get(`${config.gasUrl}?action=getYears&companyId=${companyId}&password=${config.password}`);
+                if (response.data && response.data.years) {
+                    response.data.years.forEach(y => years.add(parseInt(y)));
+                }
+            } catch (err) {
+                console.error(`[GAS] Failed to fetch archive years for ${companyId}: ${err.message}`);
+            }
+        }
+
         return Array.from(years).sort((a, b) => b - a);
     }
 
     async getHistoryMonths(companyId, year) {
         const yearDir = path.join(this.dataDir, 'companies', companyId, year.toString());
-        const months = [];
+        const months = new Set();
+        let config = null;
+
         try {
+            config = await this.getCompanyConfig(companyId);
             const files = await fs.readdir(yearDir);
             for (const file of files) {
                 // Support both "3.json" (Render default) and "json.3" (GAS format)
@@ -453,11 +491,24 @@ class DataManager {
 
                 // FIX: Ensure we only add valid numbers, ignore 'NaN.json' or 'undefined.json'
                 if (!isNaN(parsedOpts)) {
-                    months.push(parsedOpts);
+                    months.add(parsedOpts);
                 }
             }
         } catch (e) { }
-        return Array.from(new Set(months)).sort((a, b) => b - a); // Use Set to avoid duplicates if both exist
+
+        // Fetch from GAS Cold Storage
+        if (config && config.gasUrl) {
+            try {
+                const response = await axios.get(`${config.gasUrl}?action=getMonths&companyId=${companyId}&year=${year}&password=${config.password}`);
+                if (response.data && response.data.months) {
+                    response.data.months.forEach(m => months.add(parseInt(m)));
+                }
+            } catch (err) {
+                console.error(`[GAS] Failed to fetch archive months for ${companyId}: ${err.message}`);
+            }
+        }
+
+        return Array.from(months).sort((a, b) => b - a);
     }
 
     // --- ADMIN ACTIONS ---
@@ -494,8 +545,10 @@ class DataManager {
 
         const companyDir = path.join(this.dataDir, 'companies', companyId);
         let allShifts = [];
+        let config = null;
 
         try {
+            config = await this.getCompanyConfig(companyId);
             const items = await fs.readdir(companyDir, { withFileTypes: true });
 
             for (const item of items) {
@@ -527,6 +580,40 @@ class DataManager {
             }
         } catch (e) {
             console.error(`[DataManager] Error accessing company directory ${companyDir}:`, e.message);
+        }
+
+        // --- Merge with GAS Archive if available ---
+        if (config && config.gasUrl) {
+            try {
+                // Determine which years/months we ALREADY have locally so we don't duplicate
+                const localYears = await this.getHistoryYears(companyId);
+                const localMonths = {}; // { '2024': [1,2,3], ... }
+                for (const y of localYears) {
+                    localMonths[y] = await this.getHistoryMonths(companyId, y);
+                }
+
+                const response = await axios.get(`${config.gasUrl}?action=getFullArchive&companyId=${companyId}&password=${config.password}`);
+                if (response.data && response.data.success && response.data.data) {
+
+                    const archiveShifts = Array.isArray(response.data.data) ? response.data.data : [];
+
+                    // Filter out shifts that belong to months we already have locally to prevent duplicates
+                    const filteredArchive = archiveShifts.filter(s => {
+                        const sd = new Date(parseInt(s.start) || s.start);
+                        if (isNaN(sd)) return false;
+                        const sy = sd.getFullYear();
+                        const sm = sd.getMonth() + 1;
+
+                        // If we have this month locally, skip the archived version
+                        if (localMonths[sy] && localMonths[sy].includes(sm)) return false;
+                        return true;
+                    });
+
+                    allShifts = allShifts.concat(filteredArchive);
+                }
+            } catch (err) {
+                console.error(`[GAS] Failed to fetch full archive payload for ${companyId}: ${err.message}`);
+            }
         }
 
         // Sort all shifts by date descending
@@ -777,18 +864,24 @@ class DataManager {
 
         // Fetch from GAS
         try {
-            const gasUrl = config.GAS_COLD_STORAGE_URL;
+            const configObj = await this.getCompanyConfig(companyId);
+            const gasUrl = configObj ? configObj.gasUrl : null;
             if (!gasUrl) {
-                console.warn('[Cold Data] GAS_COLD_STORAGE_URL not configured');
+                console.warn(`[Cold Data] gasUrl not configured for ${companyId}`);
                 return {};
             }
 
             console.log(`[Cold Data] Fetching from GAS: ${companyId}/${year}/${month}`);
-            const response = await axios.get(`${gasUrl}/history/${companyId}/${year}/${month}`, {
-                timeout: 5000
+            const response = await axios.get(`${gasUrl}?action=getArchivedMonth&companyId=${companyId}&year=${year}&month=${month}&password=${configObj.password}`, {
+                timeout: 10000
             });
 
-            const data = response.data;
+            if (!response.data || !response.data.success || !response.data.data) {
+                console.warn(`[Cold Data] GAS returned error or no data for ${companyId}/${month}/${year}`);
+                return {};
+            }
+
+            const data = typeof response.data.data === 'string' ? JSON.parse(response.data.data) : response.data.data;
 
             // Cache it
             if (!CACHE.historicalData[companyId]) {
