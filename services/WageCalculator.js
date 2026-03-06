@@ -5,7 +5,7 @@ class WageCalculator {
      * @param {Object} salarySettings - The company's salary/overtime config
      * @returns {Object} { totalHours, breakdown: { rateName: hoursCount } }
      */
-    static calculateBreakdown(shifts, salarySettings = {}) {
+    static calculateBreakdown(shifts, salarySettings = {}, holidayDates = []) {
         let totalHoursAll = 0;
         let breakdown = {
             100: 0
@@ -20,14 +20,17 @@ class WageCalculator {
             return (h * 60) + (m || 0);
         };
 
-        const weStartMins = timeToMinutes(salarySettings.weekend?.startHour || '15:00');
-        const weEndMins = timeToMinutes(salarySettings.weekend?.endHour || '20:00');
+        const weStartMins = timeToMinutes(salarySettings.weekend?.startHour || salarySettings.weekendStart || '15:00');
+        const weEndMins = timeToMinutes(salarySettings.weekend?.endHour || salarySettings.weekendEnd || '20:00');
+
+        const holStartMins = timeToMinutes(salarySettings.holidays?.startHour || salarySettings.holidayStart || '17:00');
+        const holEndMins = timeToMinutes(salarySettings.holidays?.endHour || salarySettings.holidayEnd || '19:00');
 
         // Overtime configuration (Fallback to default Israeli law 100% 8h, 125% 2h, 150% rest)
         const otMapObj = salarySettings.overtimeRates || {};
         const otMapArr = salarySettings.overtimeMapping || [0, 0, 0, 0, 0, 0, 0, 0, 0.25, 0.25, 0.5, 0.5]; // Support legacy
 
-        // Shabbat configuration (Fallback to strict default 150% 7h, 175% rest)
+        // Special Days configuration (Shabbat & Holidays)
         const weMapObj = salarySettings.weekendMapping || {};
 
         shifts.forEach(s => {
@@ -44,17 +47,32 @@ class WageCalculator {
             let totalShiftHours = diffMs / 3600000;
             totalHoursAll += totalShiftHours;
 
-            // Determine if shift starts in Shabbat
-            // Shabbat is Friday (day 5) evening to Saturday (day 6) evening
+            // Date processing for Special Days (Shabbat / Holidays)
             const dayOfWeek = shiftStart.getDay(); // 0 = Sunday, 5 = Friday, 6 = Saturday
             const shiftStartMins = shiftStart.getHours() * 60 + shiftStart.getMinutes();
 
-            let isShabbat = false;
+            // Format today's date for holiday lookup (yyyy-MM-dd)
+            const isoDate = shiftStart.toISOString().split('T')[0];
+            const isTodayHoliday = holidayDates.includes(isoDate);
+
+            // Determine if shift starts in a "Special Day" window (Shabbat or Holiday)
+            let isSpecialDay = false;
+
+            // Shabbat check
             if (dayOfWeek === 5 && shiftStartMins >= weStartMins) {
-                isShabbat = true;
+                isSpecialDay = true;
             } else if (dayOfWeek === 6 && shiftStartMins < weEndMins) {
-                isShabbat = true;
+                isSpecialDay = true;
             }
+
+            // Holiday check (Erev Chag or Chag day)
+            // Note: Simplistic detection - if today is holiday, we check start window. 
+            // Better: if today is holiday, it stays special day until holEndMins.
+            if (isTodayHoliday && shiftStartMins < holEndMins) {
+                isSpecialDay = true;
+            }
+            // Erev Chag check is harder without knowing tomorrow's holiday. 
+            // For now, if the user explicitly marks a day in the holiday dates, we treat it as the Special Day.
 
             // Iterate hour by hour to assign the precise rate
             for (let i = 1; i <= Math.ceil(totalShiftHours); i++) {
@@ -68,13 +86,12 @@ class WageCalculator {
 
                 let ratePercent = 100; // Base 100%
 
-                if (isShabbat) {
-                    // Weekend Map
-                    // Get added rate (e.g., 0.5 = +50%, 0.75 = +75%)
-                    let addedRate = 0.5; // Default Shabbat base is 150%
+                if (isSpecialDay) {
+                    // Special Day Map (Unified Shabbat & Holiday matrix)
+                    let addedRate = 0.5; // Default Special Day base is 150%
                     if (weMapObj[`h${i}`] !== undefined) {
                         addedRate = parseFloat(weMapObj[`h${i}`]);
-                    } else if (i > 7) {
+                    } else if (i >= 8) {
                         addedRate = 0.75; // Default 175% from 8th hour
                     }
                     ratePercent = 100 + (addedRate * 100);
@@ -83,8 +100,13 @@ class WageCalculator {
                     let addedRate = 0;
                     if (otMapObj[`h${i}`] !== undefined) {
                         addedRate = parseFloat(otMapObj[`h${i}`]);
-                    } else if (otMapArr && otMapArr[i - 1] !== undefined) {
-                        addedRate = parseFloat(otMapArr[i - 1]);
+                    } else {
+                        // User: 8-9 = 125% (+0.25), 10+ = 150% (+0.5)
+                        if (i === 8 || i === 9) addedRate = 0.25;
+                        else if (i >= 10) addedRate = 0.5;
+                        else if (otMapArr && otMapArr[i - 1] !== undefined) {
+                            addedRate = parseFloat(otMapArr[i - 1]);
+                        }
                     }
                     ratePercent = 100 + (addedRate * 100);
                 }
