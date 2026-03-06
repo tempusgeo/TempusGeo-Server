@@ -125,6 +125,20 @@ class DataManager {
             configData.employees = [];
         }
 
+        // PRE-POPULATE DEFAULT HOLIDAYS FROM ORIGINAL APP
+        if (!configData.settings) configData.settings = {};
+        if (!configData.settings.salary) configData.settings.salary = {};
+        if (!configData.settings.salary.holidays) configData.settings.salary.holidays = {};
+
+        // If the 'eligible' list is missing or empty, set the 6 major holidays as default
+        const currentEligible = configData.settings.salary.holidays.eligible || [];
+        if (currentEligible.length === 0) {
+            configData.settings.salary.holidays.eligible = [
+                'ראש השנה', 'יום כיפור', 'סוכות', 'פסח', 'שבועות', 'יום העצמאות'
+            ];
+            console.log(`[DataManager] Pre-populated default holidays for company ${companyId}`);
+        }
+
         CACHE.companies[companyId] = {
             config: configData,
             shifts: {} // Will load shifts on demand per month
