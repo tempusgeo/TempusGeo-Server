@@ -489,6 +489,127 @@ class DataManager {
         }
     }
 
+    async getCompanyHistory(companyId) {
+        if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
+
+        const companyDir = path.join(this.dataDir, 'companies', companyId);
+        let allShifts = [];
+
+        try {
+            const items = await fs.readdir(companyDir, { withFileTypes: true });
+
+            for (const item of items) {
+                // If the item is a directory, it should be a year directory (e.g., '2024')
+                if (item.isDirectory() && !isNaN(parseInt(item.name))) {
+                    const yearDir = path.join(companyDir, item.name);
+                    const monthFiles = await fs.readdir(yearDir);
+
+                    for (const monthFile of monthFiles) {
+                        if (monthFile.endsWith('.json') || monthFile.startsWith('json.')) {
+                            const filePath = path.join(yearDir, monthFile);
+
+                            try {
+                                const fileData = await fs.readFile(filePath, 'utf8');
+                                const shifts = JSON.parse(fileData);
+
+                                // Flatten shifts object into an array
+                                for (const user in shifts) {
+                                    if (Array.isArray(shifts[user])) {
+                                        allShifts = allShifts.concat(shifts[user]);
+                                    }
+                                }
+                            } catch (e) {
+                                console.error(`[DataManager] Error parsing history file ${filePath}:`, e.message);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`[DataManager] Error accessing company directory ${companyDir}:`, e.message);
+        }
+
+        // Sort all shifts by date descending
+        return allShifts.sort((a, b) => new Date(b.date) - new Date(a.date));
+    }
+
+    async archiveAndCleanup(companyId) {
+        if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
+        const config = CACHE.companies[companyId].config;
+
+        const companyDir = path.join(this.dataDir, 'companies', companyId);
+        let archivedCount = 0;
+
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1;
+
+        try {
+            const items = await fs.readdir(companyDir, { withFileTypes: true });
+
+            for (const item of items) {
+                if (item.isDirectory() && !isNaN(parseInt(item.name))) {
+                    const yearDir = path.join(companyDir, item.name);
+                    const year = parseInt(item.name);
+                    const monthFiles = await fs.readdir(yearDir);
+
+                    for (const monthFile of monthFiles) {
+                        if (!monthFile.endsWith('.json') && !monthFile.startsWith('json.')) continue;
+
+                        let monthStr = monthFile.replace('.json', '').replace('json.', '');
+                        const month = parseInt(monthStr);
+
+                        // Keep current month and previous month. Archive everything older.
+                        const isCurrentMonth = (year === currentYear && month === currentMonth);
+                        let prevMonth = currentMonth - 1;
+                        let prevYear = currentYear;
+                        if (prevMonth === 0) { prevMonth = 12; prevYear = currentYear - 1; }
+                        const isPreviousMonth = (year === prevYear && month === prevMonth);
+
+                        if (!isCurrentMonth && !isPreviousMonth) {
+                            const filePath = path.join(yearDir, monthFile);
+                            const fileData = await fs.readFile(filePath, 'utf8');
+
+                            try {
+                                if (config && config.gasUrl) {
+                                    const response = await axios.post(config.gasUrl, {
+                                        action: 'archiveMonth',
+                                        companyId: companyId,
+                                        year: year,
+                                        month: month,
+                                        data: fileData,
+                                        password: config.password
+                                    }).catch(e => { console.error(`[Archive] GAS push failed: ${e.message}`); return { data: null }; });
+
+                                    if (response.data && response.data.success) {
+                                        await fs.unlink(filePath);
+                                        archivedCount++;
+                                        console.log(`[Archive] Successfully archived and deleted ${year}/${month} for ${companyId}`);
+                                    }
+                                } else {
+                                    // No GAS URL, just purge to save Render limits
+                                    await fs.unlink(filePath);
+                                    archivedCount++;
+                                    console.log(`[Archive] Purging local DB for ${year}/${month} (No GAS link available)`);
+                                }
+                            } catch (err) {
+                                console.error(`[Archive] Failed to archive ${year}/${month} for ${companyId}:`, err.message);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Clean up employee list now that old data is purged
+            await this.cleanupEmployeeList(companyId);
+
+            return { success: true, archived: archivedCount };
+        } catch (e) {
+            console.error(`[Archive] Error processing company directory ${companyDir}:`, e.message);
+            return { success: false, error: e.message };
+        }
+    }
+
     async adminDeleteShift(companyId, { year, month, name, start }) {
         const shifts = await this.getShifts(companyId, parseInt(year), parseInt(month));
         if (!shifts[name]) return;
