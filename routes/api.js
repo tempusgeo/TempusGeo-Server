@@ -47,7 +47,7 @@ router.post('/dispatch', async (req, res) => {
                         result.logoUrl = fullConfig.logoUrl || '';
                         // Fix: get latest employees list from dataManager directly
                         result.allEmployees = await dataManager.getEmployees(result.companyId).catch(() => []);
-                        result.availableHolidays = [];
+                        result.availableHolidays = await dataManager.getAvailableHolidays(result.companyId).catch(() => []);
                         result.dashboard = await dataManager.getDashboard(result.companyId).catch(() => []);
                     } catch (enrichErr) {
                         console.error('[adminLogin] Enrich error:', enrichErr.message);
