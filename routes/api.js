@@ -159,10 +159,51 @@ router.post('/dispatch', async (req, res) => {
                 });
             }
 
+            case 'getYears': {
+                const gasUrl = config.GAS_COLD_STORAGE_URL;
+                if (!gasUrl) return res.json({ success: true, years: [] });
+                try {
+                    const response = await require('axios').get(`${gasUrl}?action=getYears&companyId=${companyId}`, { timeout: 10000 });
+                    return res.json(response.data);
+                } catch (e) {
+                    return res.json({ success: false, years: [], error: e.message });
+                }
+            }
+
+            case 'getMonths': {
+                const gasUrl = config.GAS_COLD_STORAGE_URL;
+                if (!gasUrl) return res.json({ success: true, months: [] });
+                try {
+                    const response = await require('axios').get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${rest.year}`, { timeout: 10000 });
+                    return res.json(response.data);
+                } catch (e) {
+                    return res.json({ success: false, months: [], error: e.message });
+                }
+            }
+
             case 'getEmployeesForMonth': {
-                const data = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
-                // Return sorted employee names array (not the full shifts object)
-                const employees = Object.keys(data).sort();
+                let data = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
+                let employees = Object.keys(data).sort();
+
+                // If no local data, try GAS cold storage
+                if (employees.length === 0) {
+                    const gasUrl = config.GAS_COLD_STORAGE_URL;
+                    if (gasUrl) {
+                        try {
+                            const gasRes = await require('axios').get(
+                                `${gasUrl}?action=getArchivedMonth&companyId=${companyId}&year=${rest.year}&month=${rest.month}`,
+                                { timeout: 15000 }
+                            );
+                            if (gasRes.data && gasRes.data.success && gasRes.data.data) {
+                                const parsed = typeof gasRes.data.data === 'string' ? JSON.parse(gasRes.data.data) : gasRes.data.data;
+                                employees = Object.keys(parsed).sort();
+                            }
+                        } catch (e) {
+                            console.warn('[getEmployeesForMonth] GAS fallback failed:', e.message);
+                        }
+                    }
+                }
+
                 return res.json({ success: true, employees });
             }
 
@@ -957,24 +998,16 @@ router.post('/admin/report/send', async (req, res) => {
 router.post('/admin/export', async (req, res) => {
     try {
         const { companyId } = req.body;
-        const files = await dataManager.getFullHistoryForExport(companyId);
+        const combined = await dataManager.getFullHistoryForExport(companyId);
 
-        if (files.length === 0) return res.status(404).json({ success: false, error: "No data found" });
-
-        const archiver = require('archiver');
-        const archive = archiver('zip', { zlib: { level: 9 } });
-
-        res.attachment(`TempusGeo_History_${companyId}.zip`);
-        archive.pipe(res);
-
-        for (const file of files) {
-            archive.file(file.path, { name: `${file.name}.json` });
+        if (!combined || Object.keys(combined).length === 0) {
+            return res.status(404).json({ success: false, error: 'No data found in GAS or local storage' });
         }
 
-        await archive.finalize();
+        return res.json({ success: true, data: combined });
     } catch (e) {
-        console.error("Export Error:", e);
-        if (!res.headersSent) res.status(500).json({ success: false, error: e.message });
+        console.error('[Export]', e);
+        return res.status(500).json({ success: false, error: e.message });
     }
 });
 
