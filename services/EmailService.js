@@ -84,7 +84,11 @@ class EmailService {
                     to: item.to,
                     subject: item.subject,
                     html: item.html,
-                    name: item.name || config.APP_NAME
+                    name: item.name || config.APP_NAME,
+                    smtp_host: config.SMTP.HOST,
+                    smtp_port: config.SMTP.PORT,
+                    smtp_user: config.SMTP.USER,
+                    smtp_pass: config.SMTP.PASS
                 }, { timeout: 15000 });
 
                 if (response.data && response.data.success) {
