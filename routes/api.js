@@ -261,7 +261,7 @@ router.post('/dispatch', async (req, res) => {
             case 'adminSendMonthlyReport': {
                 const config = await dataManager.getCompanyConfig(companyId);
                 const reportData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
-                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName, config.salary);
+                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName, config.salary, companyId);
 
                 // When finishing a month, trigger the garbage collection to purge old month files out of Render and push to GAS
                 dataManager.archiveAndCleanup(companyId).catch(err => {
@@ -285,7 +285,21 @@ router.post('/dispatch', async (req, res) => {
             case 'getAdminSettings': {
                 const config = await dataManager.getCompanyConfig(companyId);
                 const holidays = await dataManager.getAvailableHolidays(companyId).catch(() => []);
-                return res.json({ success: true, settings: config?.settings || {}, adminEmail: config?.adminEmail || '', availableHolidays: holidays });
+                const client = await dataManager.getClientById(companyId);
+
+                const now = new Date();
+                const expiry = client?.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
+                const isExpired = expiry < now;
+
+                return res.json({
+                    success: true,
+                    settings: config?.settings || {},
+                    adminEmail: config?.adminEmail || '',
+                    availableHolidays: holidays,
+                    paymentHistory: client?.paymentHistory || [],
+                    expiryDate: client?.subscriptionExpiry,
+                    isExpired: isExpired
+                });
             }
 
             case 'saveAdminSettings': {
@@ -1411,8 +1425,8 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
                 const reportData = await dataManager.getShiftsHybrid(client.id, year, month);
                 const bizConfig = await dataManager.getBusinessConfig(client.id);
 
-                // Pass salary config for breakdown
-                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary);
+                // Pass salary config for breakdown and companyId for holiday resolution
+                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary, client.id);
                 sent++;
 
                 // Auto Archive past 30 days data to GAS
