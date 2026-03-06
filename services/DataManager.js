@@ -131,9 +131,6 @@ class DataManager {
         };
     }
 
-    async getAvailableHolidays(companyId) {
-        return config.MAJOR_HOLIDAYS || [];
-    }
 
     async getCompanyConfig(companyId) {
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
@@ -462,22 +459,28 @@ class DataManager {
     async getAvailableHolidays(companyId) {
         try {
             const configObj = await this.getCompanyConfig(companyId);
-            const gasUrl = configObj ? configObj.gasUrl : null;
-            if (!gasUrl) {
-                return config.MAJOR_HOLIDAYS || [];
-            }
+            // Fallback to global GAS if business-specific URL is missing
+            const gasUrl = configObj?.gasUrl || config.GAS_COLD_STORAGE_URL;
 
-            const response = await axios.get(`${gasUrl}?action=getHolidays&companyId=${companyId}&password=${configObj.password}`, {
-                timeout: 5000
-            });
+            if (gasUrl) {
+                const response = await axios.get(`${gasUrl}?action=getHolidays&companyId=${companyId}&password=${configObj?.password || ''}`, {
+                    timeout: 5000
+                });
 
-            if (response.data && response.data.success && response.data.holidays) {
-                return response.data.holidays;
+                if (response.data && response.data.success && response.data.holidays) {
+                    // Normalize to objects: if GAS returns names only, map to objects
+                    return response.data.holidays.map(h => {
+                        if (typeof h === 'string') return { name: h, date: null };
+                        return h;
+                    });
+                }
             }
         } catch (e) {
             console.error(`[Holidays] Failed to fetch from GAS for ${companyId}:`, e.message);
         }
-        return config.MAJOR_HOLIDAYS || [];
+
+        // Fallback to MAJOR_HOLIDAYS strings, converted to objects
+        return (config.MAJOR_HOLIDAYS || []).map(h => ({ name: h, date: null }));
     }
 
     async getHolidayDatesForMonth(companyId, year, month) {
