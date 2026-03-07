@@ -308,7 +308,7 @@ class EmailService {
                     </tr>
                     <tr>
                         <td style="padding: 12px 0; color: #94a3b8; font-weight: 500; font-size: 14px;">מיקום:</td>
-                        <td style="padding: 12px 0; color: ${location.includes('מהמשרד') ? '#f43f5e' : '#10b981'}; text-align: left; font-weight: 700; font-size: 16px;">${location || 'לא צוין'}</td>
+                        <td style="padding: 12px 0; color: ${(location && String(location).includes('מהמשרד')) ? '#f43f5e' : '#10b981'}; text-align: left; font-weight: 700; font-size: 16px;">${location || 'לא צוין'}</td>
                     </tr>
                     ${extraNote ? `
                     <tr>
