@@ -63,7 +63,11 @@ class DataManager {
 
             // 3. Check GAS for Updates / Restore (Smart Sync)
             // We always check GAS on startup to see if we are stale (e.g. reverted to old snapshot)
-            await this.smartRestoreFromGAS(localTime);
+            console.log(`[Init] Checking for cloud restore/sync... (Local: ${localTime})`);
+            const syncSuccess = await this.smartRestoreFromGAS(localTime);
+            if (!syncSuccess) {
+                console.warn("[Init] Cloud sync failed or skipped. Continuing with local data.");
+            }
 
             // 4. Load All Companies into RAM (Warmup)
             for (const client of CACHE.clients) {
@@ -1096,11 +1100,11 @@ class DataManager {
                 return false;
             }
 
-            console.log('[Restore] Checking GAS for updates...');
-            const response = await axios.get(`${gasUrl}?path=restore`, { timeout: 30000 });
+            console.log(`[Restore] URL: ${gasUrl}`);
+            const response = await axios.get(`${gasUrl}?action=restore`, { timeout: 30000 });
 
             if (!response.data || !response.data.success) {
-                console.error('[Restore] GAS returned failure.');
+                console.error(`[Restore] GAS error: ${response.data?.error || 'Unknown error'}`);
                 return false;
             }
 
