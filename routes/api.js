@@ -1244,8 +1244,8 @@ router.post('/payment/process', async (req, res) => {
         // 3a. Resolve business name (Priority: Request body > Config > Default)
         let businessName = req.body.businessName;
 
-        // If not in body, try to fetch from config
-        if (!businessName) {
+        // If not in body or if it's the system name "TempusGeo", try to fetch from config
+        if (!businessName || businessName === 'TempusGeo') {
             try {
                 const companyConfig = await dataManager.getCompanyConfig(companyId);
                 businessName = companyConfig.businessName;
@@ -1255,7 +1255,7 @@ router.post('/payment/process', async (req, res) => {
         }
 
         // Final fallback if everything fails
-        if (!businessName) businessName = '';
+        if (!businessName || businessName === 'TempusGeo') businessName = '';
 
         // 3b. Build proper plan description (REVERSED: Product is TenpusGeo)
         const planDesc = selectedPlan
