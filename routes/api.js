@@ -5,6 +5,8 @@ const dataManager = require('../services/DataManager');
 const tranzilaService = require('../services/TranzilaService');
 const emailService = require('../services/EmailService');
 const WageCalculator = require('../services/WageCalculator');
+const config = require('../config');
+const axios = require('axios');
 
 // ================================================================
 // UNIVERSAL ACTION DISPATCHER
@@ -170,12 +172,13 @@ router.post('/dispatch', async (req, res) => {
                 let allYears = [...localYears];
 
                 // Merge with GAS
-                const gasUrl = config.GAS_COLD_STORAGE_URL;
+                const bizConfig = await dataManager.getCompanyConfig(companyId);
+                const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
                 if (gasUrl) {
                     try {
-                        const gasRes = await require('axios').get(`${gasUrl}?action=getYears&companyId=${companyId}`, { timeout: 10000 });
+                        const gasRes = await axios.get(`${gasUrl}?action=getYears&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 10000 });
                         if (gasRes.data && gasRes.data.success) {
-                            allYears = [...new Set([...allYears, ...gasRes.data.years])];
+                            allYears = [...new Set([...allYears, ...gasRes.data.years.map(y => parseInt(y))])];
                         }
                     } catch (e) {
                         console.error('[GAS] getYears failed:', e.message);
@@ -189,18 +192,19 @@ router.post('/dispatch', async (req, res) => {
                 let allMonths = [...localMonths];
 
                 // Merge with GAS
-                const gasUrl = config.GAS_COLD_STORAGE_URL;
+                const bizConfig = await dataManager.getCompanyConfig(companyId);
+                const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
                 if (gasUrl) {
                     try {
-                        const gasRes = await require('axios').get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${rest.year}`, { timeout: 10000 });
+                        const gasRes = await axios.get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${rest.year}&password=${bizConfig.password || ''}`, { timeout: 10000 });
                         if (gasRes.data && gasRes.data.success) {
-                            allMonths = [...new Set([...allMonths, ...gasRes.data.months.map(m => typeof m === 'object' ? m.name : m)])];
+                            allMonths = [...new Set([...allMonths, ...gasRes.data.months.map(m => typeof m === 'object' ? m.name : m).map(m => parseInt(m))])];
                         }
                     } catch (e) {
                         console.error('[GAS] getMonths failed:', e.message);
                     }
                 }
-                const months = allMonths.map(m => ({ name: m }));
+                const months = allMonths.sort((a, b) => b - a).map(m => ({ name: m }));
                 return res.json({ success: true, months });
             }
 
@@ -211,10 +215,11 @@ router.post('/dispatch', async (req, res) => {
 
                 // Try GAS if missing local or if it's a deep archive request
                 if (rawShifts.length === 0) {
-                    const gasUrl = config.GAS_COLD_STORAGE_URL;
+                    const bizConfig = await dataManager.getCompanyConfig(companyId);
+                    const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
                     if (gasUrl) {
                         try {
-                            const gasRes = await require('axios').get(`${gasUrl}?action=getReport&year=${rest.year}&month=${rest.month}&name=${rest.name || ''}&companyId=${companyId}`, { timeout: 10000 });
+                            const gasRes = await axios.get(`${gasUrl}?action=getReport&year=${rest.year}&month=${rest.month}&name=${rest.name || ''}&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 10000 });
                             if (gasRes.data && gasRes.data.success) {
                                 rawShifts = gasRes.data.shifts || [];
                             }
