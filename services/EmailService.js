@@ -13,10 +13,10 @@ class EmailService {
         this.jetserverSecret = config.JETSERVER_MAIL_SECRET;
 
         // Try to identify if we are configured to use Jetserver
-        if (this.jetserverUrl && !this.jetserverUrl.includes('your-domain.com')) {
-            console.log(`[Email] Primary Provider Configured: JetServer SMTP Proxy`);
+        if (this.jetserverUrl && !this.jetserverUrl.includes('your-domain.com') && this.jetserverUrl.startsWith('http')) {
+            console.log(`[Email] Primary Provider Configured: JetServer SMTP Proxy (${this.jetserverUrl})`);
         } else {
-            console.log(`[Email] JetServer Proxy not configured. Using GAS Relay as primary engine.`);
+            console.log(`[Email] JetServer Proxy not configured or invalid URL. Using GAS Relay as primary engine.`);
         }
 
         if (!this.gasUrl && !this.transporter) {
@@ -77,34 +77,44 @@ class EmailService {
 
     async processEmail(item) {
         // PRIORITY 1: JetServer SMTP Proxy
-        if (this.jetserverUrl && !this.jetserverUrl.includes('your-domain.com')) {
+        if (this.jetserverUrl && !this.jetserverUrl.includes('your-domain.com') && this.jetserverUrl.startsWith('http')) {
+            console.log(`[Email] Attempting JetServer SMTP Proxy for ${item.to}...`);
             try {
-                const response = await axios.post(this.jetserverUrl, {
+                // Simple plain-text conversion for proxy 'text' field (matching test_mail.html requirements)
+                const plainText = item.html.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+
+                const payload = {
                     secret: this.jetserverSecret,
                     to: item.to,
                     subject: item.subject,
                     html: item.html,
+                    text: plainText,
                     name: item.name || config.APP_NAME,
-                    smtp_host: config.SMTP.HOST,
-                    smtp_port: config.SMTP.PORT,
-                    smtp_user: config.SMTP.USER,
-                    smtp_pass: config.SMTP.PASS
-                }, { timeout: 15000 });
+                    // Mandatory fields for PHP proxy validation
+                    smtp_host: config.SMTP.HOST || 'localhost',
+                    smtp_port: config.SMTP.PORT || 587,
+                    smtp_user: config.SMTP.USER || 'not-needed',
+                    smtp_pass: config.SMTP.PASS || 'not-needed'
+                };
+
+                const response = await axios.post(this.jetserverUrl, payload, { timeout: 15000 });
 
                 if (response.data && response.data.success) {
-                    console.log(`[Email] Sent via JetServer SMTP Proxy to ${item.to}`);
+                    console.log(`[Email] Success: Sent via JetServer SMTP Proxy to ${item.to}`);
                     return true;
                 } else {
-                    console.error(`[Email] JetServer Proxy Fail: ${response.data.error || 'Unknown error'}. Trying GAS fallback...`);
+                    const errorMsg = response.data?.error || 'Unknown proxy error';
+                    console.error(`[Email] Proxy Rejected: ${errorMsg}. Switching to GAS fallback...`);
                 }
             } catch (error) {
-                console.error(`[Email] JetServer Proxy Request Error: ${error.message}. Trying GAS fallback...`);
-                // Fall through to GAS
+                const axiosErr = error.response?.data || error.message;
+                console.error(`[Email] Proxy Network Error:`, axiosErr, `. Switching to GAS fallback...`);
             }
         }
 
         // PRIORITY 2: GAS Fallback
         if (this.gasUrl) {
+            console.log(`[Email] Attempting GAS Fallback for ${item.to}...`);
             try {
                 const emailData = {
                     action: 'sendEmail',
@@ -122,17 +132,20 @@ class EmailService {
 
                 let isSuccess = false;
                 if (response.data) {
+                    // GAS sometimes returns success as a boolean or string within an object
                     if (typeof response.data === 'object' && response.data.success) isSuccess = true;
-                    else if (typeof response.data === 'string' && response.data.includes('"success":true')) isSuccess = true;
+                    else if (typeof response.data === 'string' && (response.data.includes('"success":true') || response.data.includes('success":true'))) isSuccess = true;
                     else if (response.status === 200) isSuccess = true;
                 }
 
                 if (isSuccess) {
-                    console.log(`[Email] Sent via GAS to ${item.to}`);
+                    console.log(`[Email] Success: Sent via GAS to ${item.to}`);
                     return true;
+                } else {
+                    console.error(`[Email] GAS Rejected request:`, response.data);
                 }
             } catch (error) {
-                console.error(`[Email] GAS Fail: ${error.message}`);
+                console.error(`[Email] GAS Network Error: ${error.message}`);
             }
         }
 
@@ -190,14 +203,25 @@ class EmailService {
         return this.sendEmail(to, `איפוס סיסמה - ${config.APP_NAME}`, this.getStyledTemplate(title, content));
     }
 
-    async sendMonthlyReport(to, reportData, year, month, businessName, salaryConfig = {}) {
+    async sendMonthlyReport(to, reportData, year, month, businessName, salaryConfig = {}, companyId) {
         const title = `דוח שעות חודשי: ${month}/${year}`;
         const WageCalculator = require('./WageCalculator');
+        const dataManager = require('./DataManager');
+
+        // Fetch holiday dates for this specific month/company
+        let holidayDates = [];
+        if (companyId) {
+            try {
+                holidayDates = await dataManager.getHolidayDatesForMonth(companyId, year, month);
+            } catch (err) {
+                console.error(`[EmailService] Failed to fetch holiday dates for ${companyId}:`, err.message);
+            }
+        }
 
         // Construct HTML Table
         let tableRows = '';
         for (const [employee, shifts] of Object.entries(reportData)) {
-            const wageResult = WageCalculator.calculateBreakdown(shifts, salaryConfig);
+            const wageResult = WageCalculator.calculateBreakdown(shifts, salaryConfig, holidayDates);
 
             let breakdownHtml = '';
             for (const [rate, hours] of Object.entries(wageResult.breakdown)) {
