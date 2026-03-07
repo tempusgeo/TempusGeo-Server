@@ -1101,7 +1101,7 @@ class DataManager {
             }
 
             console.log(`[Restore] URL: ${gasUrl}`);
-            const response = await axios.get(`${gasUrl}?action=restore`, { timeout: 30000 });
+            const response = await axios.get(`${gasUrl}?path=restore`, { timeout: 30000 });
 
             if (!response.data || !response.data.success) {
                 console.error(`[Restore] GAS error: ${response.data?.error || 'Unknown error'}`);
