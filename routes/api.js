@@ -1242,28 +1242,32 @@ router.post('/payment/process', async (req, res) => {
         }
 
         // 3a. Resolve business name (Priority: Request body > Config > Default)
-        let businessName = req.body.businessName || 'TempusGeo';
+        let businessName = req.body.businessName;
 
         // If not in body, try to fetch from config
-        if (businessName === 'TempusGeo') {
+        if (!businessName) {
             try {
                 const companyConfig = await dataManager.getCompanyConfig(companyId);
-                businessName = companyConfig.businessName || businessName;
+                businessName = companyConfig.businessName;
             } catch (e) {
                 console.warn('[Payment] Could not fetch businessName from config:', e.message);
             }
         }
+
+        // Final fallback if everything fails
+        if (!businessName) businessName = '';
 
         // 3b. Build proper plan description (REVERSED: Product is TenpusGeo)
         const planDesc = selectedPlan
             ? `TempusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
             : `TempusGeo - Plan ${planId}`;
 
-        // 3d. Resolve ID (myid) - BE ROBUST (Fixing "missing ID" issue: Prefer Personal ID for Tranzila)
+        // 3d. Resolve ID (myid) - BE ROBUST
+        // Priority: Explicit cardInfo.myid (from frontend) > fallbacks
         const myid = (
+            cardInfo.myid ||
             cardInfo.cardId ||
             cardInfo.idNumber ||
-            cardInfo.myid ||
             cardInfo.id ||
             cardInfo.businessId ||
             ''
@@ -1279,8 +1283,8 @@ router.post('/payment/process', async (req, res) => {
             mycvv: cardInfo.cvv || '',
             // שם בעל הכרטיס (מהטופס) → contact
             contact: cardInfo.cardName || cardInfo.cardHolder || '',
-            // שם העסק אוטומטי מהמערכת → company (The customer business)
-            company: businessName,
+            // שם העסק: אם המשתמש הזין טקסט בתיבת "פרטי עסק לחשבונית" נשתמש בו (businessId), אחרת שם העסק מהמערכת
+            company: (cardInfo.businessId && cardInfo.businessId.trim()) ? cardInfo.businessId : businessName,
             // ח"פ / עוסק מורשה (מהטופס) → myid (לחשבונית)
             myid: myid,
             email: cardInfo.email || '',
