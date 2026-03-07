@@ -403,6 +403,28 @@ class DataManager {
         // --- EMAIL NOTIFICATION (If Enabled) ---
         try {
             const companyConfig = await this.getCompanyConfig(companyId);
+
+            // Calculate distance if coordinates provided
+            let distanceStr = null;
+            if (location && typeof location === 'object' && location.lat && location.lng) {
+                const distMeters = this.calculateDistanceToPolygon(location.lat, location.lng, companyConfig.polygon);
+                if (distMeters === 0) {
+                    distanceStr = "בתוך המשרד";
+                } else if (distMeters < 1000) {
+                    distanceStr = `${Math.round(distMeters)} מטרים מהמשרד`;
+                } else {
+                    distanceStr = `${(distMeters / 1000).toFixed(1)} ק"מ מהמשרד`;
+                }
+
+                // Store distance in shift record for reporting
+                const shifts = await this.getShifts(companyId, year, month);
+                const lastShift = shifts[employeeName][shifts[employeeName].length - 1];
+                if (lastShift) {
+                    lastShift.distance = distanceStr;
+                    await this.saveShifts(companyId, year, month, shifts);
+                }
+            }
+
             if (companyConfig.settings && companyConfig.settings.emailNotifications && companyConfig.adminEmail) {
                 // Don't await this, let it run in background
                 emailService.sendShiftAlert(
@@ -410,8 +432,10 @@ class DataManager {
                     employeeName,
                     action,
                     timestamp,
-                    location,
-                    companyConfig.businessName
+                    distanceStr || (typeof location === 'string' ? location : "-"),
+                    companyConfig.businessName,
+                    "",
+                    companyConfig.logoUrl
                 ).catch(e => console.error(`[Email Alert] Failed to send shift alert: ${e.message}`));
             }
         } catch (e) {
@@ -1390,7 +1414,8 @@ class DataManager {
                                             shift.end,
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
-                                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${maxHours} שעות.`
+                                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${maxHours} שעות.`,
+                                            companyConfig.logoUrl
                                         ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
                                     }
                                 }
@@ -1407,7 +1432,8 @@ class DataManager {
                                             now.getTime(),
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
-                                            `העובד נמצא במשמרת פעילה מעל ${maxHours} שעות (נוכחי: ${durationHours.toFixed(1)} שעות).`
+                                            `העובד נמצא במשמרת פעילה מעל ${maxHours} שעות (נוכחי: ${durationHours.toFixed(1)} שעות).`,
+                                            companyConfig.logoUrl
                                         ).catch(e => console.error(`[Max Alert Email FAIL] ${e.message}`));
                                     }
                                 }
@@ -1496,11 +1522,13 @@ class DataManager {
                     // Send alert (limit to once a day logic needed? 
                     //Ideally we'd track 'lastAlertSent' but for now it's daily trigger)
 
+                    const bizConfig = await this.getBusinessConfig(client.id);
                     emailService.sendSubscriptionAlert(
                         client.email,
                         client.businessName,
                         daysLeft,
-                        client.subscriptionExpiry
+                        client.subscriptionExpiry,
+                        bizConfig.logoUrl
                     ).catch(console.error);
                 } else {
                     results.valid++;
@@ -1550,6 +1578,60 @@ class DataManager {
                 console.error(`[DataManager] Cleanup failed for ${client.id}:`, err.message);
             }
         }
+    }
+    // --- GEOLOCATION HELPERS ---
+
+    calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; // metres
+        const φ1 = lat1 * Math.PI / 180;
+        const φ2 = lat2 * Math.PI / 180;
+        const Δφ = (lat2 - lat1) * Math.PI / 180;
+        const Δλ = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c; // in metres
+    }
+
+    isPointInPolygon(lat, lng, polygon) {
+        if (!polygon || polygon.length < 3) return false;
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+            const xi = polygon[i].lat, yi = polygon[i].lng;
+            const xj = polygon[j].lat, yj = polygon[j].lng;
+            const intersect = ((yi > lng) !== (yj > lng)) && (lat < (xj - xi) * (lng - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    calculateDistanceToPolygon(lat, lng, polygon) {
+        if (!polygon || polygon.length < 3) return 0;
+
+        // If inside, distance is 0
+        if (this.isPointInPolygon(lat, lng, polygon)) return 0;
+
+        let minMeters = Infinity;
+        const p = { lat, lng };
+
+        for (let i = 0; i < polygon.length; i++) {
+            const v = polygon[i];
+            const w = polygon[(i + 1) % polygon.length];
+
+            // Nearest projection on segment
+            const l2 = (v.lat - w.lat) ** 2 + (v.lng - w.lng) ** 2;
+            let t = 0;
+            if (l2 > 0) {
+                t = ((p.lat - v.lat) * (w.lat - v.lat) + (p.lng - v.lng) * (w.lng - v.lng)) / l2;
+                t = Math.max(0, Math.min(1, t));
+            }
+
+            const projLat = v.lat + t * (w.lat - v.lat);
+            const projLng = v.lng + t * (w.lng - v.lng);
+
+            const d = this.calculateDistance(lat, lng, projLat, projLng);
+            if (d < minMeters) minMeters = d;
+        }
+        return minMeters;
     }
 }
 
