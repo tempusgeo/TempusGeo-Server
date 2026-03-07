@@ -1259,6 +1259,16 @@ router.post('/payment/process', async (req, res) => {
             ? `TempusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
             : `TempusGeo - Plan ${planId}`;
 
+        // 3d. Resolve ID (myid) - BE ROBUST (Fixing "missing ID" issue)
+        const myid = (
+            cardInfo.businessId ||
+            cardInfo.cardId ||
+            cardInfo.idNumber ||
+            cardInfo.myid ||
+            cardInfo.id ||
+            ''
+        ).toString().trim();
+
         const payload = {
             terminalName: systemConfig.tranzilaTerminal,
             terminalPass: systemConfig.tranzilaPass,
@@ -1272,13 +1282,14 @@ router.post('/payment/process', async (req, res) => {
             // שם העסק אוטומטי מהמערכת → company (The customer business)
             company: businessName,
             // ח"פ / עוסק מורשה (מהטופס) → myid (לחשבונית)
-            myid: cardInfo.businessId || cardInfo.cardId || cardInfo.idNumber || '',
+            myid: myid,
             email: cardInfo.email || '',
             pdesc: planDesc,
             companyId: companyId
         };
 
         const payloadStr = JSON.stringify(payload);
+        console.log(`[Payment] Resolved myid for proxy: ${myid}`);
         console.log('[Payment] Payload prepared (JSON):', payloadStr.replace(/"terminalPass":"[^"]+"/, '"terminalPass":"***"'));
 
         // 4. Send to JetServer Proxy
