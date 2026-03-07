@@ -138,36 +138,36 @@ class EmailService {
         return false;
     }
 
-    // Helper for consistent styling
+    // Helper for consistent styling (Compact Version)
     getStyledTemplate(title, content, footerText = '', logoUrl = null, businessName = null) {
-        const logoHtml = logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height: 50px; margin-bottom: 10px; border-radius: 8px;">` : '';
+        const logoHtml = logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height: 40px; margin-bottom: 8px; border-radius: 6px;">` : '';
         const displayBusinessName = businessName || config.APP_NAME;
 
         return `
-            <div dir="rtl" style="font-family: 'Rubik', 'Inter', 'Segoe UI', sans-serif; background-color: #0f172a; margin: 0; padding: 20px 10px; color: #ffffff;">
+            <div dir="rtl" style="font-family: 'Rubik', 'Inter', 'Segoe UI', sans-serif; background-color: #0f172a; margin: 0; padding: 10px 5px; color: #ffffff;">
                 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap" rel="stylesheet">
-                <div style="max-width: 500px; margin: 0 auto; background-color: #1e293b; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.05);">
+                <div style="max-width: 450px; margin: 0 auto; background-color: #1e293b; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.05);">
                     
                     <!-- Header -->
-                    <div style="background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); padding: 20px; text-align: center;">
+                    <div style="background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); padding: 15px; text-align: center;">
                         ${logoHtml}
-                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">${displayBusinessName}</h1>
+                        <h1 style="color: #ffffff; margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.5px;">${displayBusinessName}</h1>
                     </div>
 
                     <!-- Content -->
-                    <div style="padding: 25px 20px; color: #e2e8f0; font-size: 15px; line-height: 1.5;">
-                        <h2 style="color: #ffffff; margin-top: 0; margin-bottom: 20px; font-size: 20px; font-weight: 700; text-align: center;">${title}</h2>
-                        <div style="background: rgba(0, 0, 0, 0.2); border-radius: 12px; padding: 20px; border: 1px solid rgba(255, 255, 255, 0.05);">
+                    <div style="padding: 15px; color: #e2e8f0; font-size: 14px; line-height: 1.4;">
+                        <h2 style="color: #ffffff; margin-top: 0; margin-bottom: 12px; font-size: 18px; font-weight: 700; text-align: center;">${title}</h2>
+                        <div style="background: rgba(0, 0, 0, 0.15); border-radius: 10px; padding: 15px; border: 1px solid rgba(255, 255, 255, 0.05);">
                             ${content}
                         </div>
                     </div>
 
                     <!-- Footer -->
-                    <div style="background-color: rgba(15, 23, 42, 0.5); padding: 20px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.05);">
-                        <p style="margin: 0; color: #94a3b8; font-size: 12px; font-weight: 500;">
-                            ${footerText || 'הודעה אוטומטית ממערכת ' + config.APP_NAME}
+                    <div style="background-color: rgba(15, 23, 42, 0.5); padding: 12px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.05);">
+                        <p style="margin: 0; color: #64748b; font-size: 11px; font-weight: 500;">
+                            ${footerText || 'מערכת ' + config.APP_NAME + ' - הודעה אוטומטית'}
                             <br>
-                            <span style="display: inline-block; margin-top: 6px; opacity: 0.6;">&copy; ${new Date().getFullYear()} ${config.APP_NAME}</span>
+                            <span style="display: inline-block; margin-top: 4px; opacity: 0.5;">&copy; ${new Date().getFullYear()} ${config.APP_NAME}</span>
                         </p>
                     </div>
                 </div>
@@ -291,17 +291,22 @@ class EmailService {
         if (action !== 'FORCE_OUT') {
             let locColor = '#ffffff';
             let locSuffix = '';
-            if (location && (String(location).includes('במשרד') || String(location).includes('בתוך הפוליגון') || String(location).includes('בטווח'))) {
+            const locationStr = String(location);
+
+            // User requirement: Blue for valid location, with suffix in parentheses
+            if (locationStr.includes('בתוך המשרד') || locationStr.includes('בטווח המורשה') || locationStr.includes('בטווח')) {
                 locColor = '#3b82f6'; // Blue
-                locSuffix = ' <span style="font-size: 12px; opacity: 0.8;">(בטווח המותר)</span>';
-            } else if (location && String(location).includes('מהמשרד')) {
+                if (!locationStr.includes('(')) {
+                    locSuffix = ' <span style="font-size: 11px; opacity: 0.8;">(בטווח המותר)</span>';
+                }
+            } else if (locationStr.includes('מהמשרד')) {
                 locColor = '#f43f5e'; // Red
             }
-            
+
             locationHtml = `
                 <tr>
-                    <td style="padding: 8px 0; color: #94a3b8; font-size: 13px;">מיקום:</td>
-                    <td style="padding: 8px 0; color: ${locColor}; font-weight: 700; text-align: left; font-size: 14px;">${location || 'לא צוין'}${locSuffix}</td>
+                    <td style="padding: 6px 0; color: #94a3b8; font-size: 13px;">מיקום:</td>
+                    <td style="padding: 6px 0; color: ${locColor}; font-weight: 700; text-align: left; font-size: 13px;">${location || 'לא צוין'}${locSuffix}</td>
                 </tr>
             `;
         }
