@@ -1274,13 +1274,20 @@ class DataManager {
         // Clean data
         const safePassword = data.password ? data.password.toString() : '';
 
+        // Subscription Expiry Logic: Always ends on the 2nd of the FOLLOWING month.
+        // Example: Registered 7.3 -> Expiry 2.4.
+        const trialExpiry = new Date();
+        trialExpiry.setMonth(trialExpiry.getMonth() + 1);
+        trialExpiry.setDate(2);
+        trialExpiry.setHours(23, 59, 59, 999);
+
         const client = {
             id: newId,
             businessName: data.businessName,
             email: data.email,
             phone: data.phone,
             password: safePassword, // Store password here for admin login
-            subscriptionExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days trial
+            subscriptionExpiry: trialExpiry.toISOString(),
             joinedAt: new Date().toISOString()
         };
 
@@ -1433,15 +1440,29 @@ class DataManager {
         const now = new Date();
         let currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
 
-        // If expired, start from now. If active, add to existing expiry.
+        // Alignment Logic (2nd of the month)
+        // If expired, start adding from the next month's 2nd.
+        // If active, add to the current expiry date.
+
+        let targetDate;
         if (currentExpiry < now) {
-            currentExpiry = now;
+            // Expired: Start from the 2nd of the next month
+            targetDate = new Date();
+            targetDate.setMonth(targetDate.getMonth() + 1);
+            targetDate.setDate(2);
+        } else {
+            // Active: Just use current expiry as base
+            targetDate = new Date(currentExpiry);
         }
 
-        // Add months
-        currentExpiry.setMonth(currentExpiry.getMonth() + monthsToAdd);
+        // Add the months from the plan
+        targetDate.setMonth(targetDate.getMonth() + monthsToAdd);
 
-        client.subscriptionExpiry = currentExpiry.toISOString();
+        // Ensure it's exactly the 2nd day (in case of weird month overlaps)
+        targetDate.setDate(2);
+        targetDate.setHours(23, 59, 59, 999);
+
+        client.subscriptionExpiry = targetDate.toISOString();
 
         // Log payment
         if (!client.paymentHistory) client.paymentHistory = [];
