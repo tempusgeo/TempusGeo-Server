@@ -176,7 +176,9 @@ router.post('/dispatch', async (req, res) => {
                 const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
                 if (gasUrl) {
                     try {
+                        console.log(`[API] Fetching GAS years for ${companyId} via ${gasUrl}`);
                         const gasRes = await axios.get(`${gasUrl}?action=getYears&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 10000 });
+                        console.log(`[API] GAS Years result success: ${gasRes.data?.success}`);
                         if (gasRes.data && gasRes.data.success) {
                             allYears = [...new Set([...allYears, ...gasRes.data.years.map(y => parseInt(y))])];
                         }
@@ -196,7 +198,9 @@ router.post('/dispatch', async (req, res) => {
                 const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
                 if (gasUrl) {
                     try {
+                        console.log(`[API] Fetching GAS months for ${companyId}/${rest.year} via ${gasUrl}`);
                         const gasRes = await axios.get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${rest.year}&password=${bizConfig.password || ''}`, { timeout: 10000 });
+                        console.log(`[API] GAS Months result success: ${gasRes.data?.success}`);
                         if (gasRes.data && gasRes.data.success) {
                             allMonths = [...new Set([...allMonths, ...gasRes.data.months.map(m => typeof m === 'object' ? m.name : m).map(m => parseInt(m))])];
                         }
@@ -219,7 +223,9 @@ router.post('/dispatch', async (req, res) => {
                     const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
                     if (gasUrl) {
                         try {
+                            console.log(`[API] Fetching GAS report for ${companyId}/${rest.year}/${rest.month} via ${gasUrl}`);
                             const gasRes = await axios.get(`${gasUrl}?action=getReport&year=${rest.year}&month=${rest.month}&name=${rest.name || ''}&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 10000 });
+                            console.log(`[API] GAS Report result success: ${gasRes.data?.success}, shifts found: ${gasRes.data?.shifts?.length || 0}`);
                             if (gasRes.data && gasRes.data.success) {
                                 rawShifts = gasRes.data.shifts || [];
                             }
