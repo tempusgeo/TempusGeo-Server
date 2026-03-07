@@ -492,16 +492,29 @@ router.post('/super-admin/record-payment', async (req, res) => {
         const client = await dataManager.getClientById(targetCompanyId);
         if (!client) return res.status(404).json({ success: false, error: "Business not found" });
 
-        // Adjust subscription expiry
-        const currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : new Date();
+        // Adjust subscription expiry using "2nd of the month" logic
         const now = new Date();
-        // If already expired, start from now
-        const baseDate = currentExpiry < now ? now : currentExpiry;
+        const currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
+
+        let targetDate;
+        if (currentExpiry < now) {
+            // Expired: Start from the 2nd of the next month
+            targetDate = new Date();
+            targetDate.setMonth(targetDate.getMonth() + 1);
+            targetDate.setDate(2);
+        } else {
+            // Active: Just use current expiry as base
+            targetDate = new Date(currentExpiry);
+        }
 
         // Add months (handle negative months for refund/shortening)
-        const newExpiry = new Date(baseDate);
-        newExpiry.setMonth(newExpiry.getMonth() + parseInt(months));
-        client.subscriptionExpiry = newExpiry.toISOString();
+        targetDate.setMonth(targetDate.getMonth() + parseInt(months));
+
+        // Always align to the 2nd
+        targetDate.setDate(2);
+        targetDate.setHours(23, 59, 59, 999);
+
+        client.subscriptionExpiry = targetDate.toISOString();
 
         // Record in payment history
         if (!client.paymentHistory) client.paymentHistory = [];
