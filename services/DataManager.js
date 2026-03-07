@@ -1298,11 +1298,11 @@ class DataManager {
         // Clean data
         const safePassword = data.password ? data.password.toString() : '';
 
-        // Subscription Expiry Logic: Always ends on the 2nd of the FOLLOWING month.
-        // Example: Registered 7.3 -> Expiry 2.4.
+        // Subscription Expiry Logic: Always ends on the 1st of the FOLLOWING month.
+        // Example: Registered 7.3 -> Expiry 1.4.
         const trialExpiry = new Date();
         trialExpiry.setMonth(trialExpiry.getMonth() + 1);
-        trialExpiry.setDate(2);
+        trialExpiry.setDate(1);
         trialExpiry.setHours(23, 59, 59, 999);
 
         const client = {
@@ -1466,16 +1466,16 @@ class DataManager {
         const now = new Date();
         let currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
 
-        // Alignment Logic (2nd of the month)
-        // If expired, start adding from the next month's 2nd.
-        // If active, add to the current expiry date.
+        // Alignment Logic (1st of the month)
+        // If expired, start adding from the next month's 1st.
+        // If active, add to the current expiry date base.
 
         let targetDate;
         if (currentExpiry < now) {
-            // Expired: Start from the 2nd of the next month
+            // Expired: Start from the 1st of the next month
             targetDate = new Date();
             targetDate.setMonth(targetDate.getMonth() + 1);
-            targetDate.setDate(2);
+            targetDate.setDate(1);
         } else {
             // Active: Just use current expiry as base
             targetDate = new Date(currentExpiry);
@@ -1484,8 +1484,8 @@ class DataManager {
         // Add the months from the plan
         targetDate.setMonth(targetDate.getMonth() + monthsToAdd);
 
-        // Ensure it's exactly the 2nd day (in case of weird month overlaps)
-        targetDate.setDate(2);
+        // Ensure it's exactly the 1st day (consistent alignment)
+        targetDate.setDate(1);
         targetDate.setHours(23, 59, 59, 999);
 
         client.subscriptionExpiry = targetDate.toISOString();
