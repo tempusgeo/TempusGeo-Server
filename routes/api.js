@@ -338,6 +338,7 @@ router.post('/dispatch', async (req, res) => {
                 // Forward to internal payment processor
                 req.body.paymentDetails = rest.paymentDetails || rest.cardData;
                 req.body.price = rest.price;
+                req.body.businessName = rest.businessName;
                 // Re-dispatch to the payment route handler inline
                 req.url = '/payment/process';
                 return router.handle(req, res);
@@ -1240,13 +1241,17 @@ router.post('/payment/process', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Missing credit card expiry (expMonth+expYear or expiry)' });
         }
 
-        // 3a. Fetch company name for contact field (Bug 1 fix)
-        let businessName = 'TempusGeo';
-        try {
-            const companyConfig = await dataManager.getCompanyConfig(companyId);
-            businessName = companyConfig.businessName || businessName;
-        } catch (e) {
-            console.warn('[Payment] Could not fetch businessName, using default:', e.message);
+        // 3a. Resolve business name (Priority: Request body > Config > Default)
+        let businessName = req.body.businessName || 'TempusGeo';
+
+        // If not in body, try to fetch from config
+        if (businessName === 'TempusGeo') {
+            try {
+                const companyConfig = await dataManager.getCompanyConfig(companyId);
+                businessName = companyConfig.businessName || businessName;
+            } catch (e) {
+                console.warn('[Payment] Could not fetch businessName from config:', e.message);
+            }
         }
 
         // 3b. Build proper plan description (REVERSED: Product is TenpusGeo)
