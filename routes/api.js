@@ -224,10 +224,27 @@ router.post('/dispatch', async (req, res) => {
                     if (gasUrl) {
                         try {
                             console.log(`[API] Fetching GAS report for ${companyId}/${rest.year}/${rest.month} via ${gasUrl}`);
-                            const gasRes = await axios.get(`${gasUrl}?action=getReport&year=${rest.year}&month=${rest.month}&name=${rest.name || ''}&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 10000 });
-                            console.log(`[API] GAS Report result success: ${gasRes.data?.success}, shifts found: ${gasRes.data?.shifts?.length || 0}`);
+                            const gasRes = await axios.get(`${gasUrl}?action=getArchivedMonth&year=${rest.year}&month=${rest.month}&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 10000 });
+                            console.log(`[API] GAS Report result success: ${gasRes.data?.success}`);
+
                             if (gasRes.data && gasRes.data.success) {
-                                rawShifts = gasRes.data.shifts || [];
+                                // GAS getArchivedMonth returns results in 'data' as stringified JSON
+                                let shiftsData = gasRes.data.data;
+                                if (typeof shiftsData === 'string') {
+                                    try {
+                                        shiftsData = JSON.parse(shiftsData);
+                                    } catch (pe) {
+                                        console.error('[API] Failed to parse shifts from GAS:', pe.message);
+                                        shiftsData = {};
+                                    }
+                                }
+
+                                if (rest.name) {
+                                    rawShifts = shiftsData[rest.name] || [];
+                                } else {
+                                    // Handle cases where we might need all shifts (if applicable)
+                                    rawShifts = [];
+                                }
                             }
                         } catch (e) {
                             console.error('[GAS] getReport failed:', e.message);
