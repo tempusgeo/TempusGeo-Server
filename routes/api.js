@@ -15,6 +15,32 @@ router.post('/dispatch', async (req, res) => {
     console.log(`[Dispatch] action=${action} companyId=${companyId}`);
 
     try {
+        // --- HELPER FOR SUMMARIES ---
+        const getMonthlySummary = async (cid, name) => {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth() + 1;
+            const bizConfig = await dataManager.getCompanyConfig(cid);
+            if (!bizConfig) return null;
+
+            const shifts = await dataManager.getShifts(cid, year, month);
+            const empShifts = shifts[name] || [];
+            const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month);
+            const wageResult = WageCalculator.calculateBreakdown(empShifts, bizConfig.settings?.salary || {}, holidayDates);
+            return {
+                totalHours: wageResult.totalHours.toFixed(2),
+                wageBreakdown: wageResult.breakdown
+            };
+        };
+
+        const calculateDuration = (start, end) => {
+            if (!start || !end) return "00:00";
+            const diffMs = parseInt(end) - parseInt(start);
+            const h = Math.floor(diffMs / 3600000);
+            const m = Math.floor((diffMs % 3600000) / 60000);
+            return `${h}:${m.toString().padStart(2, '0')}`;
+        };
+
         switch (action) {
             // === BUSINESS SETUP ===
             case 'createNewBusiness': {
@@ -91,14 +117,44 @@ router.post('/dispatch', async (req, res) => {
             case 'checkOut': {
                 const type = action === 'checkIn' ? 'IN' : 'OUT';
                 const locationData = (rest.lat && rest.lng) ? { lat: rest.lat, lng: rest.lng } : null;
-                const result = await dataManager.logShift(companyId, rest.name, type, Date.now(), locationData);
+                await dataManager.logShift(companyId, rest.name, type, Date.now(), locationData);
                 const status = await dataManager.getEmployeeStatus(companyId, rest.name);
-                return res.json({ success: true, ...status, message: type === 'IN' ? 'נכנסת בהצלחה' : 'יצאת בהצלחה' });
+
+                // Enriched summaries
+                const monthlySummary = await getMonthlySummary(companyId, rest.name);
+
+                let lastShiftSummary = null;
+                if (type === 'OUT') {
+                    // Get just the last shift we just closed
+                    const now = new Date();
+                    const shifts = await dataManager.getShifts(companyId, now.getFullYear(), now.getMonth() + 1);
+                    const empShifts = shifts[rest.name] || [];
+                    const lastShift = empShifts[empShifts.length - 1];
+                    if (lastShift && lastShift.end) {
+                        const bizConfig = await dataManager.getCompanyConfig(companyId);
+                        const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, now.getFullYear(), now.getMonth() + 1);
+                        const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates);
+                        lastShiftSummary = {
+                            duration: calculateDuration(lastShift.start, lastShift.end),
+                            weightedHours: shiftWage.totalHours.toFixed(2),
+                            wageBreakdown: shiftWage.breakdown
+                        };
+                    }
+                }
+
+                return res.json({
+                    success: true,
+                    ...status,
+                    message: type === 'IN' ? 'נכנסת בהצלחה' : 'יצאת בהצלחה',
+                    monthlySummary,
+                    lastShiftSummary
+                });
             }
 
             case 'getStatus': {
                 const status = await dataManager.getEmployeeStatus(companyId, rest.name);
-                return res.json({ success: true, ...status });
+                const monthlySummary = await getMonthlySummary(companyId, rest.name);
+                return res.json({ success: true, ...status, monthlySummary });
             }
 
             // === REPORTS ===
