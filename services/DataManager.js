@@ -562,7 +562,7 @@ class DataManager {
         const allHolidays = await this.getAvailableHolidays(companyId);
         if (!Array.isArray(allHolidays)) return [];
 
-        const bizConfig = await this.getBusinessConfig(companyId);
+        const bizConfig = await this.getCompanyConfig(companyId);
         const selectedNames = bizConfig.salary?.holidays?.eligible || bizConfig.salary?.selectedHolidays || [];
 
         // Filter for specific month/year AND user selection
@@ -1522,7 +1522,7 @@ class DataManager {
                     // Send alert (limit to once a day logic needed? 
                     //Ideally we'd track 'lastAlertSent' but for now it's daily trigger)
 
-                    const bizConfig = await this.getBusinessConfig(client.id);
+                    const bizConfig = await this.getCompanyConfig(client.id);
                     emailService.sendSubscriptionAlert(
                         client.email,
                         client.businessName,
