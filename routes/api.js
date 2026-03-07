@@ -175,7 +175,7 @@ router.post('/dispatch', async (req, res) => {
                 const rawShifts = rest.name ? (rawData[rest.name] || []) : [];
 
                 // Get business config for Wage Calculator
-                const bizConfig = await dataManager.getBusinessConfig(companyId);
+                const bizConfig = await dataManager.getCompanyConfig(companyId);
 
                 // Format shifts for admin table rendering (needs rowIndex, date, start, end as HH:MM)
                 let totalHours = 0;
@@ -1080,7 +1080,7 @@ router.post('/admin/report/send', async (req, res) => {
 
         // In GAS this was sending CSV. Here we just call emailService.
         // EmailService needs to format it.
-        const bizConfig = await dataManager.getBusinessConfig(companyId);
+        const bizConfig = await dataManager.getCompanyConfig(companyId);
         await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary, companyId, bizConfig.logoUrl);
         res.json({ success: true });
     } catch (e) {
@@ -1514,7 +1514,7 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
             if (!client.email) continue;
             try {
                 const reportData = await dataManager.getShiftsHybrid(client.id, year, month);
-                const bizConfig = await dataManager.getBusinessConfig(client.id);
+                const bizConfig = await dataManager.getCompanyConfig(client.id);
 
                 // Pass salary config for breakdown and companyId for holiday resolution
                 await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary, client.id, bizConfig.logoUrl);
