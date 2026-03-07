@@ -1249,10 +1249,10 @@ router.post('/payment/process', async (req, res) => {
             console.warn('[Payment] Could not fetch businessName, using default:', e.message);
         }
 
-        // 3b. Build proper plan description (Bug 2 fix)
+        // 3b. Build proper plan description (REVERSED: Product is TenpusGeo)
         const planDesc = selectedPlan
-            ? `${businessName} - מנוי ל-${selectedPlan.months || 1} חודשים`
-            : `${businessName} - Plan ${planId}`;
+            ? `TenpusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
+            : `TenpusGeo - Plan ${planId}`;
 
         const payload = {
             terminalName: systemConfig.tranzilaTerminal,
@@ -1264,7 +1264,7 @@ router.post('/payment/process', async (req, res) => {
             mycvv: cardInfo.cvv || '',
             // שם בעל הכרטיס (מהטופס) → contact
             contact: cardInfo.cardName || cardInfo.cardHolder || '',
-            // שם העסק אוטומטי מהמערכת → company (שדה נפרד בטרנזילה)
+            // שם העסק אוטומטי מהמערכת → company (The customer business)
             company: businessName,
             // ח"פ / עוסק מורשה (מהטופס) → myid (לחשבונית)
             myid: cardInfo.businessId || cardInfo.cardId || cardInfo.idNumber || '',
