@@ -141,8 +141,15 @@ class WageCalculator {
             if (breakdown[key] === 0) delete breakdown[key];
         }
 
+        // Calculate weightedTotal for wages
+        let weightedTotal = 0;
+        for (const [rate, hours] of Object.entries(breakdown)) {
+            weightedTotal += hours * (parseFloat(rate) / 100);
+        }
+
         return {
             totalHours: parseFloat(totalHoursAll.toFixed(2)),
+            weightedTotal: parseFloat(weightedTotal.toFixed(2)),
             breakdown
         };
     }
