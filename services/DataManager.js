@@ -439,7 +439,8 @@ class DataManager {
                 }
             }
 
-            if (companyConfig.settings && companyConfig.settings.emailNotifications === true && companyConfig.adminEmail) {
+            const isEmailEnabled = userConstraint.enableEmailUpdate === true;
+            if (isEmailEnabled && companyConfig.adminEmail) {
                 // Don't await this, let it run in background
                 emailService.sendShiftAlert(
                     companyConfig.adminEmail,
@@ -1431,8 +1432,6 @@ class DataManager {
                             const maxHours = hasCustomRule ? parseFloat(userConstraint.maxDuration) : 12;
                             const enableAutoOut = hasCustomRule ? (userConstraint.enableAutoOut === true) : true; // default true for 12h fallback
 
-                            // Check global email setting as a fallback for Forced Checkouts
-                            const globalEmailEnabled = companyConfig?.settings?.emailNotifications === true;
                             const enableAlert = hasCustomRule ? (userConstraint.enableAlert === true) : false; // default false for 12h fallback
 
                             if (durationHours > maxHours) {
@@ -1443,8 +1442,10 @@ class DataManager {
                                     changed = true;
                                     results.closed++;
 
-                                    // Send alert if explicitly enabled for user, OR if global emails are on (managers want to know about forced checkouts)
-                                    if ((enableAlert || globalEmailEnabled) && companyConfig.adminEmail) {
+                                    // Send alert if explicitly enabled for user, OR if it's a forced checkout (managers want to know)
+                                    // User said: "הגדרת התראת חריגה צריכה לעקוף את איסור שליחת העדכונים במייל" 
+                                    const shouldAlert = enableAlert || true; // forced checkouts are critical alerts
+                                    if (shouldAlert && companyConfig.adminEmail) {
                                         emailService.sendShiftAlert(
                                             companyConfig.adminEmail,
                                             user,
@@ -1452,7 +1453,7 @@ class DataManager {
                                             shift.end,
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
-                                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${maxHours} שעות.`,
+                                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${this.formatHHMM(maxHours)} שעות.`,
                                             companyConfig.logoUrl
                                         ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
                                     }
@@ -1462,7 +1463,7 @@ class DataManager {
                                     shift.maxAlertSent = true; // Mark to prevent spamming on next interval
                                     changed = true;
 
-                                    if (companyConfig.adminEmail) {
+                                    if (enableAlert && companyConfig.adminEmail) {
                                         emailService.sendShiftAlert(
                                             companyConfig.adminEmail,
                                             user,
@@ -1470,7 +1471,7 @@ class DataManager {
                                             now.getTime(),
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
-                                            `העובד נמצא במשמרת פעילה מעל ${maxHours} שעות (נוכחי: ${durationHours.toFixed(1)} שעות).`,
+                                            `העובד נמצא במשמרת פעילה מעל ${this.formatHHMM(maxHours)} שעות (נוכחי: ${this.formatHHMM(durationHours)}).`,
                                             companyConfig.logoUrl
                                         ).catch(e => console.error(`[Max Alert Email FAIL] ${e.message}`));
                                     }
