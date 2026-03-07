@@ -1259,13 +1259,13 @@ router.post('/payment/process', async (req, res) => {
             ? `TempusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
             : `TempusGeo - Plan ${planId}`;
 
-        // 3d. Resolve ID (myid) - BE ROBUST (Fixing "missing ID" issue)
+        // 3d. Resolve ID (myid) - BE ROBUST (Fixing "missing ID" issue: Prefer Personal ID for Tranzila)
         const myid = (
-            cardInfo.businessId ||
             cardInfo.cardId ||
             cardInfo.idNumber ||
             cardInfo.myid ||
             cardInfo.id ||
+            cardInfo.businessId ||
             ''
         ).toString().trim();
 
