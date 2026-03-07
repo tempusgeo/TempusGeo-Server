@@ -16,6 +16,12 @@ router.post('/dispatch', async (req, res) => {
 
     try {
         // --- HELPER FOR SUMMARIES ---
+        const formatHHMM = (decimalHours) => {
+            const h = Math.floor(decimalHours);
+            const m = Math.round((decimalHours - h) * 60);
+            return `${h}:${m.toString().padStart(2, '0')}`;
+        };
+
         const getMonthlySummary = async (cid, name) => {
             const now = new Date();
             const year = now.getFullYear();
@@ -28,7 +34,8 @@ router.post('/dispatch', async (req, res) => {
             const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month);
             const wageResult = WageCalculator.calculateBreakdown(empShifts, bizConfig.settings?.salary || {}, holidayDates);
             return {
-                totalHours: wageResult.totalHours.toFixed(2),
+                totalHours: formatHHMM(wageResult.totalHours),
+                weightedHours: formatHHMM(wageResult.weightedTotal),
                 wageBreakdown: wageResult.breakdown
             };
         };
@@ -136,7 +143,7 @@ router.post('/dispatch', async (req, res) => {
                         const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates);
                         lastShiftSummary = {
                             duration: calculateDuration(lastShift.start, lastShift.end),
-                            weightedHours: shiftWage.totalHours.toFixed(2),
+                            weightedHours: formatHHMM(shiftWage.weightedTotal),
                             wageBreakdown: shiftWage.breakdown
                         };
                     }
@@ -159,84 +166,98 @@ router.post('/dispatch', async (req, res) => {
 
             // === REPORTS ===
             case 'getYears': {
-                const shifts = await dataManager.getHistoryYears(companyId);
-                return res.json({ success: true, years: shifts });
+                const localYears = await dataManager.getHistoryYears(companyId);
+                let allYears = [...localYears];
+
+                // Merge with GAS
+                const gasUrl = config.GAS_COLD_STORAGE_URL;
+                if (gasUrl) {
+                    try {
+                        const gasRes = await require('axios').get(`${gasUrl}?action=getYears&companyId=${companyId}`, { timeout: 10000 });
+                        if (gasRes.data && gasRes.data.success) {
+                            allYears = [...new Set([...allYears, ...gasRes.data.years])];
+                        }
+                    } catch (e) {
+                        console.error('[GAS] getYears failed:', e.message);
+                    }
+                }
+                return res.json({ success: true, years: allYears.sort((a, b) => b - a) });
             }
 
             case 'getMonths': {
-                const rawMonths = await dataManager.getHistoryMonths(companyId, rest.year);
-                // Frontend expects array of objects with 'name' property
-                const months = rawMonths.map(m => ({ name: m }));
+                const localMonths = await dataManager.getHistoryMonths(companyId, rest.year);
+                let allMonths = [...localMonths];
+
+                // Merge with GAS
+                const gasUrl = config.GAS_COLD_STORAGE_URL;
+                if (gasUrl) {
+                    try {
+                        const gasRes = await require('axios').get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${rest.year}`, { timeout: 10000 });
+                        if (gasRes.data && gasRes.data.success) {
+                            allMonths = [...new Set([...allMonths, ...gasRes.data.months.map(m => typeof m === 'object' ? m.name : m)])];
+                        }
+                    } catch (e) {
+                        console.error('[GAS] getMonths failed:', e.message);
+                    }
+                }
+                const months = allMonths.map(m => ({ name: m }));
                 return res.json({ success: true, months });
             }
 
             case 'getReport': {
-                const rawData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
-                const rawShifts = rest.name ? (rawData[rest.name] || []) : [];
+                let rawShifts = [];
+                const localData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
+                rawShifts = rest.name ? (localData[rest.name] || []) : [];
 
-                // Get business config for Wage Calculator
+                // Try GAS if missing local or if it's a deep archive request
+                if (rawShifts.length === 0) {
+                    const gasUrl = config.GAS_COLD_STORAGE_URL;
+                    if (gasUrl) {
+                        try {
+                            const gasRes = await require('axios').get(`${gasUrl}?action=getReport&year=${rest.year}&month=${rest.month}&name=${rest.name || ''}&companyId=${companyId}`, { timeout: 10000 });
+                            if (gasRes.data && gasRes.data.success) {
+                                rawShifts = gasRes.data.shifts || [];
+                            }
+                        } catch (e) {
+                            console.error('[GAS] getReport failed:', e.message);
+                        }
+                    }
+                }
+
                 const bizConfig = await dataManager.getCompanyConfig(companyId);
-
-                // Format shifts for admin table rendering (needs rowIndex, date, start, end as HH:MM)
-                let totalHours = 0;
                 const formattedShifts = rawShifts.map((s, idx) => {
                     const startDate = s.start ? new Date(parseInt(s.start) || s.start) : null;
                     const endDate = s.end ? new Date(parseInt(s.end) || s.end) : null;
-
-                    if (startDate && endDate) {
-                        totalHours += (endDate - startDate) / 3600000;
-                    }
-
                     const tz = 'Asia/Jerusalem';
                     const formatDate = d => d ? new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d) : '';
                     const formatTime = d => d ? d.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }) : '';
 
                     return {
                         rowIndex: idx,
-                        _raw: s, // Keep raw for save operations
+                        _raw: s,
                         date: formatDate(startDate),
                         start: formatTime(startDate),
                         end: formatTime(endDate),
+                        duration: calculateDuration(s.start, s.end),
                         startRaw: s.start,
                         endRaw: s.end,
-                        location: s.location || ''
+                        location: s.location || (s.distance ? s.distance : '')
                     };
                 });
 
-                // Calculate precise wage breakdown using matrices
                 const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, parseInt(rest.year), parseInt(rest.month));
-                const wageResult = WageCalculator.calculateBreakdown(rawShifts, bizConfig.salary, holidayDates);
+                const wageResult = WageCalculator.calculateBreakdown(rawShifts, bizConfig.settings?.salary || {}, holidayDates);
 
                 return res.json({
                     success: true,
                     shifts: formattedShifts,
-                    holidayDates, // Send back for UI if needed
-                    totalHours: wageResult.totalHours.toFixed(2),
+                    holidayDates,
+                    totalHours: formatHHMM(wageResult.totalHours),
+                    weightedHours: formatHHMM(wageResult.weightedTotal),
                     wageBreakdown: wageResult.breakdown
                 });
             }
 
-            case 'getYears': {
-                const gasUrl = config.GAS_COLD_STORAGE_URL;
-                if (!gasUrl) return res.json({ success: true, years: [] });
-                try {
-                    const response = await require('axios').get(`${gasUrl}?action=getYears&companyId=${companyId}`, { timeout: 10000 });
-                    return res.json(response.data);
-                } catch (e) {
-                    return res.json({ success: false, years: [], error: e.message });
-                }
-            }
-
-            case 'getMonths': {
-                const gasUrl = config.GAS_COLD_STORAGE_URL;
-                if (!gasUrl) return res.json({ success: true, months: [] });
-                try {
-                    const response = await require('axios').get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${rest.year}`, { timeout: 10000 });
-                    return res.json(response.data);
-                } catch (e) {
-                    return res.json({ success: false, months: [], error: e.message });
-                }
-            }
 
             case 'getEmployeesForMonth': {
                 let data = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
@@ -318,7 +339,7 @@ router.post('/dispatch', async (req, res) => {
             case 'adminSendMonthlyReport': {
                 const config = await dataManager.getCompanyConfig(companyId);
                 const reportData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
-                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName, config.salary, companyId, config.logoUrl);
+                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName, config.settings?.salary || {}, companyId, config.logoUrl);
 
                 // When finishing a month, trigger the garbage collection to purge old month files out of Render and push to GAS
                 dataManager.archiveAndCleanup(companyId).catch(err => {
@@ -1517,7 +1538,7 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
                 const bizConfig = await dataManager.getCompanyConfig(client.id);
 
                 // Pass salary config for breakdown and companyId for holiday resolution
-                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary, client.id, bizConfig.logoUrl);
+                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.settings?.salary || {}, client.id, bizConfig.logoUrl);
                 sent++;
 
                 // Auto Archive past 30 days data to GAS
