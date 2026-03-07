@@ -1256,8 +1256,8 @@ router.post('/payment/process', async (req, res) => {
 
         // 3b. Build proper plan description (REVERSED: Product is TenpusGeo)
         const planDesc = selectedPlan
-            ? `TenpusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
-            : `TenpusGeo - Plan ${planId}`;
+            ? `TempusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
+            : `TempusGeo - Plan ${planId}`;
 
         const payload = {
             terminalName: systemConfig.tranzilaTerminal,
