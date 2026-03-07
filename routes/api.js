@@ -90,7 +90,8 @@ router.post('/dispatch', async (req, res) => {
             case 'checkIn':
             case 'checkOut': {
                 const type = action === 'checkIn' ? 'IN' : 'OUT';
-                const result = await dataManager.logShift(companyId, rest.name, type, Date.now());
+                const locationData = (rest.lat && rest.lng) ? { lat: rest.lat, lng: rest.lng } : null;
+                const result = await dataManager.logShift(companyId, rest.name, type, Date.now(), locationData);
                 const status = await dataManager.getEmployeeStatus(companyId, rest.name);
                 return res.json({ success: true, ...status, message: type === 'IN' ? 'נכנסת בהצלחה' : 'יצאת בהצלחה' });
             }
@@ -261,7 +262,7 @@ router.post('/dispatch', async (req, res) => {
             case 'adminSendMonthlyReport': {
                 const config = await dataManager.getCompanyConfig(companyId);
                 const reportData = await dataManager.getShiftsHybrid(companyId, parseInt(rest.year), parseInt(rest.month));
-                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName, config.salary, companyId);
+                await emailService.sendMonthlyReport(config.adminEmail, reportData, parseInt(rest.year), parseInt(rest.month), config.businessName, config.salary, companyId, config.logoUrl);
 
                 // When finishing a month, trigger the garbage collection to purge old month files out of Render and push to GAS
                 dataManager.archiveAndCleanup(companyId).catch(err => {
@@ -1023,7 +1024,8 @@ router.post('/admin/report/send', async (req, res) => {
 
         // In GAS this was sending CSV. Here we just call emailService.
         // EmailService needs to format it.
-        await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName);
+        const bizConfig = await dataManager.getBusinessConfig(companyId);
+        await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary, companyId, bizConfig.logoUrl);
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
@@ -1459,7 +1461,7 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
                 const bizConfig = await dataManager.getBusinessConfig(client.id);
 
                 // Pass salary config for breakdown and companyId for holiday resolution
-                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary, client.id);
+                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.salary, client.id, bizConfig.logoUrl);
                 sent++;
 
                 // Auto Archive past 30 days data to GAS
