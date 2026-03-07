@@ -403,29 +403,39 @@ class DataManager {
         // --- EMAIL NOTIFICATION (If Enabled) ---
         try {
             const companyConfig = await this.getCompanyConfig(companyId);
+            const userConstraint = companyConfig.settings?.constraints?.[employeeName] || {};
+            const isHybrid = userConstraint.isHybrid === true;
+            const maxDist = userConstraint.maxDistance ? parseFloat(userConstraint.maxDistance) : 0;
 
             // Calculate distance if coordinates provided
             let distanceStr = null;
-            if (location && typeof location === 'object' && location.lat && location.lng) {
+            if (isHybrid) {
+                distanceStr = "עבודה היברידית (בטווח המורשה)";
+            } else if (location && typeof location === 'object' && location.lat && location.lng) {
                 const distMeters = this.calculateDistanceToPolygon(location.lat, location.lng, companyConfig.polygon);
+
                 if (distMeters === 0) {
                     distanceStr = "בתוך המשרד";
+                } else if (maxDist > 0 && distMeters <= maxDist) {
+                    distanceStr = `בטווח המורשה (${Math.round(distMeters)} מ' מהמשרד)`;
                 } else if (distMeters < 1000) {
                     distanceStr = `${Math.round(distMeters)} מטרים מהמשרד`;
                 } else {
                     distanceStr = `${(distMeters / 1000).toFixed(1)} ק"מ מהמשרד`;
                 }
+            }
 
-                // Store distance in shift record for reporting
-                const shifts = await this.getShifts(companyId, year, month);
-                const lastShift = shifts[employeeName][shifts[employeeName].length - 1];
+            // Store distance in shift record for reporting
+            if (distanceStr) {
+                const currentShifts = await this.getShifts(companyId, year, month);
+                const lastShift = currentShifts[employeeName][currentShifts[employeeName].length - 1];
                 if (lastShift) {
                     lastShift.distance = distanceStr;
-                    await this.saveShifts(companyId, year, month, shifts);
+                    await this.saveShifts(companyId, year, month, currentShifts);
                 }
             }
 
-            if (companyConfig.settings && companyConfig.settings.emailNotifications && companyConfig.adminEmail) {
+            if (companyConfig.settings && companyConfig.settings.emailNotifications === true && companyConfig.adminEmail) {
                 // Don't await this, let it run in background
                 emailService.sendShiftAlert(
                     companyConfig.adminEmail,
@@ -434,7 +444,7 @@ class DataManager {
                     timestamp,
                     distanceStr || (typeof location === 'string' ? location : "-"),
                     companyConfig.businessName,
-                    "",
+                    note || "",
                     companyConfig.logoUrl
                 ).catch(e => console.error(`[Email Alert] Failed to send shift alert: ${e.message}`));
             }
@@ -443,6 +453,12 @@ class DataManager {
         }
 
         return { success: true };
+    }
+
+    formatHHMM(decimalHours) {
+        const h = Math.floor(decimalHours);
+        const m = Math.round((decimalHours - h) * 60);
+        return `${h}:${m.toString().padStart(2, '0')}`;
     }
 
     // --- DASHBOARD ---
@@ -468,23 +484,28 @@ class DataManager {
             const todayStr = now.toDateString();
 
             empShifts.forEach(s => {
-                const sDate = new Date(s.start || s.end);
+                const sDate = new Date(parseInt(s.start) || s.start || parseInt(s.end) || s.end);
                 if (sDate.toDateString() === todayStr) {
                     if (s.end && s.start) {
-                        dailyTotal += (new Date(s.end) - new Date(s.start)) / 3600000;
+                        dailyTotal += (new Date(parseInt(s.end) || s.end) - new Date(parseInt(s.start) || s.start)) / 3600000;
                     } else if (s.start && !s.end) {
-                        // Active shift - calculating duration until now
-                        dailyTotal += (now - new Date(s.start)) / 3600000;
+                        dailyTotal += (now - new Date(parseInt(s.start) || s.start)) / 3600000;
                     }
                 }
             });
+
+            // Calculate monthly summary
+            const holidayDates = await this.getHolidayDatesForMonth(companyId, year, month);
+            const wageResult = require('./WageCalculator').calculateBreakdown(empShifts, (await this.getCompanyConfig(companyId)).settings?.salary || {}, holidayDates);
 
             dashboard.push({
                 name: emp,
                 status: (lastShift && !lastShift.end) ? 'IN' : 'OUT',
                 time: (lastShift && !lastShift.end) ? lastShift.start : (lastShift ? lastShift.end : null),
-                duration: dailyTotal.toFixed(2),
-                weekly: '0.00' // Placeholder if not calculating weekly yet
+                duration: this.formatHHMM(dailyTotal),
+                monthlyTotal: this.formatHHMM(wageResult.totalHours),
+                weightedTotal: this.formatHHMM(wageResult.weightedTotal),
+                monthlyBreakdown: wageResult.breakdown
             });
         }
 
@@ -851,7 +872,8 @@ class DataManager {
 
     async adminForceAction(companyId, { name, forceType }) {
         // forceType: 'checkIn' | 'checkOut'
-        await this.logShift(companyId, name, forceType === 'checkIn' ? 'IN' : 'OUT', Date.now(), 'Admin Force', 'Forced by Admin');
+        const label = forceType === 'checkIn' ? 'הכנסה כפויה על ידי מנהל' : 'הוצאה כפויה על ידי מנהל';
+        await this.logShift(companyId, name, forceType === 'checkIn' ? 'IN' : 'OUT', Date.now(), label, 'פעולה יזומה על ידי מנהל');
     }
 
     // --- EMPLOYEE MANAGEMENT ---
