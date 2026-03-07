@@ -666,7 +666,17 @@ class DataManager {
             try {
                 const response = await axios.get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${year}&password=${bizConfig?.password || ''}`);
                 if (response.data && response.data.months) {
-                    response.data.months.forEach(m => months.add(parseInt(m)));
+                    response.data.months.forEach(m => {
+                        let parsed = NaN;
+                        if (typeof m === 'object' && m !== null) {
+                            parsed = parseInt(m.name || m.month);
+                        } else {
+                            parsed = parseInt(m);
+                        }
+                        if (!isNaN(parsed)) {
+                            months.add(parsed);
+                        }
+                    });
                 }
             } catch (err) {
                 console.error(`[GAS] Failed to fetch archive months for ${companyId}: ${err.message}`);
