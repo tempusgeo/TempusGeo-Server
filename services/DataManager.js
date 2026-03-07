@@ -603,10 +603,10 @@ class DataManager {
         // Try getting from Hot Storage fs
         const companyDir = path.join(this.dataDir, 'companies', companyId);
         const years = new Set();
-        let config = null;
+        let bizConfig = null;
 
         try {
-            config = await this.getCompanyConfig(companyId);
+            bizConfig = await this.getCompanyConfig(companyId);
             const files = await fs.readdir(companyDir);
             for (const file of files) {
                 if (file === 'config.json') continue;
@@ -617,9 +617,10 @@ class DataManager {
         } catch (e) { }
 
         // Fetch from GAS Cold Storage
-        if (config && config.gasUrl) {
+        const gasUrl = bizConfig?.gasUrl || config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
             try {
-                const response = await axios.get(`${config.gasUrl}?action=getYears&companyId=${companyId}&password=${config.password}`);
+                const response = await axios.get(`${gasUrl}?action=getYears&companyId=${companyId}&password=${bizConfig?.password || ''}`);
                 if (response.data && response.data.years) {
                     response.data.years.forEach(y => years.add(parseInt(y)));
                 }
@@ -634,10 +635,10 @@ class DataManager {
     async getHistoryMonths(companyId, year) {
         const yearDir = path.join(this.dataDir, 'companies', companyId, year.toString());
         const months = new Set();
-        let config = null;
+        let bizConfig = null;
 
         try {
-            config = await this.getCompanyConfig(companyId);
+            bizConfig = await this.getCompanyConfig(companyId);
             const files = await fs.readdir(yearDir);
             for (const file of files) {
                 // Support both "3.json" (Render default) and "json.3" (GAS format)
@@ -656,9 +657,10 @@ class DataManager {
         } catch (e) { }
 
         // Fetch from GAS Cold Storage
-        if (config && config.gasUrl) {
+        const gasUrl = bizConfig?.gasUrl || config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
             try {
-                const response = await axios.get(`${config.gasUrl}?action=getMonths&companyId=${companyId}&year=${year}&password=${config.password}`);
+                const response = await axios.get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${year}&password=${bizConfig?.password || ''}`);
                 if (response.data && response.data.months) {
                     response.data.months.forEach(m => months.add(parseInt(m)));
                 }
