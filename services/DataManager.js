@@ -3,6 +3,7 @@ const path = require('path');
 const config = require('../config');
 const axios = require('axios');
 const emailService = require('./EmailService');
+const WageCalculator = require('./WageCalculator');
 
 // --- IN-MEMORY CACHE ---
 // Structure: { companyId: { config: {}, shifts: { '2024-02': { ...data... } } } }
@@ -385,6 +386,7 @@ class DataManager {
                     await this.saveShifts(companyId, year, month, shiftsData);
 
                     if (enableAlert && companyConfig.adminEmail) {
+                        const summary = await this.getIndividualShiftSummary(companyId, year, month, lastShift);
                         emailService.sendShiftAlert(
                             companyConfig.adminEmail,
                             employeeName,
@@ -393,7 +395,8 @@ class DataManager {
                             lastShift.location || "-",
                             companyConfig.businessName || companyId,
                             `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${this.formatHHMM(maxHours)} שעות.`,
-                            companyConfig.logoUrl
+                            companyConfig.logoUrl,
+                            summary
                         ).catch(e => console.error(`[Lazy-Checkout Email FAIL] ${e.message}`));
                     }
                     return true; // Applied
@@ -401,6 +404,27 @@ class DataManager {
             }
         }
         return false;
+    }
+
+    async getIndividualShiftSummary(companyId, year, month, shift) {
+        if (!shift || !shift.start || !shift.end) return null;
+
+        try {
+            const companyConfig = await this.getCompanyConfig(companyId);
+            const holidayDates = await this.getHolidayDatesForMonth(companyId, year, month);
+            const salaryConfig = companyConfig.settings?.salary || {};
+
+            const result = WageCalculator.calculateBreakdown([shift], salaryConfig, holidayDates);
+
+            return {
+                duration: this.formatHHMM(result.totalHours),
+                weightedHours: result.weightedTotal,
+                breakdown: result.breakdown
+            };
+        } catch (e) {
+            console.error(`[DataManager] Failed to calculate shift summary:`, e.message);
+            return null;
+        }
     }
 
     async getEmployees(companyId) {
@@ -500,6 +524,14 @@ class DataManager {
 
             const isEmailEnabled = userConstraint.enableEmailUpdate === true;
             if (isEmailEnabled && companyConfig.adminEmail) {
+                let summary = null;
+                if (action === 'OUT') {
+                    // Try to get summary for THIS shift
+                    const currentShifts = await this.getShifts(companyId, year, month);
+                    const lastShift = currentShifts[employeeName][currentShifts[employeeName].length - 1];
+                    summary = await this.getIndividualShiftSummary(companyId, year, month, lastShift);
+                }
+
                 // Don't await this, let it run in background
                 emailService.sendShiftAlert(
                     companyConfig.adminEmail,
@@ -509,7 +541,8 @@ class DataManager {
                     distanceStr || (typeof location === 'string' ? location : "-"),
                     companyConfig.businessName,
                     note || "",
-                    companyConfig.logoUrl
+                    companyConfig.logoUrl,
+                    summary
                 ).catch(e => console.error(`[Email Alert] Failed to send shift alert: ${e.message}`));
             }
         } catch (e) {
@@ -1502,9 +1535,9 @@ class DataManager {
                                     results.closed++;
 
                                     // Send alert if explicitly enabled for user, OR if it's a forced checkout (managers want to know)
-                                    // User said: "הגדרת התראת חריגה צריכה לעקוף את איסור שליחת העדכונים במייל" 
-                                    const shouldAlert = enableAlert; // Only alert if explicitly enabled in constraints table
+                                    const shouldAlert = enableAlert;
                                     if (shouldAlert && companyConfig.adminEmail) {
+                                        const summary = await this.getIndividualShiftSummary(client.id, year, month, shift);
                                         emailService.sendShiftAlert(
                                             companyConfig.adminEmail,
                                             user,
@@ -1513,7 +1546,8 @@ class DataManager {
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
                                             `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${this.formatHHMM(maxHours)} שעות.`,
-                                            companyConfig.logoUrl
+                                            companyConfig.logoUrl,
+                                            summary
                                         ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
                                     }
                                 }
