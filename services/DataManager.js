@@ -238,7 +238,7 @@ class DataManager {
 
             return {
                 companyId: client.id,
-                businessName: client.businessName,
+                businessName: client.businessName || 'עסק ללא שם',
                 email: client.email || '',
                 phone: client.phone || '',
                 subscriptionExpiry: client.subscriptionExpiry,
