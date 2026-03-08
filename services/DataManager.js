@@ -177,30 +177,58 @@ class DataManager {
         const now = new Date();
         const gasUrl = config.GAS_COLD_STORAGE_URL;
         let gasCompanies = new Set();
+        let gasClientsMap = new Map(); // Store clients from GAS backup
 
-        // Optional: Fetch list of companies from GAS if possible
+        // 1. Fetch Cloud Data manifest (clients + presence)
         if (gasUrl) {
             try {
-                // We ask GAS for a 'restore' but with summaryOnly=true to avoid huge download
-                const response = await axios.get(`${gasUrl}?path=restore&summaryOnly=true`, { timeout: 15000 });
+                // Requesting 'restore' but hopefully summary/manifest if supported
+                const response = await axios.get(`${gasUrl}?path=restore`, { timeout: 20000 });
                 if (response.data && response.data.success && response.data.data && Array.isArray(response.data.data.files)) {
-                    response.data.data.files.forEach(f => {
+                    const files = response.data.data.files;
+
+                    // Look for clients.json content in the backup
+                    const clientsFile = files.find(f => f.path === 'clients.json');
+                    if (clientsFile && Array.isArray(clientsFile.content)) {
+                        clientsFile.content.forEach(c => {
+                            gasClientsMap.set(c.id, c);
+                            gasCompanies.add(c.id);
+                        });
+                    }
+
+                    // Also check for company folders presence in case clients.json is stale
+                    files.forEach(f => {
                         const match = f.path.match(/^companies\/([^\/]+)\//);
                         if (match) gasCompanies.add(match[1]);
                     });
                 }
             } catch (e) {
-                console.error('[DataManager] Failed to fetch GAS company list:', e.message);
+                console.error('[DataManager] Failed to merge GAS clients:', e.message);
             }
         }
 
-        // Return enriched client objects
-        return Promise.all(CACHE.clients.map(async (client) => {
+        // 2. Merge local CACHE.clients with GAS clients (GAS is source of truth for "All Businesses")
+        const mergedClientsMap = new Map();
+
+        // Add local ones first
+        CACHE.clients.forEach(c => mergedClientsMap.set(c.id, { ...c, source: 'local' }));
+
+        // Add cloud ones if missing locally
+        gasClientsMap.forEach((c, id) => {
+            if (!mergedClientsMap.has(id)) {
+                mergedClientsMap.set(id, { ...c, source: 'gas' });
+            }
+        });
+
+        const mergedList = Array.from(mergedClientsMap.values());
+
+        // 3. Enrich with status
+        return Promise.all(mergedList.map(async (client) => {
             const expiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : new Date(0);
             const daysRemaining = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
             const isExpired = expiry < now;
 
-            // Check local existence
+            // Check local existence on disk
             const companyDir = path.join(this.dataDir, 'companies', client.id);
             let existsLocally = false;
             try {
@@ -218,7 +246,8 @@ class DataManager {
                 isExpired: isExpired,
                 daysRemaining: daysRemaining,
                 existsLocally,
-                existsInGAS: gasCompanies.has(client.id)
+                existsInGAS: gasCompanies.has(client.id),
+                needsRestore: !existsLocally && gasCompanies.has(client.id)
             };
         }));
     }
