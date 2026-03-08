@@ -524,19 +524,18 @@ router.post('/super-admin/login', async (req, res) => {
 });
 
 router.post('/super-admin/businesses', async (req, res) => {
-    console.log('[SUPER-ADMIN] /businesses endpoint hit');
     try {
         const { password } = req.body;
-        console.log('[SUPER-ADMIN] Password check...');
         if (!isValidSuperAdminPassword(password)) {
-            console.log('[SUPER-ADMIN] Unauthorized');
             return res.status(401).json({ success: false, error: "Unauthorized" });
         }
 
-        console.log('[SUPER-ADMIN] Fetching businesses...');
         const businesses = await dataManager.getAllClientsWithStatus();
-        console.log(`[SUPER-ADMIN] Found ${businesses.length} businesses`);
-        res.json({ success: true, businesses });
+        res.json({
+            success: true,
+            businesses,
+            gasUrl: dataManager.config.GAS_COLD_STORAGE_URL || '' // Pass GAS URL for direct frontend contact
+        });
     } catch (e) {
         console.error('[SUPER-ADMIN] Error:', e);
         res.status(500).json({ success: false, error: e.message });
