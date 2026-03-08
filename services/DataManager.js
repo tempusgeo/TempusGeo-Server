@@ -738,7 +738,16 @@ class DataManager {
 
             // Calculate monthly summary
             const holidayDates = await this.getHolidayDatesForMonth(companyId, year, month);
-            const wageResult = require('./WageCalculator').calculateBreakdown(empShifts, (await this.getCompanyConfig(companyId)).settings?.salary || {}, holidayDates);
+
+            // Fix: Include active (open) shifts in the monthly calculation by providing a temporary end time
+            const shiftsForCalculation = empShifts.map(s => {
+                if (s.start && !s.end) {
+                    return { ...s, end: Date.now() };
+                }
+                return s;
+            });
+
+            const wageResult = require('./WageCalculator').calculateBreakdown(shiftsForCalculation, (await this.getCompanyConfig(companyId)).settings?.salary || {}, holidayDates);
 
             dashboard.push({
                 name: emp,
