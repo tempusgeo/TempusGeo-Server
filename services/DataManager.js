@@ -1232,8 +1232,8 @@ class DataManager {
                 return false;
             }
 
-            console.log(`[Restore] URL: ${gasUrl}`);
-            const response = await axios.get(`${gasUrl}?path=restore`, { timeout: 30000 });
+            console.log(`[Restore] URL: ${gasUrl} | Requesting path=restore`);
+            const response = await axios.get(`${gasUrl}?path=restore`, { timeout: 45000 });
 
             if (!response.data || !response.data.success) {
                 console.error(`[Restore] GAS error: ${response.data?.error || 'Unknown error'}`);
@@ -1241,12 +1241,17 @@ class DataManager {
             }
 
             const backup = response.data.data;
-            const remoteTime = backup.metadata ? backup.metadata.lastWriteTime : 0;
+            if (!backup) {
+                console.error('[Restore] No data returned in GAS response');
+                return false;
+            }
 
-            console.log(`[Restore] Remote Timestamp: ${new Date(remoteTime).toISOString()}`);
+            const remoteTime = (backup.metadata && backup.metadata.lastWriteTime) ? backup.metadata.lastWriteTime : (backup.lastWriteTime || 0);
+
+            console.log(`[Restore] Remote Timestamp: ${new Date(remoteTime).toISOString()} | Local: ${new Date(localTime).toISOString()}`);
 
             // DECISION LOGIC:
-            // 1. If we have NO local data (localTime = 0), Restore.
+            // 1. If we have NO local data (localTime = 0) OR forced sync, Restore.
             // 2. If Remote is NEWER than Local (remoteTime > localTime), Restore.
             // 3. Otherwise, stick with Local.
 
@@ -1255,35 +1260,50 @@ class DataManager {
                 return true;
             }
 
-            console.log(`[Restore] Restoring from GAS (Remote ${remoteTime} > Local ${localTime})...`);
+            console.log(`[Restore] Starting Restoration (Remote ${remoteTime} > Local ${localTime})...`);
 
             // Generic Restore
             if (backup.files && Array.isArray(backup.files)) {
-                console.log(`[Restore] Restoring ${backup.files.length} generic files...`);
+                console.log(`[Restore] Found ${backup.files.length} files to restore.`);
+
+                // Sort files to ensure clients.json or config files are written first if needed, 
+                // though usually order doesn't matter for disk but does for cache reload logic later.
                 for (const file of backup.files) {
                     try {
                         const fullPath = path.join(this.dataDir, file.path);
                         const dirPath = path.dirname(fullPath);
                         await fs.mkdir(dirPath, { recursive: true });
-                        await fs.writeFile(fullPath, JSON.stringify(file.content, null, 2));
+
+                        // If content is already an object, stringify it. If it's a string, write directly.
+                        const contentToWrite = typeof file.content === 'object' ? JSON.stringify(file.content, null, 2) : file.content;
+                        await fs.writeFile(fullPath, contentToWrite);
+                        // console.log(`[Restore] Restored: ${file.path}`);
                     } catch (e) {
-                        console.error(`[Restore] Failed to write file ${file.path}:`, e);
+                        console.error(`[Restore] Failed to write file ${file.path}:`, e.message);
                     }
                 }
 
-                // Reload Cache immediately after generic restore
+                // IMPORTANT: Reload Cache immediately after disk write
                 try {
+                    console.log("[Restore] Reloading clients into memory cache...");
                     const clientsData = await fs.readFile(this.clientsFile, 'utf8');
                     CACHE.clients = JSON.parse(clientsData);
+                    console.log(`[Restore] Cache reloaded: ${CACHE.clients.length} clients.`);
                 } catch (e) {
-                    console.log("[Restore] Could not reload clients.json into cache.");
+                    console.error("[Restore] Critical: Could not reload clients.json into cache after restoration:", e.message);
                 }
 
                 // Clear companies cache and reload them
                 CACHE.companies = {};
                 for (const client of CACHE.clients) {
-                    await this.loadCompany(client.id);
+                    try {
+                        await this.loadCompany(client.id);
+                    } catch (e) {
+                        console.error(`[Restore] Failed to load company ${client.id}:`, e.message);
+                    }
                 }
+            } else {
+                console.warn("[Restore] No files found in backup data package.");
             }
 
             // Sync Timestamp to match Remote
@@ -1296,6 +1316,7 @@ class DataManager {
 
         } catch (e) {
             console.error(`[Restore] Critical Failure: ${e.message}`);
+            if (e.response) console.error(`[Restore] Server Response:`, e.response.data);
             return false;
         }
     }
