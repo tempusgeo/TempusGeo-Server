@@ -175,16 +175,38 @@ class DataManager {
 
     async getAllClientsWithStatus() {
         const now = new Date();
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        let gasCompanies = new Set();
+
+        // Optional: Fetch list of companies from GAS if possible
+        if (gasUrl) {
+            try {
+                // We ask GAS for a 'restore' but with summaryOnly=true to avoid huge download
+                const response = await axios.get(`${gasUrl}?path=restore&summaryOnly=true`, { timeout: 15000 });
+                if (response.data && response.data.success && response.data.data && Array.isArray(response.data.data.files)) {
+                    response.data.data.files.forEach(f => {
+                        const match = f.path.match(/^companies\/([^\/]+)\//);
+                        if (match) gasCompanies.add(match[1]);
+                    });
+                }
+            } catch (e) {
+                console.error('[DataManager] Failed to fetch GAS company list:', e.message);
+            }
+        }
+
         // Return enriched client objects
         return Promise.all(CACHE.clients.map(async (client) => {
-            // Ensure config is loaded to get latest details if needed, 
-            // but primarily we need the subscription expiry from the client object itself.
-            // We reuse getCompanyConfig logic to ensure consistency? 
-            // Actually getCompanyConfig *reads* from client object.
-
-            const expiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : new Date(0); // Default to old if missing
+            const expiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : new Date(0);
             const daysRemaining = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
             const isExpired = expiry < now;
+
+            // Check local existence
+            const companyDir = path.join(this.dataDir, 'companies', client.id);
+            let existsLocally = false;
+            try {
+                const stat = await fs.stat(companyDir);
+                existsLocally = stat.isDirectory();
+            } catch (e) { }
 
             return {
                 companyId: client.id,
@@ -194,9 +216,16 @@ class DataManager {
                 subscriptionExpiry: client.subscriptionExpiry,
                 expiryDate: expiry.toLocaleDateString('he-IL'),
                 isExpired: isExpired,
-                daysRemaining: daysRemaining
+                daysRemaining: daysRemaining,
+                existsLocally,
+                existsInGAS: gasCompanies.has(client.id)
             };
         }));
+    }
+
+    async syncAllFromGAS() {
+        console.log('[DataManager] Forcing full sync from GAS (Ignored local timestamp)');
+        return await this.smartRestoreFromGAS(0);
     }
 
     async updateCompanyConfig(companyId, newConfig) {
