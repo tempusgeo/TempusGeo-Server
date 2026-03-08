@@ -595,6 +595,22 @@ router.post('/super-admin/storage', async (req, res) => {
     }
 });
 
+router.post('/super-admin/sync', async (req, res) => {
+    try {
+        const { password } = req.body;
+        if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+        const success = await dataManager.syncAllFromGAS();
+        if (success) {
+            res.json({ success: true, message: "Sync completed from GAS" });
+        } else {
+            res.json({ success: false, error: "Sync failed - check server logs" });
+        }
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 router.post('/super-admin/record-payment', async (req, res) => {
     try {
         const { password, targetCompanyId, amount, months, method, reference } = req.body;
