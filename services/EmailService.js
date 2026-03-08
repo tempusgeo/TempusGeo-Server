@@ -275,7 +275,7 @@ class EmailService {
         return this.sendEmail(to, title + ` - ${businessName}`, this.getStyledTemplate(title, content, '', logoUrl, businessName));
     }
 
-    async sendShiftAlert(to, employeeName, action, time, location, businessName, extraNote = '', logoUrl = null) {
+    async sendShiftAlert(to, employeeName, action, time, location, businessName, extraNote = '', logoUrl = null, summary = null) {
         let actionText = 'עדכון משמרת';
         let color = '#94a3b8';
 
@@ -293,14 +293,13 @@ class EmailService {
             let locSuffix = '';
             const locationStr = String(location);
 
-            // User requirement: Blue for valid location, with suffix in parentheses
             if (locationStr.includes('בתוך המשרד') || locationStr.includes('בטווח המורשה') || locationStr.includes('בטווח')) {
-                locColor = '#3b82f6'; // Blue
+                locColor = '#3b82f6';
                 if (!locationStr.includes('(')) {
                     locSuffix = ' <span style="font-size: 11px; opacity: 0.8;">(בטווח המותר)</span>';
                 }
             } else if (locationStr.includes('מהמשרד')) {
-                locColor = '#f43f5e'; // Red
+                locColor = '#f43f5e';
             }
 
             locationHtml = `
@@ -308,6 +307,41 @@ class EmailService {
                     <td style="padding: 6px 0; color: #94a3b8; font-size: 13px;">מיקום:</td>
                     <td style="padding: 6px 0; color: ${locColor}; font-weight: 700; text-align: left; font-size: 13px;">${location || 'לא צוין'}${locSuffix}</td>
                 </tr>
+            `;
+        }
+
+        // Summary Statistics (if provided)
+        let summaryHtml = '';
+        if (summary) {
+            let breakdownRows = '';
+            if (summary.breakdown) {
+                for (const [rate, hours] of Object.entries(summary.breakdown)) {
+                    breakdownRows += `
+                        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding: 4px 0;">
+                            <span style="color: #94a3b8; font-size: 12px;">תעריף ${rate}%:</span>
+                            <span style="color: #ffffff; font-weight: 600; font-size: 12px;">${hours} שעות</span>
+                        </div>
+                    `;
+                }
+            }
+
+            summaryHtml = `
+                <div style="margin-top: 20px; background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 12px; padding: 15px;">
+                    <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #818cf8; border-bottom: 1px solid rgba(129, 140, 248, 0.2); padding-bottom: 8px;">סיכום משמרת</h3>
+                    
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="color: #94a3b8; font-size: 13px;">זמן כולל:</span>
+                        <span style="color: #ffffff; font-weight: 700; font-size: 13px;">${summary.duration || '-'}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                        <span style="color: #94a3b8; font-size: 13px;">שעות לתשלום:</span>
+                        <span style="color: #10b981; font-weight: 800; font-size: 14px;">${summary.weightedHours || '-'} ש'</span>
+                    </div>
+
+                    <div style="background: rgba(0, 0, 0, 0.2); border-radius: 8px; padding: 10px;">
+                        ${breakdownRows}
+                    </div>
+                </div>
             `;
         }
 
@@ -342,6 +376,7 @@ class EmailService {
                     </tr>
                     ` : ''}
                 </table>
+                ${summaryHtml}
             </div>
         `;
 
