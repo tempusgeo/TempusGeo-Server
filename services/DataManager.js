@@ -582,10 +582,37 @@ class DataManager {
         return employees;
     }
 
-    async logShift(companyId, employeeName, action, timestamp, location, note) {
+    async logShift(companyId, employeeName, action, timestamp, location, note, deviceId) {
         const date = new Date(timestamp);
         const year = date.getFullYear();
         const month = date.getMonth() + 1;
+
+        // 1. Device ID Verification & Locking
+        const companyConfig = await this.getCompanyConfig(companyId);
+        if (companyConfig.settings?.constraints) {
+            const constraints = companyConfig.settings.constraints;
+            const empConstraint = constraints[employeeName];
+
+            if (empConstraint) {
+                // If verified, check mismatch
+                if (empConstraint.deviceIdVerified && empConstraint.deviceId) {
+                    if (deviceId && empConstraint.deviceId !== deviceId) {
+                        return {
+                            success: false,
+                            error: "AUTH_DEVICE_MISMATCH",
+                            message: "המכשיר אינו מאומת. לא ניתן להחתים עבור עובד אחר."
+                        };
+                    }
+                }
+                // If not verified and deviceId provided, lock it
+                else if (deviceId) {
+                    empConstraint.deviceId = deviceId;
+                    empConstraint.deviceIdVerified = true;
+                    await this.updateCompanyConfig(companyId, companyConfig);
+                    console.log(`[DeviceLock] Locked ${employeeName} to device ${deviceId}`);
+                }
+            }
+        }
 
         const shifts = await this.getShifts(companyId, year, month);
 
@@ -1133,10 +1160,22 @@ class DataManager {
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
         const config = CACHE.companies[companyId].config;
 
+        // Remove from employees list
         if (config.employees) {
             config.employees = config.employees.filter(e => e !== name);
-            await this.updateCompanyConfig(companyId, config);
         }
+
+        // Remove from constraints
+        if (config.settings?.constraints && config.settings.constraints[name]) {
+            delete config.settings.constraints[name];
+        }
+
+        // Remove from dashboard
+        if (config.settings?.dashboard) {
+            config.settings.dashboard = (config.settings.dashboard || []).filter(e => e.name !== name);
+        }
+
+        await this.updateCompanyConfig(companyId, config);
 
         const now = new Date();
         const year = now.getFullYear();
