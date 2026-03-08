@@ -463,7 +463,7 @@ class DataManager {
     formatHHMM(decimalHours) {
         const h = Math.floor(decimalHours);
         const m = Math.round((decimalHours - h) * 60);
-        return `${h}:${m.toString().padStart(2, '0')}`;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     }
 
     // --- DASHBOARD ---
@@ -1444,7 +1444,7 @@ class DataManager {
 
                                     // Send alert if explicitly enabled for user, OR if it's a forced checkout (managers want to know)
                                     // User said: "הגדרת התראת חריגה צריכה לעקוף את איסור שליחת העדכונים במייל" 
-                                    const shouldAlert = enableAlert || true; // forced checkouts are critical alerts
+                                    const shouldAlert = enableAlert; // Only alert if explicitly enabled in constraints table
                                     if (shouldAlert && companyConfig.adminEmail) {
                                         emailService.sendShiftAlert(
                                             companyConfig.adminEmail,
