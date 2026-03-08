@@ -149,7 +149,12 @@ router.post('/dispatch', async (req, res) => {
             case 'checkOut': {
                 const type = action === 'checkIn' ? 'IN' : 'OUT';
                 const locationData = (rest.lat && rest.lng) ? { lat: rest.lat, lng: rest.lng } : null;
-                await dataManager.logShift(companyId, rest.name, type, Date.now(), locationData);
+                const logRes = await dataManager.logShift(companyId, rest.name, type, Date.now(), locationData, rest.note, rest.deviceId);
+
+                if (logRes && logRes.success === false) {
+                    return res.json(logRes);
+                }
+
                 const status = await dataManager.getEmployeeStatus(companyId, rest.name);
 
                 // Enriched summaries
@@ -331,6 +336,18 @@ router.post('/dispatch', async (req, res) => {
                 if (!addRes.success) return res.json(addRes);
 
                 // Refresh data for the client
+                const allEmployees = await dataManager.getEmployees(companyId).catch(() => []);
+                const dashboard = await dataManager.getDashboard(companyId).catch(() => []);
+                return res.json({ success: true, allEmployees, dashboard });
+            }
+
+            case 'adminEmployee': {
+                const { name, action: empAction } = rest;
+                if (empAction === 'delete') {
+                    await dataManager.deleteEmployee(companyId, name);
+                } else {
+                    await dataManager.addEmployee(companyId, name);
+                }
                 const allEmployees = await dataManager.getEmployees(companyId).catch(() => []);
                 const dashboard = await dataManager.getDashboard(companyId).catch(() => []);
                 return res.json({ success: true, allEmployees, dashboard });
@@ -725,7 +742,11 @@ router.post('/shift', async (req, res) => {
         const { companyId, userName, action, timestamp, location, note } = req.body;
         if (!companyId || !userName || !action) return res.status(400).json({ success: false, error: "Missing params" });
 
-        const result = await dataManager.logShift(companyId, userName, action, timestamp || Date.now());
+        const result = await dataManager.logShift(companyId, userName, action, timestamp || Date.now(), location, note, req.body.deviceId);
+
+        if (result && result.success === false) {
+            return res.json(result);
+        }
 
         // Return updated status immediately
         const newStatus = await dataManager.getEmployeeStatus(companyId, userName);
