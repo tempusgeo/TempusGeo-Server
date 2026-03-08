@@ -80,9 +80,15 @@ class DataManager {
                 this.runGlobalArchiveCycle().catch(e => console.error(`[Auto-Archive] Global Cycle Failed:`, e.message));
             }, 24 * 60 * 60 * 1000);
 
+            // 6. Start Automatic Shift Closure Trigger (Every 1 minute)
+            setInterval(() => {
+                this.performAutoCheckout().catch(e => console.error(`[Auto-Checkout-Interval] Failed:`, e.message));
+            }, 60 * 1000);
+
             // Trigger once on startup after 1 minute
             setTimeout(() => {
                 this.runGlobalArchiveCycle().catch(e => console.error(`[Startup Clean] Failed:`, e.message));
+                this.performAutoCheckout().catch(e => console.error(`[Startup Auto-Checkout] Failed:`, e.message));
             }, 60000);
 
         } catch (e) {
@@ -321,6 +327,9 @@ class DataManager {
         // Fast RAM lookup
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
+        // --- LAZY CHECK: Auto-Close if limit reached ---
+        await this.checkAndApplyAutoCheckout(companyId, employeeName);
+
         // We need to check today's shift
         const now = new Date();
         const year = now.getFullYear();
@@ -328,7 +337,6 @@ class DataManager {
         const shifts = await this.getShifts(companyId, year, month);
 
         // Check if employee has an open shift in current month
-        // Structure of 'shifts': { "Employee Name": [ { start, end }, ... ] }
         const empShifts = shifts[employeeName] || [];
         const lastShift = empShifts[empShifts.length - 1];
 
@@ -342,6 +350,57 @@ class DataManager {
         }
 
         return { state: "OUT", isHybrid };
+    }
+
+    /**
+     * Lazy check for a specific employee. Closes their shift retroactively if limit reached.
+     */
+    async checkAndApplyAutoCheckout(companyId, employeeName) {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth() + 1;
+
+        const companyConfig = await this.getCompanyConfig(companyId);
+        const constraints = companyConfig?.settings?.constraints || {};
+        const userConstraint = constraints[employeeName] || {};
+
+        const shiftsData = await this.getShifts(companyId, year, month);
+        const empShifts = shiftsData[employeeName] || [];
+        const lastShift = empShifts[empShifts.length - 1];
+
+        if (lastShift && !lastShift.end && lastShift.start) {
+            const startTime = new Date(parseInt(lastShift.start) || lastShift.start);
+            const durationHours = (now.getTime() - startTime.getTime()) / 3600000;
+
+            const hasCustomRule = !!userConstraint.maxDuration;
+            const maxHours = hasCustomRule ? parseFloat(userConstraint.maxDuration) : 12;
+            const enableAutoOut = hasCustomRule ? (userConstraint.enableAutoOut === true) : true;
+            const enableAlert = userConstraint.enableAlert === true;
+
+            if (durationHours > maxHours) {
+                if (enableAutoOut) {
+                    lastShift.end = new Date(startTime.getTime() + maxHours * 3600000).getTime();
+                    lastShift.note = (lastShift.note || "") + ` [Auto-Checkout: ${maxHours}h limit]`;
+
+                    await this.saveShifts(companyId, year, month, shiftsData);
+
+                    if (enableAlert && companyConfig.adminEmail) {
+                        emailService.sendShiftAlert(
+                            companyConfig.adminEmail,
+                            employeeName,
+                            "FORCE_OUT",
+                            lastShift.end,
+                            lastShift.location || "-",
+                            companyConfig.businessName || companyId,
+                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${this.formatHHMM(maxHours)} שעות.`,
+                            companyConfig.logoUrl
+                        ).catch(e => console.error(`[Lazy-Checkout Email FAIL] ${e.message}`));
+                    }
+                    return true; // Applied
+                }
+            }
+        }
+        return false;
     }
 
     async getEmployees(companyId) {
