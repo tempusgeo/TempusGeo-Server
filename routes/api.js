@@ -534,7 +534,7 @@ router.post('/super-admin/businesses', async (req, res) => {
         res.json({
             success: true,
             businesses,
-            gasUrl: dataManager.config.GAS_COLD_STORAGE_URL || '' // Pass GAS URL for direct frontend contact
+            gasUrl: config.GAS_COLD_STORAGE_URL || '' // Pass GAS URL for direct frontend contact
         });
     } catch (e) {
         console.error('[SUPER-ADMIN] Error:', e);
