@@ -70,7 +70,10 @@ class DataManager {
                 console.warn("[Init] Cloud sync failed or skipped. Continuing with local data.");
             }
 
-            // 4. Load All Companies into RAM (Warmup)
+            // 4. Discovery: Search for "Orphan" directories and reconcile them to clients.json
+            await this.discoverAndReconcileOrphans();
+
+            // 5. Load All Companies into RAM (Warmup)
             for (const client of CACHE.clients) {
                 await this.loadCompany(client.id);
             }
@@ -110,6 +113,62 @@ class DataManager {
     async saveClients() {
         await fs.writeFile(this.clientsFile, JSON.stringify(CACHE.clients, null, 2));
         await this.updateLastWriteTime();
+    }
+
+    /**
+     * Proactively scans for company directories that aren't in clients.json
+     * and attempts to restore them.
+     */
+    async discoverAndReconcileOrphans() {
+        console.log("[Orphan-Discovery] Scanning for ghost businesses...");
+        const companiesDir = path.join(this.dataDir, 'companies');
+
+        try {
+            await fs.mkdir(companiesDir, { recursive: true });
+            const folders = await fs.readdir(companiesDir);
+            let foundNew = false;
+
+            for (const companyId of folders) {
+                // Check if folder is in CACHE.clients
+                const existsInMaster = CACHE.clients.some(c => c.id === companyId);
+
+                if (!existsInMaster) {
+                    console.log(`[Orphan-Discovery] Found ghost client: ${companyId}. Attempting reconciliation...`);
+
+                    try {
+                        const configFile = path.join(companiesDir, companyId, 'config.json');
+                        const data = await fs.readFile(configFile, 'utf8');
+                        const config = JSON.parse(data);
+
+                        // Construct a basic client entry from the config
+                        const newClient = {
+                            id: companyId,
+                            businessName: config.businessName || `עסק משוחזר ${companyId}`,
+                            email: config.adminEmail || "",
+                            password: config.password || "1234", // Fallback if missing, though usually in config
+                            subscriptionExpiry: config.subscriptionExpiry || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+                            role: 'admin',
+                            isOrphan: true // Flag for UI highlighting
+                        };
+
+                        CACHE.clients.push(newClient);
+                        foundNew = true;
+                        console.log(`[Orphan-Discovery] ✅ Successfully reconciled: ${newClient.businessName}`);
+                    } catch (err) {
+                        console.error(`[Orphan-Discovery] ❌ Failed to reconcile ${companyId}:`, err.message);
+                    }
+                }
+            }
+
+            if (foundNew) {
+                console.log("[Orphan-Discovery] Saving updated clients.json...");
+                await this.saveClients();
+            } else {
+                console.log("[Orphan-Discovery] No orphans found.");
+            }
+        } catch (e) {
+            console.error("[Orphan-Discovery] Discovery cycle failed:", e.message);
+        }
     }
 
     // --- COMPANY DATA ---
@@ -247,7 +306,8 @@ class DataManager {
                 daysRemaining: daysRemaining,
                 existsLocally,
                 existsInGAS: gasCompanies.has(client.id),
-                needsRestore: !existsLocally && gasCompanies.has(client.id)
+                needsRestore: !existsLocally && gasCompanies.has(client.id),
+                isOrphan: !!client.isOrphan
             };
         }));
     }
