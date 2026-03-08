@@ -50,6 +50,29 @@ router.post('/dispatch', async (req, res) => {
             return `${h}:${m.toString().padStart(2, '0')}`;
         };
 
+        const getRecentShiftSummary = async (cid, name, forceThreshold = 300000) => {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth() + 1;
+            const shifts = await dataManager.getShifts(cid, year, month);
+            const empShifts = shifts[name] || [];
+            const lastShift = empShifts[empShifts.length - 1];
+
+            if (lastShift && lastShift.end) {
+                if (Date.now() - parseInt(lastShift.end) < forceThreshold) {
+                    const bizConfig = await dataManager.getCompanyConfig(cid);
+                    const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month);
+                    const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates);
+                    return {
+                        duration: calculateDuration(lastShift.start, lastShift.end),
+                        weightedHours: formatHHMM(shiftWage.weightedTotal),
+                        wageBreakdown: shiftWage.breakdown
+                    };
+                }
+            }
+            return null;
+        };
+
         switch (action) {
             // === BUSINESS SETUP ===
             case 'createNewBusiness': {
@@ -131,25 +154,7 @@ router.post('/dispatch', async (req, res) => {
 
                 // Enriched summaries
                 const monthlySummary = await getMonthlySummary(companyId, rest.name);
-
-                let lastShiftSummary = null;
-                if (type === 'OUT') {
-                    // Get just the last shift we just closed
-                    const now = new Date();
-                    const shifts = await dataManager.getShifts(companyId, now.getFullYear(), now.getMonth() + 1);
-                    const empShifts = shifts[rest.name] || [];
-                    const lastShift = empShifts[empShifts.length - 1];
-                    if (lastShift && lastShift.end) {
-                        const bizConfig = await dataManager.getCompanyConfig(companyId);
-                        const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, now.getFullYear(), now.getMonth() + 1);
-                        const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates);
-                        lastShiftSummary = {
-                            duration: calculateDuration(lastShift.start, lastShift.end),
-                            weightedHours: formatHHMM(shiftWage.weightedTotal),
-                            wageBreakdown: shiftWage.breakdown
-                        };
-                    }
-                }
+                const lastShiftSummary = type === 'OUT' ? await getRecentShiftSummary(companyId, rest.name, 60000) : null;
 
                 return res.json({
                     success: true,
@@ -163,7 +168,8 @@ router.post('/dispatch', async (req, res) => {
             case 'getStatus': {
                 const status = await dataManager.getEmployeeStatus(companyId, rest.name);
                 const monthlySummary = await getMonthlySummary(companyId, rest.name);
-                return res.json({ success: true, ...status, monthlySummary });
+                const lastShiftSummary = status.state === 'OUT' ? await getRecentShiftSummary(companyId, rest.name) : null;
+                return res.json({ success: true, ...status, monthlySummary, lastShiftSummary });
             }
 
             // === REPORTS ===
