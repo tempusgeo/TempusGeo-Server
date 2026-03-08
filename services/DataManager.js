@@ -1170,9 +1170,9 @@ class DataManager {
             delete config.settings.constraints[name];
         }
 
-        // Remove from dashboard
+        // Remove from dashboard list in config
         if (config.settings?.dashboard) {
-            config.settings.dashboard = (config.settings.dashboard || []).filter(e => e.name !== name);
+            config.settings.dashboard = (config.settings.dashboard || []).filter(e => e && e.name !== name);
         }
 
         await this.updateCompanyConfig(companyId, config);
