@@ -1177,15 +1177,28 @@ class DataManager {
 
         await this.updateCompanyConfig(companyId, config);
 
+        // Thoroughly remove from shifts to prevent getEmployees() from "resurrecting" the employee
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth() + 1;
-        const shifts = await this.getShifts(companyId, year, month);
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1;
 
-        if (shifts[name]) {
-            delete shifts[name];
-            await this.saveShifts(companyId, year, month, shifts);
+        const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const prevYear = prevDate.getFullYear();
+        const prevMonth = prevDate.getMonth() + 1;
+
+        const periods = [
+            { y: currentYear, m: currentMonth },
+            { y: prevYear, m: prevMonth }
+        ];
+
+        for (const p of periods) {
+            const shifts = await this.getShifts(companyId, p.y, p.m);
+            if (shifts[name]) {
+                delete shifts[name];
+                await this.saveShifts(companyId, p.y, p.m, shifts);
+            }
         }
+
         return { success: true };
     }
 
