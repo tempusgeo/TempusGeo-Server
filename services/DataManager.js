@@ -1464,7 +1464,19 @@ class DataManager {
     }
 
     async deleteBusiness(companyId) {
-        // 1. Remove from clients array
+        // 1. Notify GAS Cold Storage to delete data there
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
+            try {
+                console.log(`[DataManager] Notifying GAS to delete data for ${companyId}`);
+                await axios.get(`${gasUrl}?action=deleteBusiness&companyId=${companyId}`, { timeout: 15000 });
+            } catch (e) {
+                console.error(`[DataManager] Failed to notify GAS for deletion of ${companyId}:`, e.message);
+                // We continue local deletion even if GAS notification fails
+            }
+        }
+
+        // 2. Remove from clients array
         const initialLen = CACHE.clients.length;
         CACHE.clients = CACHE.clients.filter(c => c.id !== companyId);
 
@@ -1473,12 +1485,12 @@ class DataManager {
         }
         await this.saveClients();
 
-        // 2. Remove from active cache
+        // 3. Remove from active cache
         if (CACHE.companies[companyId]) {
             delete CACHE.companies[companyId];
         }
 
-        // 3. Delete from filesystem
+        // 4. Delete from filesystem
         const companyDir = path.join(this.dataDir, 'companies', companyId);
         try {
             await fs.rm(companyDir, { recursive: true, force: true });
