@@ -342,7 +342,7 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'adminEmployee': {
-                const { name, action: empAction } = rest;
+                const { name, type: empAction } = rest;
                 if (empAction === 'delete') {
                     await dataManager.deleteEmployee(companyId, name);
                 } else {
