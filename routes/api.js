@@ -32,12 +32,26 @@ router.post('/dispatch', async (req, res) => {
             if (!bizConfig) return null;
 
             const shifts = await dataManager.getShifts(cid, year, month);
-            const empShifts = shifts[name] || [];
+            let empShifts = shifts[name] || [];
+
+            // LIVE INJECTION: If last shift is active, inject current time as 'end' 
+            // so WageCalculator includes it in the live summary
+            if (empShifts.length > 0) {
+                const last = empShifts[empShifts.length - 1];
+                if (last && last.start && !last.end) {
+                    // Clone to avoid modifying the original shifts object in CACHE
+                    empShifts = JSON.parse(JSON.stringify(empShifts));
+                    empShifts[empShifts.length - 1].end = Date.now();
+                }
+            }
+
             const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month);
             const wageResult = WageCalculator.calculateBreakdown(empShifts, bizConfig.settings?.salary || {}, holidayDates);
             return {
                 totalHours: formatHHMM(wageResult.totalHours),
                 weightedHours: formatHHMM(wageResult.weightedTotal),
+                totalHoursRaw: wageResult.totalHours, // Raw decimal for live frontend updates
+                weightedHoursRaw: wageResult.weightedTotal, // Raw decimal for live frontend updates
                 wageBreakdown: wageResult.breakdown
             };
         };
