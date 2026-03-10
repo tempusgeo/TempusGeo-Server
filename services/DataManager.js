@@ -90,15 +90,16 @@ class DataManager {
                 this.runGlobalArchiveCycle().catch(e => console.error(`[Auto-Archive] Global Cycle Failed:`, e.message));
             }, 24 * 60 * 60 * 1000);
 
-            // 6. Start Automatic Shift Closure Trigger (Every 1 minute)
+            // 7. Start Automatic Payment Cycle (Every 5 minutes check)
             setInterval(() => {
-                this.performAutoCheckout().catch(e => console.error(`[Auto-Checkout-Interval] Failed:`, e.message));
-            }, 60 * 1000);
+                this.checkAndProcessAutoCharge().catch(e => console.error(`[Auto-Charge-Check] Failed:`, e.message));
+            }, 5 * 60 * 1000);
 
             // Trigger once on startup after 1 minute
             setTimeout(() => {
                 this.runGlobalArchiveCycle().catch(e => console.error(`[Startup Clean] Failed:`, e.message));
                 this.performAutoCheckout().catch(e => console.error(`[Startup Auto-Checkout] Failed:`, e.message));
+                this.checkAndProcessAutoCharge().catch(e => console.error(`[Startup Auto-Charge] Failed:`, e.message));
             }, 60000);
 
         } catch (e) {
@@ -305,6 +306,14 @@ class DataManager {
                 existsLocally = stat.isDirectory();
             } catch (e) { }
 
+            // New: Active Employees & Expected Payment
+            let activeEmployees = 0;
+            let expectedPayment = 0;
+            if (existsLocally) {
+                activeEmployees = await this.countUniqueActiveEmployees(client.id);
+                expectedPayment = await this.calculateSubscriptionAmount(client.id, activeEmployees);
+            }
+
             return {
                 companyId: client.id,
                 businessName: client.businessName || 'עסק ללא שם',
@@ -317,9 +326,156 @@ class DataManager {
                 existsLocally,
                 existsInGAS: gasCompanies.has(client.id),
                 needsRestore: !existsLocally && gasCompanies.has(client.id),
-                isOrphan: !!client.isOrphan
+                isOrphan: !!client.isOrphan,
+                activeEmployees,
+                expectedPayment,
+                autoChargeEnabled: !!client.autoChargeEnabled
             };
         }));
+    }
+
+    async countUniqueActiveEmployees(companyId) {
+        try {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth() + 1;
+            
+            // Check current month
+            const currentShifts = await this.getShifts(companyId, year, month);
+            const activeSet = new Set(Object.keys(currentShifts));
+
+            // Check previous month if we are early in the month (within first 30 days total)
+            // Or just always check last 30 days.
+            const prevDate = new Date();
+            prevDate.setDate(now.getDate() - 30);
+            const prevYear = prevDate.getFullYear();
+            const prevMonth = prevDate.getMonth() + 1;
+
+            if (prevYear !== year || prevMonth !== month) {
+                const prevShifts = await this.getShifts(companyId, prevYear, prevMonth);
+                Object.keys(prevShifts).forEach(emp => activeSet.add(emp));
+            }
+
+            return activeSet.size;
+        } catch (e) {
+            console.error(`[DataManager] Failed to count active employees for ${companyId}:`, e.message);
+            return 0;
+        }
+    }
+
+    async calculateSubscriptionAmount(companyId, employeeCount) {
+        try {
+            const sysConfig = await this.getSystemConfig();
+            const minPrice = sysConfig.minMonthlyPrice || 0;
+            const pricePerEmp = sysConfig.pricePerEmployee || 0;
+            
+            return Math.max(minPrice, employeeCount * pricePerEmp);
+        } catch (e) {
+            return 0;
+        }
+    }
+
+    async checkAndProcessAutoCharge() {
+        const sysConfig = await this.getSystemConfig();
+        const chargeDay = sysConfig.chargeDay || 1;
+        const chargeTime = sysConfig.chargeTime || "00:00"; // format HH:MM
+
+        const now = new Date();
+        if (now.getDate() !== chargeDay) return; // Not the day
+
+        const [chargeH, chargeM] = chargeTime.split(':').map(Number);
+        const currentH = now.getHours();
+        const currentM = now.getMinutes();
+
+        // Check window (e.g., within 10 minutes of chargeTime)
+        if (currentH !== chargeH || currentM < chargeM || currentM > chargeM + 10) return;
+
+        console.log(`[Auto-Charge] ⚡ Starting automatic billing cycle for day ${chargeDay}, time ${chargeTime}`);
+        
+        // Prevent multiple runs in same window
+        if (this._lastChargeRun === now.toDateString()) return;
+        this._lastChargeRun = now.toDateString();
+
+        await this.processAutoChargeCycle();
+    }
+
+    async processAutoChargeCycle() {
+        const clientsToCharge = CACHE.clients.filter(c => c.autoChargeEnabled && c.paymentMethod?.token);
+        console.log(`[Auto-Charge] Found ${clientsToCharge.length} clients eligible for auto-charge.`);
+
+        for (const client of clientsToCharge) {
+            try {
+                const activeCount = await this.countUniqueActiveEmployees(client.id);
+                const amount = await this.calculateSubscriptionAmount(client.id, activeCount);
+
+                if (amount <= 0) {
+                    console.log(`[Auto-Charge] Skipping ${client.businessName} (Amount 0)`);
+                    continue;
+                }
+
+                console.log(`[Auto-Charge] Charging ${client.businessName}: ₪${amount} for ${activeCount} active employees.`);
+
+                const chargeRes = await tranzilaService.chargeToken({
+                    supplier: sysConfig.tranzilaTerminal,
+                    TranzilaPW: sysConfig.tranzilaPass,
+                    sum: amount,
+                    currency: 1, // ILS
+                    TranzilaTK: client.paymentMethod.token,
+                    expmonth: client.paymentMethod.expMonth,
+                    expyear: client.paymentMethod.expYear,
+                    myid: client.paymentMethod.cardHolderId || client.id,
+                    contact: client.paymentMethod.cardHolderName,
+                    mycvv: client.paymentMethod.cvv
+                });
+
+                if (chargeRes.success) {
+                    console.log(`[Auto-Charge] ✅ Success for ${client.businessName}. Confirmation: ${chargeRes.confirmationCode}`);
+                    
+                    // Update Expiry: Add 1 month, aligned to the 2nd
+                    const newExpiry = new Date();
+                    newExpiry.setMonth(newExpiry.getMonth() + 2); // To end of next month
+                    newExpiry.setDate(2);
+                    newExpiry.setHours(23, 59, 59, 999);
+                    
+                    client.subscriptionExpiry = newExpiry.toISOString();
+                    
+                    if (!client.paymentHistory) client.paymentHistory = [];
+                    client.paymentHistory.push({
+                        date: new Date().toLocaleDateString('he-IL'),
+                        amount,
+                        currency: 'ILS',
+                        period: 1,
+                        method: 'Auto-Charge (Token)',
+                        reference: chargeRes.confirmationCode,
+                        status: 'PAID',
+                        activeEmployees: activeCount
+                    });
+
+                    await this.saveClients();
+
+                    // Send Success Email
+                    emailService.sendPaymentSuccessNotification(client.email, {
+                        businessName: client.businessName,
+                        amount,
+                        newExpiry: newExpiry.toLocaleDateString('he-IL'),
+                        activeEmployees: activeCount
+                    }).catch(e => console.error(`[Auto-Charge Email FAIL] ${e.message}`));
+
+                } else {
+                    console.error(`[Auto-Charge] ❌ Failed for ${client.businessName}: ${chargeRes.raw}`);
+                    
+                    // Send Failure Notification + WhatsApp Fallback info
+                    emailService.sendPaymentFailedNotification(client.email, {
+                        businessName: client.businessName,
+                        amount,
+                        error: chargeRes.data?.['Error Message'] || 'Transaction Denied'
+                    }).catch(e => console.error(`[Auto-Charge Email (Fail) FAIL] ${e.message}`));
+                }
+
+            } catch (err) {
+                console.error(`[Auto-Charge] Error processing ${client.businessName}:`, err.message);
+            }
+        }
     }
 
     async syncAllFromGAS() {
