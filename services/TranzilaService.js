@@ -11,9 +11,9 @@ class TranzilaService {
         // In production, use environment variables!
         const payload = {
             ...params,
-            supplier: process.env.TRANZILA_TERMINAL_NAME || "test",
+            supplier: params.supplier || process.env.TRANZILA_TERMINAL_NAME || "test",
             tranmode: "A", // Verification Only (J5) or M (Charge)
-            TranzilaPW: process.env.TRANZILA_TERMINAL_PASS || "test"
+            TranzilaPW: params.TranzilaPW || process.env.TRANZILA_TERMINAL_PASS || "test"
         };
 
         try {
@@ -51,6 +51,39 @@ class TranzilaService {
         } catch (e) {
             console.error("JetServer Proxy Error:", e.message);
             return { success: false, error: "Payment Gateway Error" };
+        }
+    }
+
+    async chargeToken(params) {
+        // params: { sum, currency, TranzilaToken, expmonth, expyear, myid, ... }
+        
+        const payload = {
+            ...params,
+            supplier: params.supplier || process.env.TRANZILA_TERMINAL_NAME || "test",
+            tranmode: "M", // M = Charge
+            TranzilaPW: params.TranzilaPW || process.env.TRANZILA_TERMINAL_PASS || "test"
+        };
+
+        try {
+            console.log(`[Tranzila] Charging token for amount: ${params.sum}`);
+            const response = await axios.post(config.TRANZILA.API_URL, new URLSearchParams(payload).toString(), {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+
+            const responseBody = response.data;
+            const parsed = new URLSearchParams(responseBody);
+
+            return {
+                success: parsed.get('Response') === '000',
+                raw: responseBody,
+                data: Object.fromEntries(parsed),
+                confirmationCode: parsed.get('ConfirmationCode'),
+                index: parsed.get('index')
+            };
+
+        } catch (e) {
+            console.error("[Tranzila] Charge Token Error:", e.message);
+            return { success: false, error: e.message };
         }
     }
 }
