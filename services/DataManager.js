@@ -79,6 +79,11 @@ class DataManager {
                 await this.loadCompany(client.id);
             }
 
+            // 6. Proactive Metadata Recovery: Sync missing history filters from GAS
+            this.ensureAllBusinessesHaveMetadata().catch(err => {
+                console.error(`[Metadata-Sync] Global sync failed:`, err.message);
+            });
+
             // 5. Start Automatic Archiving Trigger (Every 24 hours)
             setInterval(() => {
                 console.log(`[Auto-Archive] Starting daily cleanup cycle...`);
@@ -922,18 +927,20 @@ class DataManager {
         if (!gasUrl) return;
 
         try {
-            console.log(`[Metadata] refreshing metadata from GAS for ${companyId}`);
+            console.log(`[Metadata] Refreshing metadata from GAS for ${companyId}`);
             const response = await axios.get(`${gasUrl}?action=getMetadataSummary&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 15000 });
+            
             if (response.data && response.data.success && response.data.metadata) {
                 const remoteMetadata = response.data.metadata;
                 
-                // Merge with local knowledge
+                // 1. Scan Local Data
                 const localMetadata = { years: {} };
                 const companyDir = path.join(this.dataDir, 'companies', companyId);
                 const folders = await fs.readdir(companyDir).catch(() => []);
                 for (const f of folders) {
                     if (!isNaN(parseInt(f))) {
-                        const mFiles = await fs.readdir(path.join(companyDir, f)).catch(() => []);
+                        const yearPath = path.join(companyDir, f);
+                        const mFiles = await fs.readdir(yearPath).catch(() => []);
                         const mSet = new Set();
                         mFiles.forEach(mf => {
                             let m = NaN;
@@ -941,28 +948,67 @@ class DataManager {
                             else if (mf.startsWith('json.')) m = parseInt(mf.split('.')[1]);
                             if (!isNaN(m)) mSet.add(m);
                         });
-                        localMetadata.years[f] = Array.from(mSet).sort((a,b) => b-a);
+                        if (mSet.size > 0) {
+                            localMetadata.years[f] = Array.from(mSet).sort((a,b) => b-a);
+                        }
                     }
                 }
 
-                // Final Merge: Remote + Local
+                // 2. Merge: Remote (GAS Archive) + Local (Hot/Pending)
                 for (const y in remoteMetadata.years) {
                     const combined = new Set([...(localMetadata.years[y] || []), ...remoteMetadata.years[y]]);
                     localMetadata.years[y] = Array.from(combined).sort((a,b) => b-a);
                 }
 
-                // Update Cache and Disk
-                if (CACHE.companies[companyId]) {
-                    CACHE.companies[companyId].metadata = localMetadata;
-                    const c = CACHE.companies[companyId].config;
-                    c.historyMetadata = localMetadata;
-                    await fs.writeFile(path.join(companyDir, 'config.json'), JSON.stringify(c, null, 2));
-                    console.log(`[Metadata] Successfully updated metadata for ${companyId}`);
-                }
+                // 3. Update RAM Cache
+                if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
+                CACHE.companies[companyId].metadata = localMetadata;
+                
+                // 4. Update config.json on disk
+                const configPath = path.join(companyDir, 'config.json');
+                const currentConfig = CACHE.companies[companyId].config;
+                currentConfig.historyMetadata = localMetadata;
+                
+                await fs.writeFile(configPath, JSON.stringify(currentConfig, null, 2));
+                
+                // 5. Sync back to GAS as a backup (Optional but good practice)
+                syncManager.enqueue('CONFIG', currentConfig, { companyId, gasUrl, password: currentConfig.password });
+                
+                console.log(`[Metadata] Successfully synced ${Object.keys(localMetadata.years).length} years for ${companyId}`);
+                return localMetadata;
             }
         } catch (err) {
             console.error(`[Metadata] Refresh failed for ${companyId}: ${err.message}`);
         }
+        return null;
+    }
+
+    /**
+     * Proactively ensures all businesses have history metadata populated.
+     * If missing, fetches from GAS.
+     */
+    async ensureAllBusinessesHaveMetadata() {
+        console.log(`[Metadata-Sync] Scanning all businesses for history filters...`);
+        let syncCount = 0;
+
+        for (const client of CACHE.clients) {
+            const companyId = client.id;
+            try {
+                if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
+                const meta = CACHE.companies[companyId].metadata;
+                
+                const hasYears = meta && meta.years && Object.keys(meta.years).length > 0;
+                
+                if (!hasYears) {
+                    console.log(`[Metadata-Sync] ${companyId} is missing history filters. Fetching from GAS...`);
+                    await this.refreshMetadata(companyId);
+                    syncCount++;
+                }
+            } catch (err) {
+                console.error(`[Metadata-Sync] Failed for ${companyId}:`, err.message);
+            }
+        }
+        console.log(`[Metadata-Sync] Finished. Triggered sync for ${syncCount} businesses.`);
     }
 
     // --- ADMIN ACTIONS ---
