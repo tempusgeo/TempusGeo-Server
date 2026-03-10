@@ -414,6 +414,45 @@ class EmailService {
         return this.sendEmail(to, `התראת מנוי - ${businessName}`, this.getStyledTemplate('סטטוס מנוי', content, '', logoUrl, businessName));
     }
 
+    async sendPaymentSuccessNotification(to, data) {
+        const title = 'תשלום בוצע בהצלחה';
+        const content = `
+            <p style="text-align: right; color: #ffffff; font-size: 15px; margin-bottom: 15px;">שלום <strong>${data.businessName}</strong>,</p>
+            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">שמחים לעדכן כי התשלום החודשי עבור המנוי בוצע בהצלחה.</p>
+            
+            <div style="background: rgba(16, 185, 129, 0.1); border-right: 4px solid #10b981; padding: 15px; margin: 20px 0; border-radius: 8px;">
+                <table style="width: 100%; color: #ffffff; font-size: 14px;">
+                    <tr><td style="color: #94a3b8;">סכום לחיוב:</td><td style="text-align: left; font-weight: 700;">₪${data.amount}</td></tr>
+                    <tr><td style="color: #94a3b8;">עובדים פעילים:</td><td style="text-align: left;">${data.activeEmployees}</td></tr>
+                    <tr><td style="color: #94a3b8;">תוקף מנוי חדש:</td><td style="text-align: left; font-weight: 700;">${data.newExpiry}</td></tr>
+                </table>
+            </div>
+            
+            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 13px;">החשבונית תישלח אליך בנפרד ע"י חברת הסליקה.</p>
+        `;
+        return this.sendEmail(to, `אישור תשלום - ${data.businessName}`, this.getStyledTemplate(title, content, '', null, data.businessName));
+    }
+
+    async sendPaymentFailedNotification(to, data) {
+        const title = 'חיוב המנוי נכשל';
+        const content = `
+            <p style="text-align: right; color: #ffffff; font-size: 15px; margin-bottom: 15px;">שלום <strong>${data.businessName}</strong>,</p>
+            <p style="text-align: right; color: #f43f5e; line-height: 1.6; font-size: 14px; font-weight: 700;">ניסיון החיוב האוטומטי עבור המנוי נכשל.</p>
+            
+            <div style="background: rgba(244, 63, 94, 0.1); border-right: 4px solid #f43f5e; padding: 15px; margin: 20px 0; border-radius: 8px;">
+                <p style="margin: 0; color: #ffffff; font-size: 14px;"><strong>סיבת הדחייה:</strong> ${data.error}</p>
+                <p style="margin: 10px 0 0 0; color: #94a3b8; font-size: 13px;">סכום לחיוב: ₪${data.amount}</p>
+            </div>
+            
+            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">אנא היכנס למערכת ועדכן את פרטי התשלום בהקדם כדי למנוע את השבתת השירות.</p>
+            
+            <div style="text-align: center; margin-top: 25px;">
+                <a href="https://tempusgeo.onrender.com" style="display: inline-block; background: #f43f5e; color: #ffffff; text-decoration: none; padding: 12px 30px; border-radius: 10px; font-weight: 700; font-size: 15px;">עדכון פרטי תשלום</a>
+            </div>
+        `;
+        return this.sendEmail(to, `דחיית תשלום - ${data.businessName}`, this.getStyledTemplate(title, content, '', null, data.businessName));
+    }
+
 }
 
 module.exports = new EmailService();
