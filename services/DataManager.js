@@ -1025,7 +1025,8 @@ class DataManager {
             return new Date(t).getTime();
         };
 
-        const shiftIndex = shifts[name].findIndex(s => s.start === originalStart || s.start == originalStart || (safeGetTime(s.start) === safeGetTime(originalStart)));
+        const targetStart = safeGetTime(originalStart);
+        const shiftIndex = shifts[name].findIndex(s => safeGetTime(s.start) === targetStart);
         if (shiftIndex !== -1) {
             shifts[name][shiftIndex].start = newStart;
             shifts[name][shiftIndex].end = newEnd;
@@ -1207,7 +1208,8 @@ class DataManager {
         };
 
         // Filter out by start time safely
-        shifts[name] = shifts[name].filter(s => s.start !== start && s.start != start && safeGetTime(s.start) !== safeGetTime(start));
+        const targetTime = safeGetTime(start);
+        shifts[name] = shifts[name].filter(s => safeGetTime(s.start) !== targetTime);
         await this.saveShifts(companyId, parseInt(year), parseInt(month), shifts);
     }
 
