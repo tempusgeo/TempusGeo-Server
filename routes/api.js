@@ -193,47 +193,13 @@ router.post('/dispatch', async (req, res) => {
 
             // === REPORTS ===
             case 'getYears': {
-                const localYears = await dataManager.getHistoryYears(companyId);
-                let allYears = [...localYears];
-
-                // Merge with GAS
-                const bizConfig = await dataManager.getCompanyConfig(companyId);
-                const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
-                if (gasUrl) {
-                    try {
-                        console.log(`[API] Fetching GAS years for ${companyId} via ${gasUrl}`);
-                        const gasRes = await axios.get(`${gasUrl}?action=getYears&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 10000 });
-                        console.log(`[API] GAS Years result success: ${gasRes.data?.success}, count: ${gasRes.data?.years?.length || 0}`);
-                        if (gasRes.data && gasRes.data.success) {
-                            allYears = [...new Set([...allYears, ...gasRes.data.years.map(y => parseInt(y))])];
-                        }
-                    } catch (e) {
-                        console.error('[GAS] getYears failed:', e.message);
-                    }
-                }
-                return res.json({ success: true, years: allYears.sort((a, b) => b - a) });
+                const allYears = await dataManager.getHistoryYears(companyId);
+                return res.json({ success: true, years: allYears });
             }
 
             case 'getMonths': {
-                const localMonths = await dataManager.getHistoryMonths(companyId, rest.year);
-                let allMonths = [...localMonths];
-
-                // Merge with GAS
-                const bizConfig = await dataManager.getCompanyConfig(companyId);
-                const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
-                if (gasUrl) {
-                    try {
-                        console.log(`[API] Fetching GAS months for ${companyId}/${rest.year} via ${gasUrl}`);
-                        const gasRes = await axios.get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${rest.year}&password=${bizConfig.password || ''}`, { timeout: 10000 });
-                        console.log(`[API] GAS Months result success: ${gasRes.data?.success}, count: ${gasRes.data?.months?.length || 0}`);
-                        if (gasRes.data && gasRes.data.success) {
-                            allMonths = [...new Set([...allMonths, ...gasRes.data.months.map(m => typeof m === 'object' ? m.name : m).map(m => parseInt(m))])];
-                        }
-                    } catch (e) {
-                        console.error('[GAS] getMonths failed:', e.message);
-                    }
-                }
-                const months = allMonths.sort((a, b) => b - a).map(m => ({ name: m }));
+                const allMonths = await dataManager.getHistoryMonths(companyId, rest.year);
+                const months = allMonths.map(m => ({ name: m }));
                 return res.json({ success: true, months });
             }
 
