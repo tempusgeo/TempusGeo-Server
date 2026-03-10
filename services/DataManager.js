@@ -4,6 +4,7 @@ const config = require('../config');
 const axios = require('axios');
 const emailService = require('./EmailService');
 const WageCalculator = require('./WageCalculator');
+const syncManager = require('./SyncManager');
 
 // --- IN-MEMORY CACHE ---
 // Structure: { companyId: { config: {}, shifts: { '2024-02': { ...data... } } } }
@@ -203,8 +204,12 @@ class DataManager {
 
         CACHE.companies[companyId] = {
             config: configData,
-            shifts: {} // Will load shifts on demand per month
+            shifts: {}, // Will load shifts on demand per month
+            metadata: configData.historyMetadata || { years: {} }
         };
+
+        // Background Refresh
+        this.refreshMetadata(companyId).catch(() => {});
     }
 
 
@@ -336,6 +341,12 @@ class DataManager {
         await fs.writeFile(path.join(companyDir, 'config.json'), JSON.stringify(updated, null, 2));
         await this.updateLastWriteTime();
 
+        // ASYNC: Push to GAS in background
+        const gasUrl = updated.gasUrl || config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
+            syncManager.enqueue('CONFIG', updated, { companyId, gasUrl, password: updated.password });
+        }
+
         return updated;
     }
 
@@ -439,6 +450,29 @@ class DataManager {
 
         await fs.writeFile(targetFilePath, JSON.stringify(shiftsData, null, 2));
         await this.updateLastWriteTime();
+
+        // Update local metadata cache (Instant UI update)
+        if (CACHE.companies[companyId]) {
+            if (!CACHE.companies[companyId].metadata) CACHE.companies[companyId].metadata = { years: {} };
+            if (!CACHE.companies[companyId].metadata.years[year.toString()]) {
+                CACHE.companies[companyId].metadata.years[year.toString()] = [];
+            }
+            if (!CACHE.companies[companyId].metadata.years[year.toString()].includes(parseInt(month))) {
+                CACHE.companies[companyId].metadata.years[year.toString()].push(parseInt(month));
+                CACHE.companies[companyId].metadata.years[year.toString()].sort((a,b) => b-a);
+                // Also update the persistent config
+                const currentConfig = CACHE.companies[companyId].config;
+                currentConfig.historyMetadata = CACHE.companies[companyId].metadata;
+                await fs.writeFile(path.join(this.dataDir, 'companies', companyId, 'config.json'), JSON.stringify(currentConfig, null, 2));
+            }
+        }
+
+        // ASYNC: Push to GAS in background
+        const bizConfig = await this.getCompanyConfig(companyId);
+        const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
+            syncManager.enqueue('SHIFT', { year, month, shifts: shiftsData }, { companyId, gasUrl, password: bizConfig.password });
+        }
     }
 
 
@@ -851,86 +885,103 @@ class DataManager {
 
     // --- HISTORY META ---
     async getHistoryYears(companyId) {
-        // Try getting from Hot Storage fs
+        // Use Cached Metadata first (Instant)
+        if (CACHE.companies[companyId] && CACHE.companies[companyId].metadata) {
+            const keys = Object.keys(CACHE.companies[companyId].metadata.years || {});
+            if (keys.length > 0) {
+                return keys.map(y => parseInt(y)).sort((a, b) => b - a);
+            }
+        }
+
+        // --- Fallback legacy scan (only if metadata missing) ---
         const companyDir = path.join(this.dataDir, 'companies', companyId);
         const years = new Set();
-        let bizConfig = null;
+        let bizConfig = await this.getCompanyConfig(companyId);
 
         try {
-            bizConfig = await this.getCompanyConfig(companyId);
             const files = await fs.readdir(companyDir);
             for (const file of files) {
                 if (file === 'config.json') continue;
-                // check if dir
                 const stat = await fs.stat(path.join(companyDir, file));
                 if (stat.isDirectory()) years.add(parseInt(file));
             }
         } catch (e) { }
 
-        // Fetch from GAS Cold Storage
-        const gasUrl = bizConfig?.gasUrl || config.GAS_COLD_STORAGE_URL;
-        if (gasUrl) {
-            try {
-                const response = await axios.get(`${gasUrl}?action=getYears&companyId=${companyId}&password=${bizConfig?.password || ''}`);
-                if (response.data && response.data.years) {
-                    response.data.years.forEach(y => years.add(parseInt(y)));
-                }
-            } catch (err) {
-                console.error(`[GAS] Failed to fetch archive years for ${companyId}: ${err.message}`);
-            }
-        }
+        // Trigger a background refresh of the metadata
+        this.refreshMetadata(companyId).catch(console.error);
 
         return Array.from(years).sort((a, b) => b - a);
     }
 
     async getHistoryMonths(companyId, year) {
+        // Use Cached Metadata first
+        if (CACHE.companies[companyId] && CACHE.companies[companyId].metadata) {
+            const months = CACHE.companies[companyId].metadata.years[year.toString()];
+            if (months) return months;
+        }
+
         const yearDir = path.join(this.dataDir, 'companies', companyId, year.toString());
         const months = new Set();
-        let bizConfig = null;
-
         try {
-            bizConfig = await this.getCompanyConfig(companyId);
             const files = await fs.readdir(yearDir);
             for (const file of files) {
-                // Support both "3.json" (Render default) and "json.3" (GAS format)
                 let parsedOpts = NaN;
-                if (file.endsWith('.json')) {
-                    parsedOpts = parseInt(file.replace('.json', ''));
-                } else if (file.startsWith('json.')) {
-                    parsedOpts = parseInt(file.split('.')[1]);
-                }
-
-                // FIX: Ensure we only add valid numbers, ignore 'NaN.json' or 'undefined.json'
-                if (!isNaN(parsedOpts)) {
-                    months.add(parsedOpts);
-                }
+                if (file.endsWith('.json')) parsedOpts = parseInt(file.replace('.json', ''));
+                else if (file.startsWith('json.')) parsedOpts = parseInt(file.split('.')[1]);
+                if (!isNaN(parsedOpts)) months.add(parsedOpts);
             }
         } catch (e) { }
 
-        // Fetch from GAS Cold Storage
-        const gasUrl = bizConfig?.gasUrl || config.GAS_COLD_STORAGE_URL;
-        if (gasUrl) {
-            try {
-                const response = await axios.get(`${gasUrl}?action=getMonths&companyId=${companyId}&year=${year}&password=${bizConfig?.password || ''}`);
-                if (response.data && response.data.months) {
-                    response.data.months.forEach(m => {
-                        let parsed = NaN;
-                        if (typeof m === 'object' && m !== null) {
-                            parsed = parseInt(m.name || m.month);
-                        } else {
-                            parsed = parseInt(m);
-                        }
-                        if (!isNaN(parsed)) {
-                            months.add(parsed);
-                        }
-                    });
-                }
-            } catch (err) {
-                console.error(`[GAS] Failed to fetch archive months for ${companyId}: ${err.message}`);
-            }
-        }
-
         return Array.from(months).sort((a, b) => b - a);
+    }
+
+    async refreshMetadata(companyId) {
+        const bizConfig = await this.getCompanyConfig(companyId);
+        const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
+        if (!gasUrl) return;
+
+        try {
+            console.log(`[Metadata] refreshing metadata from GAS for ${companyId}`);
+            const response = await axios.get(`${gasUrl}?action=getMetadataSummary&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 15000 });
+            if (response.data && response.data.success && response.data.metadata) {
+                const remoteMetadata = response.data.metadata;
+                
+                // Merge with local knowledge
+                const localMetadata = { years: {} };
+                const companyDir = path.join(this.dataDir, 'companies', companyId);
+                const folders = await fs.readdir(companyDir).catch(() => []);
+                for (const f of folders) {
+                    if (!isNaN(parseInt(f))) {
+                        const mFiles = await fs.readdir(path.join(companyDir, f)).catch(() => []);
+                        const mSet = new Set();
+                        mFiles.forEach(mf => {
+                            let m = NaN;
+                            if (mf.endsWith('.json')) m = parseInt(mf.replace('.json', ''));
+                            else if (mf.startsWith('json.')) m = parseInt(mf.split('.')[1]);
+                            if (!isNaN(m)) mSet.add(m);
+                        });
+                        localMetadata.years[f] = Array.from(mSet).sort((a,b) => b-a);
+                    }
+                }
+
+                // Final Merge: Remote + Local
+                for (const y in remoteMetadata.years) {
+                    const combined = new Set([...(localMetadata.years[y] || []), ...remoteMetadata.years[y]]);
+                    localMetadata.years[y] = Array.from(combined).sort((a,b) => b-a);
+                }
+
+                // Update Cache and Disk
+                if (CACHE.companies[companyId]) {
+                    CACHE.companies[companyId].metadata = localMetadata;
+                    const c = CACHE.companies[companyId].config;
+                    c.historyMetadata = localMetadata;
+                    await fs.writeFile(path.join(companyDir, 'config.json'), JSON.stringify(c, null, 2));
+                    console.log(`[Metadata] Successfully updated metadata for ${companyId}`);
+                }
+            }
+        } catch (err) {
+            console.error(`[Metadata] Refresh failed for ${companyId}: ${err.message}`);
+        }
     }
 
     // --- ADMIN ACTIONS ---
