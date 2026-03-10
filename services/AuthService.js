@@ -19,12 +19,20 @@ class AuthService {
 
         const config = await dataManager.getCompanyConfig(client.id);
 
+        const activeEmployees = await dataManager.countUniqueActiveEmployees(client.id);
+        const systemConfig = await dataManager.getSystemConfig();
+        const expectedPayment = dataManager.calculateSubscriptionAmount(activeEmployees, systemConfig);
+
         return {
             success: true,
             companyId: client.id,
             config: config,
             settings: config.settings || {},
             paymentHistory: client.paymentHistory || (client.lastPayment ? [client.lastPayment] : []),
+            paymentMethod: client.paymentMethod || null,
+            autoChargeEnabled: client.autoChargeEnabled || false,
+            activeEmployees: activeEmployees,
+            expectedPayment: expectedPayment,
             isExpired: isExpired,
             expiryDate: client.subscriptionExpiry,
             role: 'admin'
