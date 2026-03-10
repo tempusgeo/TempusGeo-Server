@@ -628,7 +628,6 @@ class DataManager {
             const empConstraint = constraints[employeeName];
 
             if (empConstraint) {
-                // If verified, check mismatch
                 if (empConstraint.deviceIdVerified && empConstraint.deviceId) {
                     if (deviceId && empConstraint.deviceId !== deviceId) {
                         return {
@@ -638,7 +637,6 @@ class DataManager {
                         };
                     }
                 }
-                // If not verified and deviceId provided, lock it
                 else if (deviceId) {
                     empConstraint.deviceId = deviceId;
                     empConstraint.deviceIdVerified = true;
@@ -649,75 +647,56 @@ class DataManager {
         }
 
         const shifts = await this.getShifts(companyId, year, month);
-
         if (!shifts[employeeName]) shifts[employeeName] = [];
 
+        let currentShift = null;
         if (action === "IN") {
-            shifts[employeeName].push({ start: timestamp, end: null, location });
+            currentShift = { start: timestamp, end: null, location };
+            shifts[employeeName].push(currentShift);
         } else if (action === "OUT") {
-            const lastShift = shifts[employeeName][shifts[employeeName].length - 1];
-            if (lastShift && !lastShift.end) {
-                lastShift.end = timestamp;
-                if (note) lastShift.note = note; // Add note if provided
+            currentShift = shifts[employeeName][shifts[employeeName].length - 1];
+            if (currentShift && !currentShift.end) {
+                currentShift.end = timestamp;
+                if (note) currentShift.note = note;
             } else {
-                shifts[employeeName].push({ start: null, end: timestamp, note: "Manual Out without In" });
+                currentShift = { start: null, end: timestamp, note: "Manual Out without In" };
+                shifts[employeeName].push(currentShift);
             }
         }
 
-        await this.saveShifts(companyId, year, month, shifts);
-
-        // --- EMAIL NOTIFICATION (If Enabled) ---
+        // --- Distance Calculation (Integrated) ---
         try {
-            const companyConfig = await this.getCompanyConfig(companyId);
             const userConstraint = companyConfig.settings?.constraints?.[employeeName] || {};
             const isHybrid = userConstraint.isHybrid === true;
             const maxDist = userConstraint.maxDistance ? parseFloat(userConstraint.maxDistance) : 0;
 
-            // Calculate distance if coordinates provided
-            let distanceStr = null;
             if (isHybrid) {
-                distanceStr = "עבודה היברידית (בטווח המורשה)";
+                if (currentShift) currentShift.distance = "עבודה היברידית (בטווח המורשה)";
             } else if (location && typeof location === 'object' && location.lat && location.lng) {
                 const distMeters = this.calculateDistanceToPolygon(location.lat, location.lng, companyConfig.polygon);
-
-                if (distMeters === 0) {
-                    distanceStr = "בתוך המשרד";
-                } else if (maxDist > 0 && distMeters <= maxDist) {
-                    distanceStr = `בטווח המורשה (${Math.round(distMeters)} מ' מהמשרד)`;
-                } else if (distMeters < 1000) {
-                    distanceStr = `${Math.round(distMeters)} מטרים מהמשרד`;
-                } else {
-                    distanceStr = `${(distMeters / 1000).toFixed(1)} ק"מ מהמשרד`;
-                }
+                let distanceStr = "";
+                if (distMeters === 0) distanceStr = "בתוך המשרד";
+                else if (maxDist > 0 && distMeters <= maxDist) distanceStr = `בטווח המורשה (${Math.round(distMeters)} מ' מהמשרד)`;
+                else if (distMeters < 1000) distanceStr = `${Math.round(distMeters)} מטרים מהמשרד`;
+                else distanceStr = `${(distMeters / 1000).toFixed(1)} ק"מ מהמשרד`;
+                
+                if (currentShift) currentShift.distance = distanceStr;
             }
 
-            // Store distance in shift record for reporting
-            if (distanceStr) {
-                const currentShifts = await this.getShifts(companyId, year, month);
-                const lastShift = currentShifts[employeeName][currentShifts[employeeName].length - 1];
-                if (lastShift) {
-                    lastShift.distance = distanceStr;
-                    await this.saveShifts(companyId, year, month, currentShifts);
-                }
-            }
-
+            // --- EMAIL NOTIFICATION (If Enabled) ---
             const isEmailEnabled = userConstraint.enableEmailUpdate === true;
             if (isEmailEnabled && companyConfig.adminEmail) {
                 let summary = null;
-                if (action === 'OUT') {
-                    // Try to get summary for THIS shift
-                    const currentShifts = await this.getShifts(companyId, year, month);
-                    const lastShift = currentShifts[employeeName][currentShifts[employeeName].length - 1];
-                    summary = await this.getIndividualShiftSummary(companyId, year, month, lastShift);
+                if (action === 'OUT' && currentShift) {
+                    summary = await this.getIndividualShiftSummary(companyId, year, month, currentShift);
                 }
 
-                // Don't await this, let it run in background
                 emailService.sendShiftAlert(
                     companyConfig.adminEmail,
                     employeeName,
                     action,
                     timestamp,
-                    distanceStr || (typeof location === 'string' ? location : "-"),
+                    currentShift?.distance || (typeof location === 'string' ? location : "-"),
                     companyConfig.businessName,
                     note || "",
                     companyConfig.logoUrl,
@@ -725,9 +704,11 @@ class DataManager {
                 ).catch(e => console.error(`[Email Alert] Failed to send shift alert: ${e.message}`));
             }
         } catch (e) {
-            console.error(`[Email Alert] Error checking config: ${e.message}`);
+            console.error(`[Shift Logic] Distance/Email calculation error: ${e.message}`);
         }
 
+        // Final Persistence (Single call)
+        await this.saveShifts(companyId, year, month, shifts);
         return { success: true };
     }
 
@@ -1526,9 +1507,10 @@ class DataManager {
 
     async getUserFullHistory(companyId, employeeName) {
         const allShifts = [];
-        const seenKeys = new Set(); // Deduplicate by shift start timestamp
+        const seenKeys = new Set(); 
 
         const addShift = (s) => {
+            if (!s || !s.start) return;
             const key = String(s.start);
             if (!seenKeys.has(key)) {
                 seenKeys.add(key);
@@ -1541,42 +1523,31 @@ class DataManager {
         if (gasUrl) {
             try {
                 console.log(`[History] Fetching full archive from GAS for ${companyId}/${employeeName}`);
+                // Ensure name is encoded for Hebrew characters
                 const response = await axios.get(`${gasUrl}?action=getFullUserHistory&companyId=${companyId}&name=${encodeURIComponent(employeeName)}`, {
-                    timeout: 20000
+                    timeout: 25000
                 });
                 if (response.data && response.data.success && Array.isArray(response.data.shifts)) {
                     console.log(`[History] GAS returned ${response.data.shifts.length} cold shifts`);
                     response.data.shifts.forEach(addShift);
-                } else {
-                    // Fallback: fetch full archive and filter by employee
-                    console.log('[History] Trying getFullArchive fallback...');
-                    const r2 = await axios.get(`${gasUrl}?action=getFullArchive&companyId=${companyId}`, { timeout: 30000 });
-                    if (r2.data && r2.data.success && Array.isArray(r2.data.data)) {
-                        r2.data.data.forEach(s => {
-                            // GAS getFullArchive stores all users' shifts together, filter by name
-                            if (s.name === employeeName || !s.name) addShift(s);
-                        });
-                    }
                 }
             } catch (e) {
                 console.error(`[History] GAS fetch failed:`, e.message);
             }
-        } else {
-            console.warn('[History] GAS_COLD_STORAGE_URL not configured, cold data unavailable');
         }
 
         // 2. Merge with Hot (Local) Data from Render disk
         try {
             const companyDir = path.join(this.dataDir, 'companies', companyId);
-            const years = await fs.readdir(companyDir).catch(() => []);
-            for (const year of years) {
-                if (year === 'config.json') continue;
+            const items = await fs.readdir(companyDir, { withFileTypes: true }).catch(() => []);
+            for (const item of items) {
+                if (!item.isDirectory() || isNaN(parseInt(item.name))) continue;
+                
+                const year = item.name;
                 const yearDir = path.join(companyDir, year);
-                const stat = await fs.stat(yearDir).catch(() => null);
-                if (!stat || !stat.isDirectory()) continue;
-
-                const months = await fs.readdir(yearDir).catch(() => []);
-                for (const monthFile of months) {
+                const monthFiles = await fs.readdir(yearDir).catch(() => []);
+                
+                for (const monthFile of monthFiles) {
                     let monthNum = NaN;
                     if (monthFile.endsWith('.json')) monthNum = parseInt(monthFile.replace('.json', ''));
                     else if (monthFile.startsWith('json.')) monthNum = parseInt(monthFile.split('.')[1]);
