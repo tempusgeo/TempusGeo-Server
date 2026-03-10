@@ -400,6 +400,10 @@ router.post('/dispatch', async (req, res) => {
                 const expiry = client?.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
                 const isExpired = expiry < now;
 
+                const activeEmployees = await dataManager.countUniqueActiveEmployees(companyId);
+                const systemConfig = await dataManager.getSystemConfig();
+                const expectedPayment = dataManager.calculateSubscriptionAmount(activeEmployees, systemConfig);
+
                 return res.json({
                     success: true,
                     settings: config?.settings || {},
@@ -408,7 +412,11 @@ router.post('/dispatch', async (req, res) => {
                     availableHolidays: holidays,
                     paymentHistory: client?.paymentHistory || [],
                     expiryDate: client?.subscriptionExpiry,
-                    isExpired: isExpired
+                    isExpired: isExpired,
+                    paymentMethod: client?.paymentMethod || null,
+                    autoChargeEnabled: client?.autoChargeEnabled || false,
+                    activeEmployees: activeEmployees,
+                    expectedPayment: expectedPayment
                 });
             }
 
@@ -442,6 +450,55 @@ router.post('/dispatch', async (req, res) => {
             case 'initTranzilaPayment': {
                 // This is handled by the dedicated /payment/process route
                 return res.json({ success: false, error: 'Use /payment/process directly' });
+            }
+
+            case 'saveCardToken': {
+                const { cardName, cardId, cardNumber, expMonth, expYear, cvv } = rest.paymentDetails;
+                
+                // 1. Get Token from Tranzila (J5)
+                const payload = {
+                    action: 'create_token',
+                    companyId: companyId,
+                    supplier: (await dataManager.getSystemConfig()).tranzilaTerminal,
+                    TranzilaPW: (await dataManager.getSystemConfig()).tranzilaPass,
+                    sum: '0',
+                    ccno: cardNumber.replace(/\D/g, ''),
+                    expmonth: expMonth,
+                    expyear: expYear,
+                    mycvv: cvv,
+                    myid: cardId,
+                    contact: cardName,
+                    pdesc: `Token Registration - ${companyId}`
+                };
+
+                const tranzilaRes = await tranzilaService.processPaymentProxy(payload);
+
+                if (tranzilaRes.success && tranzilaRes.token) {
+                    // 2. Save Token in Business Config
+                    const last4 = cardNumber.slice(-4);
+                    await dataManager.saveClientPaymentMethod(companyId, {
+                        token: tranzilaRes.token,
+                        last4: last4,
+                        expMonth: expMonth,
+                        expYear: expYear,
+                        cardHolderName: cardName,
+                        cardHolderId: cardId,
+                        cvv: cvv
+                    });
+
+                    return res.json({ success: true, last4 });
+                } else {
+                    return res.json({ success: false, error: tranzilaRes.error || "נכשל בקבלת טוקן מטרנזילה" });
+                }
+            }
+
+            case 'updateAutoCharge': {
+                const client = await dataManager.getClientById(companyId);
+                if (!client) return res.json({ success: false, error: "Client not found" });
+                
+                client.autoChargeEnabled = rest.enabled;
+                await dataManager.saveClients();
+                return res.json({ success: true });
             }
 
             case 'processTranzilaTransaction': {
@@ -552,7 +609,10 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 adminWhatsapp: config.adminWhatsapp || '',
                 tranzilaTerminal: config.tranzilaTerminal || '',
                 tranzilaPass: config.tranzilaPass || '',
-                tranzilaPlans: config.tranzilaPlans || [],
+                minMonthlyPrice: config.minMonthlyPrice || 0,
+                pricePerEmployee: config.pricePerEmployee || 0,
+                chargeDay: config.chargeDay || 1,
+                chargeTime: config.chargeTime || '00:00',
                 supportEnabled: config.supportEnabled || false
             }
         });
@@ -563,14 +623,21 @@ router.post('/super-admin/settings/get', async (req, res) => {
 
 router.post('/super-admin/settings/update', async (req, res) => {
     try {
-        const { password, phone, tranzilaTerminal, tranzilaPass, tranzilaPlans, supportEnabled } = req.body;
+        const { 
+            password, phone, tranzilaTerminal, tranzilaPass, 
+            minMonthlyPrice, pricePerEmployee, chargeDay, chargeTime, 
+            supportEnabled 
+        } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
 
         await dataManager.updateSystemConfig({
             adminWhatsapp: phone,
             tranzilaTerminal,
             tranzilaPass,
-            tranzilaPlans,
+            minMonthlyPrice,
+            pricePerEmployee,
+            chargeDay,
+            chargeTime,
             supportEnabled
         });
 
