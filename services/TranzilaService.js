@@ -11,9 +11,9 @@ class TranzilaService {
         // In production, use environment variables!
         const payload = {
             ...params,
-            supplier: params.supplier || process.env.TRANZILA_TERMINAL_NAME || "test",
+            supplier: params.supplier || process.env.TRANZILA_TERMINAL_NAME,
             tranmode: "A", // Verification Only (J5) or M (Charge)
-            TranzilaPW: params.TranzilaPW || process.env.TRANZILA_TERMINAL_PASS || "test"
+            TranzilaPW: params.TranzilaPW || process.env.TRANZILA_TERMINAL_PASS
         };
 
         try {
@@ -41,12 +41,16 @@ class TranzilaService {
 
     async processPaymentProxy(payload) {
         // Payload from Client: { transactionId, sum, ... } or full card details to be sent to PHP
-        // unexpected payload? The PHP script expects specific fields.
-        // We just forward whatever the client sent, adding any potential server-side secrets if needed (though PHP should handle secrets).
+        // The PHP script expects specific fields and a security token.
 
         try {
             console.log("Proxying payment to JetServer...", config.JETSERVER_PAYMENT_URL);
-            const response = await axios.post(config.JETSERVER_PAYMENT_URL, payload);
+            const response = await axios.post(config.JETSERVER_PAYMENT_URL, payload, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-jetserver-token': config.JETSERVER_TOKEN
+                }
+            });
             return response.data;
         } catch (e) {
             console.error("JetServer Proxy Error:", e.message);
@@ -59,9 +63,9 @@ class TranzilaService {
         
         const payload = {
             ...params,
-            supplier: params.supplier || process.env.TRANZILA_TERMINAL_NAME || "test",
+            supplier: params.supplier || process.env.TRANZILA_TERMINAL_NAME,
             tranmode: "M", // M = Charge
-            TranzilaPW: params.TranzilaPW || process.env.TRANZILA_TERMINAL_PASS || "test"
+            TranzilaPW: params.TranzilaPW || process.env.TRANZILA_TERMINAL_PASS
         };
 
         try {
