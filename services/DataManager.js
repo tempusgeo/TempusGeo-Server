@@ -379,43 +379,67 @@ class DataManager {
             
             let startDate;
             if (subscriptionExpiry) {
-                // The cycle starts 1 month before expiry
                 startDate = new Date(subscriptionExpiry);
                 startDate.setMonth(startDate.getMonth() - 1);
             } else {
-                // Fallback: Check last 30 days
                 startDate = new Date();
                 startDate.setDate(startDate.getDate() - 30);
             }
+            
+            // Set now to end of today to be safe for comparisons
+            const comparisonNow = new Date(now);
+            comparisonNow.setHours(23, 59, 59, 999);
 
-            // We need to scan all months between startDate and today
+            this.logMaintenance('DEBUG', `Counting employees for ${companyId}. Cycle: ${startDate.toISOString()} -> ${comparisonNow.toISOString()}`);
+
             let scanDate = new Date(startDate);
-            scanDate.setDate(1); // Start at the beginning of the month for scanning
+            scanDate.setDate(1); 
+            scanDate.setHours(0, 0, 0, 0);
 
-            while (scanDate <= now) {
+            let monthsScanned = 0;
+            while (scanDate <= comparisonNow) {
                 const year = scanDate.getFullYear();
                 const month = scanDate.getMonth() + 1;
                 
                 const shifts = await this.getShifts(companyId, year, month);
-                Object.keys(shifts).forEach(emp => {
+                const employees = Object.keys(shifts);
+                
+                monthsScanned++;
+                let monthlyActive = 0;
+
+                employees.forEach(emp => {
                     const empShifts = shifts[emp] || [];
                     const hasActiveShiftInCycle = empShifts.some(s => {
-                        const shiftTime = new Date(parseInt(s.start) || s.start);
-                        return shiftTime >= startDate && shiftTime <= now;
+                        if (!s.start) return false;
+                        
+                        // Robust Parse: Try number first, then string
+                        let shiftTime;
+                        if (!isNaN(s.start)) {
+                            shiftTime = new Date(Number(s.start));
+                        } else {
+                            shiftTime = new Date(s.start);
+                        }
+                        
+                        if (isNaN(shiftTime.getTime())) return false;
+
+                        const isMatch = (shiftTime >= startDate && shiftTime <= comparisonNow);
+                        return isMatch;
                     });
                     
                     if (hasActiveShiftInCycle) {
                         activeSet.add(emp);
+                        monthlyActive++;
                     }
                 });
 
-                // Move to next month
+                this.logMaintenance('DEBUG', `Month ${year}-${month}: Found ${monthlyActive} active from ${employees.length} employees.`);
                 scanDate.setMonth(scanDate.getMonth() + 1);
             }
 
+            this.logMaintenance('DEBUG', `Final Result for ${companyId}: ${activeSet.size} active employees across ${monthsScanned} months.`);
             return activeSet.size;
         } catch (e) {
-            console.error(`[DataManager] Failed to count active employees for ${companyId}:`, e.message);
+            this.logMaintenance('ERROR', `[DataManager] Failed to count active employees for ${companyId}: ${e.message}`);
             return 0;
         }
     }
