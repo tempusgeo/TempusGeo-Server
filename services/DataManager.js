@@ -122,6 +122,15 @@ class DataManager {
         await this.updateLastWriteTime();
     }
 
+    async saveClientPaymentMethod(companyId, paymentMethod) {
+        const client = await this.getClientById(companyId);
+        if (!client) throw new Error("Client not found");
+
+        client.paymentMethod = paymentMethod;
+        client.autoChargeEnabled = true; // Auto-enable on card save
+        await this.saveClients();
+    }
+
     /**
      * Proactively scans for company directories that aren't in clients.json
      * and attempts to restore them.
