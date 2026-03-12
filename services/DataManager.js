@@ -22,7 +22,22 @@ class DataManager {
         this.dataDir = config.DATA_DIR;
         this.clientsFile = path.join(this.dataDir, 'clients.json');
         this.metadataFile = path.join(this.dataDir, 'metadata.json');
+        this.maintenanceLogs = []; // RAM storage for live admin logs
         this.init();
+    }
+
+    logMaintenance(category, message, details = null) {
+        const entry = {
+            timestamp: new Date().toISOString(),
+            category,
+            message,
+            details
+        };
+        this.maintenanceLogs.unshift(entry);
+        if (this.maintenanceLogs.length > 500) this.maintenanceLogs.pop(); // Keep last 500
+        
+        // Log to console as well
+        console.log(`[Maintenance][${category}] ${message}`, details ? details : '');
     }
 
     async updateLastWriteTime() {
@@ -84,23 +99,36 @@ class DataManager {
                 console.error(`[Metadata-Sync] Global sync failed:`, err.message);
             });
 
-            // 5. Start Automatic Archiving Trigger (Every 24 hours)
+            // 5. Start Automatic Maintenance Tasks (Check every 30 seconds for checkout, 5 mins for others)
             setInterval(() => {
-                console.log(`[Auto-Archive] Starting daily cleanup cycle...`);
+                this.performAutoCheckout().catch(e => console.error(`[Auto-Checkout] Failed:`, e.message));
+            }, 30 * 1000);
+
+            // 6. Start Daily Cleanup & Archive Trigger (Every 24 hours)
+            setInterval(() => {
                 this.runGlobalArchiveCycle().catch(e => console.error(`[Auto-Archive] Global Cycle Failed:`, e.message));
             }, 24 * 60 * 60 * 1000);
 
-            // 7. Start Automatic Payment Cycle (Every 5 minutes check)
+            // 7. Start Automatic Recurring Payment Cycle (Every 1 hour check)
             setInterval(() => {
-                this.checkAndProcessAutoCharge().catch(e => console.error(`[Auto-Charge-Check] Failed:`, e.message));
-            }, 5 * 60 * 1000);
+                this.checkSubscriptions().catch(e => console.error(`[Auto-Billing-Check] Failed:`, e.message));
+            }, 60 * 60 * 1000);
 
-            // Trigger once on startup after 1 minute
+            // 8. Monthly Reports Scheduler (Check every hour)
+            setInterval(() => {
+                const now = new Date();
+                if (now.getDate() === 1 && now.getHours() === 9) {
+                    this.runMonthlyReports().catch(e => console.error(`[Monthly-Reports] Scheduler Failed:`, e.message));
+                }
+            }, 60 * 60 * 1000);
+
+            // Trigger once on startup after 1 minute for immediate status check
             setTimeout(() => {
-                this.runGlobalArchiveCycle().catch(e => console.error(`[Startup Clean] Failed:`, e.message));
+                this.logMaintenance('SYSTEM', 'Startup maintenance sequence starting...');
                 this.performAutoCheckout().catch(e => console.error(`[Startup Auto-Checkout] Failed:`, e.message));
-                this.checkAndProcessAutoCharge().catch(e => console.error(`[Startup Auto-Charge] Failed:`, e.message));
-            }, 60000);
+                this.checkSubscriptions().catch(e => console.error(`[Startup Sub-Check] Failed:`, e.message));
+                this.runGlobalArchiveCycle().catch(e => console.error(`[Startup Clean] Failed:`, e.message));
+            }, 10000); // 10s after boot
 
         } catch (e) {
             console.error("Critical Error initializing DataManager:", e);
@@ -1942,6 +1970,8 @@ class DataManager {
     async performAutoCheckout() {
         const now = new Date();
         const results = { checked: 0, closed: 0, errors: [] };
+        
+        this.logMaintenance('CHECKOUT', `Starting recurring scan for ${CACHE.clients.length} businesses.`);
 
         for (const client of CACHE.clients) {
             try {
@@ -1949,11 +1979,9 @@ class DataManager {
                 const year = now.getFullYear();
                 const month = now.getMonth() + 1;
 
-                // Load config to get constraints
                 const companyConfig = await this.getCompanyConfig(client.id);
                 const constraints = companyConfig?.settings?.constraints || {};
 
-                // Get shifts (Hot only for checkout)
                 const shiftsData = await this.getShifts(client.id, year, month);
                 let changed = false;
 
@@ -1962,28 +1990,23 @@ class DataManager {
                         if (!shift.end && shift.start) {
                             const startTime = new Date(parseInt(shift.start) || shift.start);
                             const durationHours = (now.getTime() - startTime.getTime()) / 3600000;
-
-                            // Check per-user constraints or fallback to 12
                             const userConstraint = constraints[user] || {};
 
-                            // Determine applicable rules based on Employee Constraints
                             const hasCustomRule = !!userConstraint.maxDuration;
                             const maxHours = hasCustomRule ? parseFloat(userConstraint.maxDuration) : 12;
-                            const enableAutoOut = hasCustomRule ? (userConstraint.enableAutoOut === true) : true; // default true for 12h fallback
-
-                            const enableAlert = hasCustomRule ? (userConstraint.enableAlert === true) : false; // default false for 12h fallback
+                            const enableAutoOut = hasCustomRule ? (userConstraint.enableAutoOut === true) : true;
+                            const enableAlert = hasCustomRule ? (userConstraint.enableAlert === true) : false;
 
                             if (durationHours > maxHours) {
-                                // CASE 1: Auto Checkout Enforced -> Close shift & Send FORCE_OUT Alert
                                 if (enableAutoOut) {
                                     shift.end = new Date(startTime.getTime() + maxHours * 3600000).getTime();
                                     shift.note = (shift.note || "") + ` [Auto-Checkout: ${maxHours}h limit]`;
                                     changed = true;
                                     results.closed++;
+                                    
+                                    this.logMaintenance('CHECKOUT', `Closed shift for ${user} in ${client.businessName}`, { duration: durationHours.toFixed(2), limit: maxHours });
 
-                                    // Send alert if explicitly enabled for user, OR if it's a forced checkout (managers want to know)
-                                    const shouldAlert = enableAlert;
-                                    if (shouldAlert && companyConfig.adminEmail) {
+                                    if (enableAlert && companyConfig.adminEmail) {
                                         const summary = await this.getIndividualShiftSummary(client.id, year, month, shift);
                                         emailService.sendShiftAlert(
                                             companyConfig.adminEmail,
@@ -1998,12 +2021,12 @@ class DataManager {
                                         ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
                                     }
                                 }
-                                // CASE 2: Auto Checkout NOT enforced, but Alert IS enabled -> Send ALERT_MAX (Once)
                                 else if (enableAlert && !shift.maxAlertSent) {
-                                    shift.maxAlertSent = true; // Mark to prevent spamming on next interval
+                                    shift.maxAlertSent = true;
                                     changed = true;
+                                    this.logMaintenance('CHECKOUT', `Warning alert for ${user} in ${client.businessName} (Duration: ${durationHours.toFixed(2)}h)`);
 
-                                    if (enableAlert && companyConfig.adminEmail) {
+                                    if (companyConfig.adminEmail) {
                                         emailService.sendShiftAlert(
                                             companyConfig.adminEmail,
                                             user,
@@ -2027,6 +2050,7 @@ class DataManager {
 
             } catch (e) {
                 results.errors.push(`Error for ${client.id}: ${e.message}`);
+                this.logMaintenance('ERROR', `Checkout error for ${client.id}: ${e.message}`);
             }
         }
         return results;
@@ -2088,19 +2112,67 @@ class DataManager {
 
     async checkSubscriptions() {
         const now = new Date();
-        const results = { expired: 0, valid: 0 };
+        const results = { expired: 0, valid: 0, charged: 0, failures: [] };
+        
+        this.logMaintenance('BILLING', `Starting subscription and renewal check.`);
 
         for (const client of CACHE.clients) {
-            if (client.subscriptionExpiry && client.email) {
+            try {
+                if (!client.subscriptionExpiry) continue;
+                
                 const expiry = new Date(client.subscriptionExpiry);
+                const expired = expiry < now;
                 const daysLeft = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
 
-                if (daysLeft <= 3) { // Notify if expired or expiring soon (3 days)
-                    results.expired++; // Keeping stats simple
+                // 1. Handle Auto-Renewal if Expired
+                if (expired && client.autoChargeEnabled && client.paymentMethod?.token) {
+                    this.logMaintenance('BILLING', `Subscription expired for ${client.businessName}. Attempting auto-renewal.`);
+                    
+                    const activeCount = await this.countUniqueActiveEmployees(client.id);
+                    const amount = await this.calculateSubscriptionAmount(client.id, activeCount);
+                    
+                    if (amount > 0) {
+                        const chargeRes = await tranzilaService.chargeToken({
+                            sum: amount,
+                            currency: 1, 
+                            TranzilaTK: client.paymentMethod.token,
+                            expmonth: client.paymentMethod.expMonth,
+                            expyear: client.paymentMethod.expYear,
+                            myid: client.paymentMethod.cardHolderId || client.id,
+                            contact: client.paymentMethod.cardHolderName,
+                            mycvv: client.paymentMethod.cvv
+                        });
 
-                    // Send alert (limit to once a day logic needed? 
-                    //Ideally we'd track 'lastAlertSent' but for now it's daily trigger)
+                        if (chargeRes.success) {
+                            this.logMaintenance('BILLING', `✅ Auto-renewal success for ${client.businessName} (₪${amount})`);
+                            
+                            // Align to 1st of next month
+                            const newExpiry = new Date();
+                            newExpiry.setMonth(newExpiry.getMonth() + 1);
+                            newExpiry.setDate(1);
+                            newExpiry.setHours(23, 59, 59, 999);
+                            client.subscriptionExpiry = newExpiry.toISOString();
+                            
+                            if (!client.paymentHistory) client.paymentHistory = [];
+                            client.paymentHistory.push({
+                                date: new Date().toISOString(),
+                                amount,
+                                currency: 'ILS',
+                                method: 'Auto-Renewal',
+                                reference: chargeRes.confirmationCode,
+                                status: 'PAID'
+                            });
+                            await this.saveClients();
+                            results.charged++;
+                        } else {
+                            this.logMaintenance('BILLING', `❌ Auto-renewal failed for ${client.businessName}: ${chargeRes.raw}`);
+                        }
+                    }
+                }
 
+                // 2. Notifications for expiring soon
+                if (daysLeft <= 3 && daysLeft >= -1) { 
+                    results.expired++;
                     const bizConfig = await this.getCompanyConfig(client.id);
                     emailService.sendSubscriptionAlert(
                         client.email,
@@ -2112,6 +2184,9 @@ class DataManager {
                 } else {
                     results.valid++;
                 }
+            } catch (e) {
+                this.logMaintenance('ERROR', `Sub-check failed for ${client.id}: ${e.message}`);
+                results.failures.push(e.message);
             }
         }
         return results;
@@ -2157,6 +2232,54 @@ class DataManager {
                 console.error(`[DataManager] Cleanup failed for ${client.id}:`, err.message);
             }
         }
+    }
+
+    async runMonthlyReports(targetYear = null, targetMonth = null) {
+        // Defaults to previous month if not provided
+        const now = new Date();
+        let year = targetYear || now.getFullYear();
+        let month = targetMonth || now.getMonth(); // 0-11. If 0 (Jan), we want Dec of prev year.
+
+        if (!targetYear && month === 0) {
+            month = 12;
+            year -= 1;
+        }
+
+        console.log(`[DataManager] Starting Monthly Reports for ${month}/${year}`);
+
+        let sent = 0;
+        let errors = 0;
+
+        for (const client of CACHE.clients) {
+            if (!client.email) continue;
+            try {
+                const reportData = await this.getShiftsHybrid(client.id, year, month);
+                const bizConfig = await this.getCompanyConfig(client.id);
+
+                await emailService.sendMonthlyReport(
+                    client.email, 
+                    reportData, 
+                    year, 
+                    month, 
+                    client.businessName, 
+                    bizConfig.settings?.salary || {}, 
+                    client.id, 
+                    bizConfig.logoUrl
+                );
+                sent++;
+
+                // Auto Archive past data to GAS
+                console.log(`[DataManager] Triggering Auto-Archive for ${client.id}`);
+                await this.archiveAndCleanup(client.id);
+
+            } catch (e) {
+                console.error(`[DataManager] Failed report for ${client.id}: ${e.message}`);
+                errors++;
+            }
+        }
+
+        console.log(`[DataManager] Reports Process Complete. Sent: ${sent}, Errors: ${errors}`);
+        return { sent, errors };
     }
     // --- GEOLOCATION HELPERS ---
 
@@ -2216,19 +2339,4 @@ class DataManager {
 
 
 const manager = new DataManager();
-
-// --- AUTO-ARCHIVE TRIGGER (Once every 24 hours) ---
-// This runs the global archive cycle for all companies
-setTimeout(() => {
-    manager.runGlobalArchiveCycle().catch(err => {
-        console.error('[DataManager] Auto-Archive Initial Error:', err.message);
-    });
-}, 1000 * 60 * 5); // Start 5 mins after boot
-
-setInterval(() => {
-    manager.runGlobalArchiveCycle().catch(err => {
-        console.error('[DataManager] Auto-Archive Interval Error:', err.message);
-    });
-}, 24 * 60 * 60 * 1000);
-
 module.exports = manager;
