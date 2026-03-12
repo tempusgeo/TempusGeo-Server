@@ -5,6 +5,7 @@ const axios = require('axios');
 const emailService = require('./EmailService');
 const WageCalculator = require('./WageCalculator');
 const syncManager = require('./SyncManager');
+const tranzilaService = require('./TranzilaService');
 
 // --- IN-MEMORY CACHE ---
 // Structure: { companyId: { config: {}, shifts: { '2024-02': { ...data... } } } }
@@ -347,7 +348,7 @@ class DataManager {
             let activeEmployees = 0;
             let expectedPayment = 0;
             if (existsLocally) {
-                activeEmployees = await this.countUniqueActiveEmployees(client.id);
+                activeEmployees = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
                 expectedPayment = await this.calculateSubscriptionAmount(client.id, activeEmployees);
             }
 
@@ -371,37 +372,45 @@ class DataManager {
         }));
     }
 
-    async countUniqueActiveEmployees(companyId) {
+    async countUniqueActiveEmployees(companyId, subscriptionExpiry = null) {
         try {
             const now = new Date();
-            const year = now.getFullYear();
-            const month = now.getMonth() + 1;
-            
-            // 1. Check current month shifts
-            const currentShifts = await this.getShifts(companyId, year, month);
             const activeSet = new Set();
             
-            // Add employees who have any entry in the current month
-            Object.keys(currentShifts).forEach(emp => {
-                if (currentShifts[emp] && currentShifts[emp].length > 0) {
-                    activeSet.add(emp);
-                }
-            });
+            let startDate;
+            if (subscriptionExpiry) {
+                // The cycle starts 1 month before expiry
+                startDate = new Date(subscriptionExpiry);
+                startDate.setMonth(startDate.getMonth() - 1);
+            } else {
+                // Fallback: Check last 30 days
+                startDate = new Date();
+                startDate.setDate(startDate.getDate() - 30);
+            }
 
-            // 2. Check previous month if we are in the first 30 days of the rolling window
-            // This ensures that if a month just started, we still count recently active employees for billing.
-            const prevDate = new Date();
-            prevDate.setDate(now.getDate() - 30);
-            const prevYear = prevDate.getFullYear();
-            const prevMonth = prevDate.getMonth() + 1;
+            // We need to scan all months between startDate and today
+            let scanDate = new Date(startDate);
+            scanDate.setDate(1); // Start at the beginning of the month for scanning
 
-            if (prevYear !== year || prevMonth !== month) {
-                const prevShifts = await this.getShifts(companyId, prevYear, prevMonth);
-                Object.keys(prevShifts).forEach(emp => {
-                    if (prevShifts[emp] && prevShifts[emp].length > 0) {
+            while (scanDate <= now) {
+                const year = scanDate.getFullYear();
+                const month = scanDate.getMonth() + 1;
+                
+                const shifts = await this.getShifts(companyId, year, month);
+                Object.keys(shifts).forEach(emp => {
+                    const empShifts = shifts[emp] || [];
+                    const hasActiveShiftInCycle = empShifts.some(s => {
+                        const shiftTime = new Date(parseInt(s.start) || s.start);
+                        return shiftTime >= startDate && shiftTime <= now;
+                    });
+                    
+                    if (hasActiveShiftInCycle) {
                         activeSet.add(emp);
                     }
                 });
+
+                // Move to next month
+                scanDate.setMonth(scanDate.getMonth() + 1);
             }
 
             return activeSet.size;
@@ -468,6 +477,7 @@ class DataManager {
                     TranzilaPW: sysConfig.tranzilaPass,
                     sum: amount,
                     currency: 1, // ILS
+                    pdesc: `מנוי TempusGeo - ${activeCount} עובדים`,
                     TranzilaTK: client.paymentMethod.token,
                     expmonth: client.paymentMethod.expMonth,
                     expyear: client.paymentMethod.expYear,
@@ -2195,13 +2205,14 @@ class DataManager {
                 if (expired && client.autoChargeEnabled && client.paymentMethod?.token) {
                     this.logMaintenance('BILLING', `Subscription expired for ${client.businessName}. Attempting auto-renewal.`);
                     
-                    const activeCount = await this.countUniqueActiveEmployees(client.id);
+                    const activeCount = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
                     const amount = await this.calculateSubscriptionAmount(client.id, activeCount);
                     
                     if (amount > 0) {
                         const chargeRes = await tranzilaService.chargeToken({
                             sum: amount,
                             currency: 1, 
+                            pdesc: `מנוי TempusGeo - ${activeCount} עובדים`,
                             TranzilaTK: client.paymentMethod.token,
                             expmonth: client.paymentMethod.expMonth,
                             expyear: client.paymentMethod.expYear,
