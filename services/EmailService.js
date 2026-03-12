@@ -13,10 +13,10 @@ class EmailService {
         this.jetserverSecret = config.JETSERVER_MAIL_SECRET;
 
         // Try to identify if we are configured to use Jetserver
-        if (this.jetserverUrl && !this.jetserverUrl.includes('your-domain.com') && this.jetserverUrl.startsWith('http')) {
-            console.log(`[Email] Primary Provider Configured: JetServer SMTP Proxy (${this.jetserverUrl})`);
+        if (this.jetserverUrl && this.jetserverUrl.startsWith('http')) {
+            console.log(`[Email] Primary Provider Configured: JetServer SMTP Proxy`);
         } else {
-            console.log(`[Email] JetServer Proxy not configured or invalid URL. Using GAS Relay as primary engine.`);
+            console.log(`[Email] JetServer Proxy not configured. Using GAS Relay as primary engine.`);
         }
 
         if (!this.gasUrl && !this.transporter) {
@@ -77,7 +77,7 @@ class EmailService {
 
     async processEmail(item) {
         // PRIORITY 1: JetServer SMTP Proxy
-        if (this.jetserverUrl && !this.jetserverUrl.includes('your-domain.com')) {
+        if (this.jetserverUrl && this.jetserverUrl.startsWith('http')) {
             try {
                 const response = await axios.post(this.jetserverUrl, {
                     secret: this.jetserverSecret,
@@ -189,7 +189,7 @@ class EmailService {
             <p style="text-align: right; font-size: 13px; color: #94a3b8;">מומלץ לשנות את הסיסמה לאחר ההתחברות הראשונית.</p>
             
             <div style="text-align: center; margin-top: 25px;">
-                <a href="https://tempusgeo.onrender.com" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 12px 30px; border-radius: 10px; font-weight: 700; font-size: 15px;">חזרה למערכת</a>
+                <a href="${config.APP_URL || '#'}" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 12px 30px; border-radius: 10px; font-weight: 700; font-size: 15px;">חזרה למערכת</a>
             </div>
         `;
 
@@ -407,7 +407,7 @@ class EmailService {
             <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">אנא דאג לחדש את המנוי בהקדם להמשך פעילות רציפה.</p>
 
             <div style="text-align: center; margin-top: 30px;">
-                <a href="https://tempusgeo.onrender.com" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 14px 35px; border-radius: 12px; font-weight: 800; font-size: 16px;">חידוש מנוי עכשיו</a>
+                <a href="${config.APP_URL || '#'}" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 14px 35px; border-radius: 12px; font-weight: 800; font-size: 16px;">חידוש מנוי עכשיו</a>
             </div>
         `;
 
@@ -447,7 +447,7 @@ class EmailService {
             <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">אנא היכנס למערכת ועדכן את פרטי התשלום בהקדם כדי למנוע את השבתת השירות.</p>
             
             <div style="text-align: center; margin-top: 25px;">
-                <a href="https://tempusgeo.onrender.com" style="display: inline-block; background: #f43f5e; color: #ffffff; text-decoration: none; padding: 12px 30px; border-radius: 10px; font-weight: 700; font-size: 15px;">עדכון פרטי תשלום</a>
+                <a href="${config.APP_URL || '#'}" style="display: inline-block; background: #f43f5e; color: #ffffff; text-decoration: none; padding: 12px 30px; border-radius: 10px; font-weight: 700; font-size: 15px;">עדכון פרטי תשלום</a>
             </div>
         `;
         return this.sendEmail(to, `דחיית תשלום - ${data.businessName}`, this.getStyledTemplate(title, content, '', null, data.businessName));
