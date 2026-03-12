@@ -155,9 +155,9 @@ class EmailService {
                     </div>
 
                     <!-- Content -->
-                    <div style="padding: 15px; color: #e2e8f0; font-size: 14px; line-height: 1.4;">
+                    <div style="padding: 15px; color: #e2e8f0; font-size: 14px; line-height: 1.4; text-align: right;">
                         <h2 style="color: #ffffff; margin-top: 0; margin-bottom: 12px; font-size: 18px; font-weight: 700; text-align: center;">${title}</h2>
-                        <div style="background: rgba(0, 0, 0, 0.15); border-radius: 10px; padding: 15px; border: 1px solid rgba(255, 255, 255, 0.05);">
+                        <div style="background: rgba(0, 0, 0, 0.15); border-radius: 10px; padding: 15px; border: 1px solid rgba(255, 255, 255, 0.05); text-align: right;">
                             ${content}
                         </div>
                     </div>
@@ -304,8 +304,8 @@ class EmailService {
 
             locationHtml = `
                 <tr>
-                    <td style="padding: 6px 0; color: #94a3b8; font-size: 13px;">מיקום:</td>
-                    <td style="padding: 6px 0; color: ${locColor}; font-weight: 700; text-align: left; font-size: 13px;">${location || 'לא צוין'}${locSuffix}</td>
+                    <td style="padding: 6px 0; color: #94a3b8; font-size: 13px; text-align: right;">מיקום:</td>
+                    <td style="padding: 6px 0; color: ${locColor}; font-weight: 700; text-align: right; font-size: 13px;">${location || 'לא צוין'}${locSuffix}</td>
                 </tr>
             `;
         }
@@ -355,12 +355,12 @@ class EmailService {
             <div style="background: rgba(0, 0, 0, 0.1); padding: 15px; border-radius: 12px;">
                 <table style="width: 100%; border-collapse: collapse;">
                     <tr>
-                        <td style="padding: 8px 0; color: #94a3b8; font-size: 13px;">עובד:</td>
-                        <td style="padding: 8px 0; color: #ffffff; font-weight: 700; text-align: left; font-size: 15px;">${employeeName}</td>
+                        <td style="padding: 8px 0; color: #94a3b8; font-size: 13px; text-align: right;">עובד:</td>
+                        <td style="padding: 8px 0; color: #ffffff; font-weight: 700; text-align: right; font-size: 15px;">${employeeName}</td>
                     </tr>
                     <tr>
-                        <td style="padding: 8px 0; color: #94a3b8; font-size: 13px;">שעה:</td>
-                        <td style="padding: 8px 0; color: #ffffff; text-align: left; font-weight: 600; font-size: 15px;">${new Date(time).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' })}</td>
+                        <td style="padding: 8px 0; color: #94a3b8; font-size: 13px; text-align: right;">שעה:</td>
+                        <td style="padding: 8px 0; color: #ffffff; text-align: right; font-weight: 600; font-size: 15px;">${new Date(time).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' })}</td>
                     </tr>
                     ${locationHtml}
                     ${extraNote ? `
@@ -422,9 +422,9 @@ class EmailService {
             
             <div style="background: rgba(16, 185, 129, 0.1); border-right: 4px solid #10b981; padding: 15px; margin: 20px 0; border-radius: 8px;">
                 <table style="width: 100%; color: #ffffff; font-size: 14px;">
-                    <tr><td style="color: #94a3b8;">סכום לחיוב:</td><td style="text-align: left; font-weight: 700;">₪${data.amount}</td></tr>
-                    <tr><td style="color: #94a3b8;">עובדים פעילים:</td><td style="text-align: left;">${data.activeEmployees}</td></tr>
-                    <tr><td style="color: #94a3b8;">תוקף מנוי חדש:</td><td style="text-align: left; font-weight: 700;">${data.newExpiry}</td></tr>
+                    <tr><td style="color: #94a3b8; text-align: right;">סכום לחיוב:</td><td style="text-align: left; font-weight: 700;">₪${data.amount}</td></tr>
+                    <tr><td style="color: #94a3b8; text-align: right;">עובדים פעילים:</td><td style="text-align: left;">${data.activeEmployees}</td></tr>
+                    <tr><td style="color: #94a3b8; text-align: right;">תוקף מנוי חדש:</td><td style="text-align: left; font-weight: 700;">${data.newExpiry}</td></tr>
                 </table>
             </div>
             
