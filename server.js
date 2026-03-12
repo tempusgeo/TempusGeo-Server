@@ -12,9 +12,7 @@ app.use(cors()); // Allow all origins (or restrict to frontend domain)
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
-// Static Files (Frontend)
-app.use(express.static(path.join(__dirname, 'public')));
-
+// API Server Only - Frontends are hosted on Netlify
 // Request Logger (for debugging)
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
