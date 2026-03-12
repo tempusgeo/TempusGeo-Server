@@ -461,7 +461,7 @@ router.post('/dispatch', async (req, res) => {
                     companyId: companyId,
                     supplier: (await dataManager.getSystemConfig()).tranzilaTerminal,
                     TranzilaPW: (await dataManager.getSystemConfig()).tranzilaPass,
-                    sum: '0',
+                    sum: '0.00',
                     ccno: cardNumber.replace(/\D/g, ''),
                     expmonth: expMonth,
                     expyear: expYear,
@@ -725,7 +725,7 @@ router.post('/super-admin/record-payment', async (req, res) => {
 
         res.json({
             success: true,
-            newExpiry: newExpiry.toLocaleDateString('he-IL'),
+            newExpiry: targetDate.toLocaleDateString('he-IL'),
             message: months < 0 ? 'המנוי קוצר בהצלחה' : 'המנוי חודש בהצלחה'
         });
     } catch (e) {
@@ -1339,7 +1339,7 @@ router.get('/internal/payment-config', async (req, res) => {
         // In a real scenario, this token should be configurable/in env vars.
         // For simplicity/requirement, we'll check against a known fallback or config.
         // Let's assume the user sets JETSERVER_TOKEN in Render Env Vars.
-        const validToken = process.env.JETSERVER_TOKEN || 'default-secure-token';
+        const validToken = config.JETSERVER_TOKEN || 'default-secure-token';
 
         if (token !== validToken) {
             return res.status(401).json({ success: false, error: "Unauthorized JetServer Token" });
@@ -1507,8 +1507,8 @@ router.post('/payment/process', async (req, res) => {
         console.log('[Payment] Payload prepared (JSON):', payloadStr.replace(/"terminalPass":"[^"]+"/, '"terminalPass":"***"'));
 
         // 4. Send to JetServer Proxy
-        const jetServerUrl = process.env.JETSERVER_PROXY_URL ||
-            systemConfig.jetServerUrl || 'https://funz.co.il/TempusGeo/process_payment.php';
+        const jetServerUrl = config.JETSERVER_PROXY_URL ||
+            systemConfig.jetServerUrl;
 
         console.log('[Payment] Sending to proxy:', jetServerUrl);
 
@@ -1516,7 +1516,7 @@ router.post('/payment/process', async (req, res) => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-jetserver-token': process.env.JETSERVER_TOKEN || 'SysToken_2026_TranzilaLink'
+                'x-jetserver-token': config.JETSERVER_TOKEN
             },
             body: payloadStr
         });
@@ -1598,7 +1598,7 @@ router.post('/payment/process', async (req, res) => {
 // Middleware for Maintenance Auth
 const maintenanceAuth = (req, res, next) => {
     const token = req.headers['x-maintenance-token'];
-    const validToken = process.env.MAINTENANCE_TOKEN || process.env.JETSERVER_TOKEN || 'maintenance-secret-123';
+    const validToken = process.env.MAINTENANCE_TOKEN || config.JETSERVER_TOKEN || 'maintenance-secret-123';
     if (token !== validToken) {
         return res.status(401).json({ success: false, error: "Unauthorized Maintenance Token" });
     }
