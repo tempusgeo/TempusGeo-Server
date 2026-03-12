@@ -1545,7 +1545,17 @@ router.post('/payment/process', async (req, res) => {
             const urlParams = new URLSearchParams(rawText);
             const responseCode = urlParams.get('Response');
             if (responseCode === '000') {
-                const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                const tranzilaTK = urlParams.get('TranzilaTK');
+                const pMethod = tranzilaTK ? {
+                    token: tranzilaTK,
+                    expMonth: mm,
+                    expYear: yy,
+                    cardHolderId: myid,
+                    cardHolderName: cardInfo.cardName || cardInfo.cardHolder || '',
+                    cvv: cardInfo.cvv || ''
+                } : null;
+
+                const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice, pMethod);
                 const newExpiry = updatedClient.subscriptionExpiry;
                 console.log(`[Payment] Subscription extended for ${companyId}, new expiry: ${newExpiry}`);
                 return res.json({ success: true, newExpiry, tranzilaResponse: Object.fromEntries(urlParams) });
@@ -1567,7 +1577,17 @@ router.post('/payment/process', async (req, res) => {
             console.log('[Payment] Tranzila Response Code:', responseCode);
 
             if (responseCode === '000') {
-                const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice);
+                const tranzilaTK = tranzilaParams.get('TranzilaTK') || proxyData.TranzilaTK;
+                const pMethod = tranzilaTK ? {
+                    token: tranzilaTK,
+                    expMonth: mm,
+                    expYear: yy,
+                    cardHolderId: myid,
+                    cardHolderName: cardInfo.cardName || cardInfo.cardHolder || '',
+                    cvv: cardInfo.cvv || ''
+                } : null;
+
+                const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice, pMethod);
                 const newExpiry = updatedClient.subscriptionExpiry;
                 console.log(`[Payment] Subscription extended for ${companyId}, new expiry: ${newExpiry}`);
                 return res.json({ success: true, newExpiry, tranzilaResponse: Object.fromEntries(tranzilaParams) });
