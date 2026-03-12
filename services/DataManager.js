@@ -377,12 +377,19 @@ class DataManager {
             const year = now.getFullYear();
             const month = now.getMonth() + 1;
             
-            // Check current month
+            // 1. Check current month shifts
             const currentShifts = await this.getShifts(companyId, year, month);
-            const activeSet = new Set(Object.keys(currentShifts));
+            const activeSet = new Set();
+            
+            // Add employees who have any entry in the current month
+            Object.keys(currentShifts).forEach(emp => {
+                if (currentShifts[emp] && currentShifts[emp].length > 0) {
+                    activeSet.add(emp);
+                }
+            });
 
-            // Check previous month if we are early in the month (within first 30 days total)
-            // Or just always check last 30 days.
+            // 2. Check previous month if we are in the first 30 days of the rolling window
+            // This ensures that if a month just started, we still count recently active employees for billing.
             const prevDate = new Date();
             prevDate.setDate(now.getDate() - 30);
             const prevYear = prevDate.getFullYear();
@@ -390,7 +397,11 @@ class DataManager {
 
             if (prevYear !== year || prevMonth !== month) {
                 const prevShifts = await this.getShifts(companyId, prevYear, prevMonth);
-                Object.keys(prevShifts).forEach(emp => activeSet.add(emp));
+                Object.keys(prevShifts).forEach(emp => {
+                    if (prevShifts[emp] && prevShifts[emp].length > 0) {
+                        activeSet.add(emp);
+                    }
+                });
             }
 
             return activeSet.size;
@@ -917,15 +928,15 @@ class DataManager {
     }
 
     // --- DASHBOARD ---
-    async getDashboard(companyId) {
+    async getDashboard(companyId, year = null, month = null) {
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth() + 1;
+        const targetYear = year || now.getFullYear();
+        const targetMonth = month || (now.getMonth() + 1);
 
-        // Ensure current month loaded
-        const shifts = await this.getShifts(companyId, year, month);
+        // Ensure target month loaded
+        const shifts = await this.getShifts(companyId, targetYear, targetMonth);
         const employees = await this.getEmployees(companyId);
 
         const dashboard = [];
@@ -950,7 +961,7 @@ class DataManager {
             });
 
             // Calculate monthly summary
-            const holidayDates = await this.getHolidayDatesForMonth(companyId, year, month);
+            const holidayDates = await this.getHolidayDatesForMonth(companyId, targetYear, targetMonth);
 
             // Fix: Include active (open) shifts in the monthly calculation by providing a temporary end time
             const shiftsForCalculation = empShifts.map(s => {
@@ -1982,6 +1993,9 @@ class DataManager {
                 const companyConfig = await this.getCompanyConfig(client.id);
                 const constraints = companyConfig?.settings?.constraints || {};
 
+                const systemConfig = await this.getSystemConfig();
+                const globalMaxHours = systemConfig.maxShiftHours || 12;
+
                 const shiftsData = await this.getShifts(client.id, year, month);
                 let changed = false;
 
@@ -1993,7 +2007,7 @@ class DataManager {
                             const userConstraint = constraints[user] || {};
 
                             const hasCustomRule = !!userConstraint.maxDuration;
-                            const maxHours = hasCustomRule ? parseFloat(userConstraint.maxDuration) : 12;
+                            const maxHours = hasCustomRule ? parseFloat(userConstraint.maxDuration) : globalMaxHours;
                             const enableAutoOut = hasCustomRule ? (userConstraint.enableAutoOut === true) : true;
                             const enableAlert = hasCustomRule ? (userConstraint.enableAlert === true) : false;
 
@@ -2108,6 +2122,59 @@ class DataManager {
         // Save
         await this.saveClients();
         return client;
+    }
+
+    async runMonthlyReports(year = null, month = null) {
+        const now = new Date();
+        const y = year || now.getFullYear();
+        const m = month || (now.getMonth() + 1);
+        
+        this.logMaintenance('REPORTS', `Starting monthly reports generation for ${m}/${y}`);
+        
+        let sent = 0;
+        let skip = 0;
+        let errors = 0;
+
+        for (const client of CACHE.clients) {
+            try {
+                const bizConfig = await this.getCompanyConfig(client.id);
+                if (!bizConfig.adminEmail) {
+                    skip++;
+                    continue;
+                }
+
+                // Calculate report data for the target month
+                const dashboard = await this.getDashboard(client.id, y, m);
+                
+                // Only send if there's any data or if it's explicitly requested
+                const hasData = dashboard.some(d => parseFloat(d.monthlyTotal.replace(':', '.')) > 0);
+                
+                if (!hasData) {
+                    this.logMaintenance('REPORTS', `Skipping ${client.businessName} (No hours found for ${m}/${y})`);
+                    skip++;
+                    continue;
+                }
+
+                await emailService.sendMonthlyReport(
+                    bizConfig.adminEmail, 
+                    dashboard, 
+                    y, m, 
+                    bizConfig.businessName || client.businessName, 
+                    bizConfig.settings?.salary || {}, 
+                    client.id, 
+                    bizConfig.logoUrl
+                );
+                
+                this.logMaintenance('REPORTS', `✅ Sent report to ${client.businessName} (${bizConfig.adminEmail})`);
+                sent++;
+            } catch (e) {
+                this.logMaintenance('ERROR', `❌ Failed report for ${client.businessName}: ${e.message}`);
+                errors++;
+            }
+        }
+        
+        this.logMaintenance('REPORTS', `Finished: ${sent} sent, ${skip} skipped, ${errors} errors.`);
+        return { success: true, sent, skip, errors };
     }
 
     async checkSubscriptions() {
