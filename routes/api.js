@@ -1597,9 +1597,12 @@ router.post('/payment/process', async (req, res) => {
 
 // Middleware for Maintenance Auth
 const maintenanceAuth = (req, res, next) => {
-    const token = req.headers['x-maintenance-token'];
+    // Check both header and body for better compatibility
+    const token = req.headers['x-maintenance-token'] || (req.body && req.body.token);
     const validToken = process.env.MAINTENANCE_TOKEN || config.JETSERVER_TOKEN || 'maintenance-secret-123';
+    
     if (token !== validToken) {
+        console.warn(`[Maintenance] Unauthorized attempt from ${req.ip} targeting ${req.path}`);
         return res.status(401).json({ success: false, error: "Unauthorized Maintenance Token" });
     }
     next();
@@ -1648,7 +1651,11 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
         }
 
         const results = await dataManager.runMonthlyReports(year, month);
-        res.json({ success: true, ...results });
+        res.json({ 
+            success: true, 
+            ...results, 
+            logs: dataManager.maintenanceLogs.slice(0, 50) 
+        });
 
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
