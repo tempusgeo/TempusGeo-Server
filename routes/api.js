@@ -1607,9 +1607,9 @@ const maintenanceAuth = (req, res, next) => {
 
 router.post('/maintenance/auto-checkout', maintenanceAuth, async (req, res) => {
     try {
+        dataManager.logMaintenance('MANUAL', 'Admin triggered manual Auto-Checkout');
         const results = await dataManager.performAutoCheckout();
-        console.log(`[Maintenance] Auto-Checkout: Checked ${results.checked}, Closed ${results.closed}, Errors: ${results.errors.length}`);
-        res.json({ success: true, results });
+        res.json({ success: true, results, logs: dataManager.maintenanceLogs.slice(0, 50) });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -1617,12 +1617,16 @@ router.post('/maintenance/auto-checkout', maintenanceAuth, async (req, res) => {
 
 router.post('/maintenance/subscription-check', maintenanceAuth, async (req, res) => {
     try {
+        dataManager.logMaintenance('MANUAL', 'Admin triggered manual Subscription/Billing Check');
         const results = await dataManager.checkSubscriptions();
-        console.log(`[Maintenance] SubCheck: Expired ${results.expired}, Valid ${results.valid}`);
-        res.json({ success: true, results });
+        res.json({ success: true, results, logs: dataManager.maintenanceLogs.slice(0, 50) });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
+});
+
+router.get('/maintenance/logs', maintenanceAuth, async (req, res) => {
+    res.json({ success: true, logs: dataManager.maintenanceLogs });
 });
 
 router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) => {
@@ -1643,34 +1647,8 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
             month = parseInt(req.body.month);
         }
 
-        console.log(`[Maintenance] Starting Monthly Reports for ${month}/${year}`);
-
-        let sent = 0;
-        let errors = 0;
-
-        const clients = dataManager.CACHE.clients;
-        for (const client of clients) {
-            if (!client.email) continue;
-            try {
-                const reportData = await dataManager.getShiftsHybrid(client.id, year, month);
-                const bizConfig = await dataManager.getCompanyConfig(client.id);
-
-                // Pass salary config for breakdown and companyId for holiday resolution
-                await emailService.sendMonthlyReport(client.email, reportData, year, month, client.businessName, bizConfig.settings?.salary || {}, client.id, bizConfig.logoUrl);
-                sent++;
-
-                // Auto Archive past 30 days data to GAS
-                console.log(`[Maintenance] Triggering Auto-Archive for ${client.id}`);
-                await dataManager.archiveAndCleanup(client.id);
-
-            } catch (e) {
-                console.error(`Failed report for ${client.id}: ${e.message}`);
-                errors++;
-            }
-        }
-
-        console.log(`[Maintenance] Reports Sent: ${sent}, Errors: ${errors}`);
-        res.json({ success: true, sent, errors });
+        const results = await dataManager.runMonthlyReports(year, month);
+        res.json({ success: true, ...results });
 
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
