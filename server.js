@@ -9,8 +9,12 @@ const app = express();
 
 // Middleware
 app.use(cors()); // Allow all origins (or restrict to frontend domain)
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+
+// --- RESTORE STATIC SERVING FOR LOCAL DEVELOPMENT / PRODUCTION FALLBACK ---
+app.use(express.static(path.join(__dirname, '../CLIENT_USER')));
+app.use('/admin', express.static(path.join(__dirname, '../CLIENT_ADMIN')));
 
 // API Server Only - Frontends are hosted on Netlify
 // Request Logger (for debugging)
