@@ -1965,6 +1965,80 @@ class DataManager {
         return true;
     }
 
+    // --- ADMIN DASHBOARD & PAYMENT CALCS ---
+
+    async countUniqueActiveEmployees(companyId) {
+        try {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth() + 1;
+            const shifts = await this.getShifts(companyId, year, month);
+            
+            const uniqueUsers = new Set();
+            for (const user of Object.keys(shifts)) {
+                if (shifts[user] && shifts[user].length > 0) {
+                    uniqueUsers.add(user);
+                }
+            }
+            return uniqueUsers.size;
+        } catch(e) {
+            console.error(`[DataManager] Error counting employees for ${companyId}: ${e.message}`);
+            return 0;
+        }
+    }
+
+    async calculateSubscriptionAmount(companyId, activeCount) {
+        try {
+            const config = await this.getCompanyConfig(companyId);
+            const planPricing = config.settings?.pricing || { minimumPrice: 0, pricePerEmployee: 0 };
+            
+            let total = activeCount * (parseFloat(planPricing.pricePerEmployee) || 0);
+            const minPrice = parseFloat(planPricing.minimumPrice) || 0;
+            
+            return Math.max(total, minPrice);
+        } catch(e) {
+            console.error(`[DataManager] Error calculating amount for ${companyId}: ${e.message}`);
+            return 0;
+        }
+    }
+
+    async getAllClientsWithStatus() {
+        const now = new Date();
+        const results = await Promise.all(CACHE.clients.map(async (client) => {
+            const config = await this.getCompanyConfig(client.id) || {};
+            const activeEmployees = await this.countUniqueActiveEmployees(client.id);
+            const expectedPayment = await this.calculateSubscriptionAmount(client.id, activeEmployees);
+            
+            let isExpired = false;
+            let daysRemaining = 0;
+            let expiryDateStr = 'לא הוגדר';
+            
+            if (client.subscriptionExpiry) {
+                const exp = new Date(client.subscriptionExpiry);
+                isExpired = exp < now;
+                const diffTime = exp.getTime() - now.getTime();
+                daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
+                expiryDateStr = exp.toLocaleDateString('he-IL', { year: 'numeric', month: '2-digit', day: '2-digit' });
+            }
+
+            return {
+                companyId: client.id,
+                businessName: client.businessName || 'עסק ללא שם',
+                email: client.email || '',
+                phone: config.phone || config.settings?.phone || '',
+                expiryDate: expiryDateStr,
+                activeEmployees,
+                expectedPayment,
+                isExpired,
+                daysRemaining,
+                isOrphan: !!client.isOrphan
+            };
+        }));
+        
+        return results;
+    }
+
     // --- MAINTENANCE TASKS ---
 
     async performAutoCheckout() {
