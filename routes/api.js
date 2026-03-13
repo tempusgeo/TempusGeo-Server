@@ -101,7 +101,15 @@ router.post('/dispatch', async (req, res) => {
                 if (!companyId) return res.json({ success: false, error: 'Missing companyId' });
                 const config = await dataManager.getCompanyConfig(companyId);
                 if (!config) return res.json({ success: false, error: 'Company not found' });
-                return res.json({ success: true, config });
+                
+                const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
+                return res.json({ 
+                    success: true, 
+                    config: {
+                        ...config,
+                        maxShiftHours: sysConfig.maxShiftHours || 12
+                    }
+                });
             }
 
             case 'adminLogin': {
@@ -117,6 +125,10 @@ router.post('/dispatch', async (req, res) => {
                         const fullConfig = result.config || {};
                         result.adminEmail = fullConfig.adminEmail || '';
                         result.logoUrl = fullConfig.logoUrl || '';
+                        
+                        const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
+                        result.maxShiftHours = sysConfig.maxShiftHours || 12;
+
                         // Fix: get latest employees list from dataManager directly
                         result.allEmployees = await dataManager.getEmployees(result.companyId).catch(() => []);
                         result.availableHolidays = await dataManager.getAvailableHolidays(result.companyId).catch(() => []);
