@@ -468,11 +468,8 @@ class DataManager {
 
             // 2. Calculate Active Days in this cycle
             const joinedAt = client.joinedAt ? new Date(client.joinedAt) : now;
-            
-            // If they joined before this cycle started, they are active for the FULL cycle
-            // Otherwise, calculate pro-rata from their join date to the end of the current cycle
-            const startOfActivity = joinedAt < prevCycle ? prevCycle : joinedAt;
-            const endOfActivity = nextCycle; // Prediction/Billing always looks at the full target cycle
+            const startOfActivity = joinedAt > prevCycle ? joinedAt : prevCycle;
+            const endOfActivity = now < nextCycle ? now : nextCycle;
 
             let activeDaysInCycle = Math.max(0, Math.ceil((endOfActivity - startOfActivity) / (1000 * 60 * 60 * 24)));
             if (activeDaysInCycle > cycleDuration) activeDaysInCycle = cycleDuration;
@@ -485,12 +482,9 @@ class DataManager {
 
             // 4. Calculate Final Amount (pro-rata)
             const fullCyclePrice = Math.max(minPrice, employeeCount * pricePerEmp);
-            if (billableDays <= 0 || cycleDuration === 0 || fullCyclePrice === 0) return 0;
-            
-            // If they are a full-term active client, return full price without pro-rata rounding errors
-            if (activeDaysInCycle >= cycleDuration && trialLeft === 0) return fullCyclePrice;
-
+            if (billableDays === 0 || cycleDuration === 0 || fullCyclePrice === 0) return 0;
             const amount = Math.floor((fullCyclePrice / cycleDuration) * billableDays);
+
             return amount;
         } catch (e) {
             console.error('[Billing] calculateSubscriptionAmount error:', e.message);
