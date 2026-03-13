@@ -638,33 +638,27 @@ router.post('/super-admin/settings/get', async (req, res) => {
 
 router.post('/super-admin/settings/update', async (req, res) => {
     try {
-        const { 
-            password, phone, tranzilaTerminal, tranzilaPass, 
-            minMonthlyPrice, pricePerEmployee, chargeDay, chargeTime, 
-            freeTrialDays, supportEnabled, maxShiftHours 
-        } = req.body;
+        const { password, ...settingsUpdates } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
 
-        console.log(`[SuperAdmin] Updating system settings. maxShiftHours: ${maxShiftHours}`);
+        console.log(`[SuperAdmin] Incoming settings update:`, JSON.stringify(settingsUpdates));
 
-        await dataManager.updateSystemConfig({
-            adminWhatsapp: phone,
-            tranzilaTerminal,
-            tranzilaPass,
-            minMonthlyPrice,
-            pricePerEmployee,
-            chargeDay,
-            chargeTime,
-            maxShiftHours: parseFloat(maxShiftHours) || 12,
-            freeTrialDays: parseInt(freeTrialDays) || 0,
-            supportEnabled
-        });
+        // Ensure maxShiftHours is treated as a number
+        if (settingsUpdates.maxShiftHours !== undefined) {
+            settingsUpdates.maxShiftHours = parseFloat(settingsUpdates.maxShiftHours) || 12;
+        }
+
+        const updatedConfig = await dataManager.updateSystemConfig(settingsUpdates);
+
+        console.log(`[SuperAdmin] System configuration updated and synced. Current maxShiftHours: ${updatedConfig.maxShiftHours}`);
 
         res.json({ 
             success: true, 
-            message: "ההגדרות נשמרו בהצלחה במערכת ובענן (GAS)" 
+            message: "ההגדרות נשמרו בהצלחה במערכת ובענן (GAS)",
+            settings: updatedConfig
         });
     } catch (e) {
+        console.error(`[SuperAdmin] Settings update failed:`, e.message);
         res.status(500).json({ success: false, error: e.message });
     }
 });
