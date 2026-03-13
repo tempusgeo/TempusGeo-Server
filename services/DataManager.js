@@ -374,7 +374,8 @@ class DataManager {
                 activeEmployees,
                 expectedPayment,
                 freezeAmount,
-                autoChargeEnabled: !!client.autoChargeEnabled
+                autoChargeEnabled: !!client.autoChargeEnabled,
+                paymentHistory: client.paymentHistory || []
             };
         }));
     }
