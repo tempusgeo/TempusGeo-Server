@@ -660,7 +660,10 @@ router.post('/super-admin/settings/update', async (req, res) => {
             supportEnabled
         });
 
-        res.json({ success: true });
+        res.json({ 
+            success: true, 
+            message: "ההגדרות נשמרו בהצלחה במערכת ובענן (GAS)" 
+        });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
