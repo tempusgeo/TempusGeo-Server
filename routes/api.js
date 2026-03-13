@@ -140,6 +140,11 @@ router.post('/dispatch', async (req, res) => {
                 return res.json(result);
             }
 
+            case 'renewSubscription': {
+                const result = await dataManager.renewSubscription(companyId);
+                return res.json(result);
+            }
+
             case 'forgotAdminPassword': {
                 // Pass emailService explicitly - AuthService no longer imports it (avoids circular require)
                 const result = await authService.forgotAdminPassword(companyId, emailService);
