@@ -352,8 +352,14 @@ class DataManager {
             let activeEmployees = 0;
             let expectedPayment = 0;
             if (existsLocally) {
-                activeEmployees = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
-                expectedPayment = await this.calculateSubscriptionAmount(client.id, activeEmployees);
+                // Determine the billing cycle for display
+                const sysConfig = await this.getSystemConfig();
+                const nextCycle = this.getNextBillingDate(sysConfig.chargeDay, sysConfig.chargeTime);
+                const prevCycle = new Date(nextCycle);
+                prevCycle.setMonth(prevCycle.getMonth() - 1);
+
+                activeEmployees = await this.countUniqueActiveEmployees(client.id, prevCycle, nextCycle);
+                expectedPayment = await this.calculateSubscriptionAmount(client.id);
             }
 
             return {
@@ -376,32 +382,59 @@ class DataManager {
         }));
     }
 
-    async countUniqueActiveEmployees(companyId, subscriptionExpiry = null) {
+    _getPreviousMonthInfo(referenceDate) {
+        const d = new Date(referenceDate);
+        d.setDate(1); // Go to start of month to avoid issues with 31st vs 30th
+        d.setMonth(d.getMonth() - 1);
+        const year = d.getFullYear();
+        const month = d.getMonth() + 1;
+        const totalDays = new Date(year, month, 0).getDate();
+        return { year, month, totalDays };
+    }
+
+    _getSubscriptionDaysInMonth(joinedAt, month, year, totalDaysInMonth) {
+        if (!joinedAt) return totalDaysInMonth; // Assume full if unknown
+
+        const joinDate = new Date(joinedAt);
+        const joinYear = joinDate.getFullYear();
+        const joinMonth = joinDate.getMonth() + 1;
+
+        if (joinYear < year || (joinYear === year && joinMonth < month)) {
+            return totalDaysInMonth;
+        }
+        if (joinYear === year && joinMonth === month) {
+            // User example: 28 - 18 = 10. 
+            // This means we don't count the joining day as a full day in the retrospective calculation.
+            return Math.max(0, totalDaysInMonth - joinDate.getDate());
+        }
+        return 0; // Future join
+    }
+
+    async countUniqueActiveEmployees(companyId, startDate = null, endDate = null) {
         try {
             const now = new Date();
             const activeSet = new Set();
 
-            let startDate;
-            if (subscriptionExpiry) {
-                startDate = new Date(subscriptionExpiry);
-                startDate.setMonth(startDate.getMonth() - 1);
+            let rangeStart, rangeEnd;
+            if (startDate && endDate) {
+                rangeStart = new Date(startDate);
+                rangeEnd = new Date(endDate);
             } else {
-                startDate = new Date();
-                startDate.setDate(startDate.getDate() - 30);
+                // Fallback / Default behavior: last 30 days
+                rangeEnd = new Date(now);
+                rangeEnd.setHours(23, 59, 59, 999);
+                rangeStart = new Date(rangeEnd);
+                rangeStart.setDate(rangeStart.getDate() - 30);
             }
 
-            // Set now to end of today to be safe for comparisons
-            const comparisonNow = new Date(now);
-            comparisonNow.setHours(23, 59, 59, 999);
+            this.logMaintenance('DEBUG', `Counting employees for ${companyId}. Cycle: ${rangeStart.toISOString()} -> ${rangeEnd.toISOString()}`);
 
-            this.logMaintenance('DEBUG', `Counting employees for ${companyId}. Cycle: ${startDate.toISOString()} -> ${comparisonNow.toISOString()}`);
-
-            let scanDate = new Date(startDate);
+            let scanDate = new Date(rangeStart);
             scanDate.setDate(1);
             scanDate.setHours(0, 0, 0, 0);
 
             let monthsScanned = 0;
-            while (scanDate <= comparisonNow) {
+            while (scanDate <= rangeEnd) {
                 const year = scanDate.getFullYear();
                 const month = scanDate.getMonth() + 1;
 
@@ -416,7 +449,7 @@ class DataManager {
                     const hasActiveShiftInCycle = empShifts.some(s => {
                         if (!s.start) return false;
 
-                        // Robust Parse: Try number first, then string
+                        // Robust Parse
                         let shiftTime;
                         if (!isNaN(s.start)) {
                             shiftTime = new Date(Number(s.start));
@@ -426,7 +459,7 @@ class DataManager {
 
                         if (isNaN(shiftTime.getTime())) return false;
 
-                        const isMatch = (shiftTime >= startDate && shiftTime <= comparisonNow);
+                        const isMatch = (shiftTime >= rangeStart && shiftTime <= rangeEnd);
                         return isMatch;
                     });
 
@@ -448,43 +481,50 @@ class DataManager {
         }
     }
 
-    async calculateSubscriptionAmount(companyId, employeeCount) {
+    async calculateSubscriptionAmount(companyId, targetBillingDate = null) {
         try {
             const client = await this.getClientById(companyId);
-            if (!client) return 0;
+            if (!client) {
+                this.logMaintenance('BILLING_ERROR', `Client not found for ID: ${companyId}`);
+                return 0;
+            }
 
             const sysConfig = await this.getSystemConfig();
             const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 0;
             const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 0;
-            const globalTrialDays = parseInt(sysConfig.freeTrialDays) || 0;
-
-            const now = new Date();
             const chargeDay = parseInt(sysConfig.chargeDay) || 1;
             const chargeTime = sysConfig.chargeTime || "00:00";
 
             // 1. Identify the billing cycle boundaries
-            const nextCycle = this.getNextBillingDate(chargeDay, chargeTime);
+            // If targetBillingDate is provided, we use it. Otherwise we predict for the next natural billing date.
+            const nextCycle = targetBillingDate ? new Date(targetBillingDate) : this.getNextBillingDate(chargeDay, chargeTime);
             const prevCycle = new Date(nextCycle);
             prevCycle.setMonth(prevCycle.getMonth() - 1);
 
-            // Cycle Duration (days)
-            const cycleDuration = Math.max(1, Math.round((nextCycle - prevCycle) / (1000 * 60 * 60 * 24)));
+            // 2. Identify the calendar month we are charging for (the "Last Month" relative to nextCycle)
+            const lastMonthInfo = this._getPreviousMonthInfo(nextCycle);
+            const lastMonthDays = lastMonthInfo.totalDays;
 
-            // 2. Calculate Active Days in this cycle
-            const joinedAt = client.joinedAt ? new Date(client.joinedAt) : now;
-            const startOfActivity = joinedAt > prevCycle ? joinedAt : prevCycle;
-            const endOfActivity = now < nextCycle ? now : nextCycle;
+            // 3. Calculate Subscription Days in that calendar month
+            const joinedAt = client.joinedAt || client.createdAt || new Date(); 
+            const subscriptionDays = this._getSubscriptionDaysInMonth(joinedAt, lastMonthInfo.month, lastMonthInfo.year, lastMonthDays);
 
-            let activeDaysInCycle = Math.max(0, Math.ceil((endOfActivity - startOfActivity) / (1000 * 60 * 60 * 24)));
-            if (activeDaysInCycle > cycleDuration) activeDaysInCycle = cycleDuration;
+            // 4. Count Workers active between prevCycle and nextCycle
+            const numWorkers = await this.countUniqueActiveEmployees(companyId, prevCycle, nextCycle);
 
-            // 3. Trial Logic (REMOVED)
-            const billableDays = activeDaysInCycle;
+            // 5. Calculate Final Amount (MAX(minPrice, numWorkers * pricePerEmp) * subscriptionDays / lastMonthDays)
+            const fullMonthlyPrice = Math.max(minPrice, numWorkers * pricePerEmp);
+            
+            this.logMaintenance('DEBUG', `Billing Diagnostic [${companyId}]: workers=${numWorkers}, min=${minPrice}, workerPrice=${pricePerEmp}, full=${fullMonthlyPrice}, subDays=${subscriptionDays}, monthDays=${lastMonthDays}`);
 
-            // 4. Calculate Final Amount (pro-rata)
-            const fullCyclePrice = Math.max(minPrice, employeeCount * pricePerEmp);
-            if (billableDays === 0 || cycleDuration === 0 || fullCyclePrice === 0) return 0;
-            const amount = Math.floor((fullCyclePrice / cycleDuration) * billableDays);
+            if (lastMonthDays === 0 || fullMonthlyPrice === 0 || subscriptionDays === 0) {
+                // Return 0 but it's now logged why
+                return 0;
+            }
+            
+            const amount = Math.floor((fullMonthlyPrice * subscriptionDays) / lastMonthDays);
+
+            this.logMaintenance('DEBUG', `Billing for ${companyId}: Result=${amount}`);
 
             return amount;
         } catch (e) {
@@ -538,12 +578,37 @@ class DataManager {
 
     async processAutoChargeCycle() {
         const clientsToCharge = CACHE.clients.filter(c => c.autoChargeEnabled && c.paymentMethod?.token);
-        console.log(`[Auto-Charge] Found ${clientsToCharge.length} clients eligible for auto-charge.`);
+        const now = new Date();
+        const sysConfig = await this.getSystemConfig();
+        const chargeDay = parseInt(sysConfig.chargeDay) || 1;
+        const [chargeHour, chargeMin] = (sysConfig.chargeTime || "00:00").split(':').map(Number);
 
-        for (const client of clientsToCharge) {
+        // Check if now is the correct window
+        if (now.getDate() !== chargeDay || now.getHours() !== chargeHour) {
+            return { skipped: true, reason: "Not charge time" };
+        }
+
+        const results = { total: 0, success: 0, fail: 0, details: [] };
+        
+        for (const client of CACHE.clients) {
+            if (!client.autoChargeEnabled || !client.paymentMethod) continue;
+            
             try {
-                const activeCount = await this.countUniqueActiveEmployees(client.id);
-                const amount = await this.calculateSubscriptionAmount(client.id, activeCount);
+                results.total++;
+                // Charge for the month that just ended (last calendar month relative to NOW)
+                const amount = await this.calculateSubscriptionAmount(client.id, now);
+                
+                if (amount <= 0) {
+                    this.logMaintenance('BILLING', `Skipping charge for ${client.businessName} - amount is 0.`);
+                    continue;
+                }
+     
+                // For logging/email, we still want the worker count
+                const sysConfig = await this.getSystemConfig();
+                const nextCycle = now; // In this context, NEXT cycle is actually RIGHT NOW
+                const prevCycle = new Date(nextCycle);
+                prevCycle.setMonth(prevCycle.getMonth() - 1);
+                const activeCount = await this.countUniqueActiveEmployees(client.id, prevCycle, nextCycle);
 
                 if (amount <= 0) {
                     console.log(`[Auto-Charge] Skipping ${client.businessName} (Amount 0)`);
