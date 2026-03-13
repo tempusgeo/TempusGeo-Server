@@ -477,16 +477,15 @@ class DataManager {
             // 3. Trial Logic
             const trialUsedSoFar = client.freeTrialDaysUsed || 0;
             const trialLeft = Math.max(0, globalTrialDays - trialUsedSoFar);
-            
-            const billableDays = Math.max(0, activeDays - trialLeft);
-            const trialDaysConsumedInThisCycle = Math.min(activeDays, trialLeft);
+            const billableDays = Math.max(0, activeDaysInCycle - trialLeft);
+            const trialDaysConsumedInThisCycle = Math.min(activeDaysInCycle, trialLeft);
             
             // We don't update the client object here because this is a "calculator" 
             // The caller (checkSubscriptions) will handle persistence.
 
             // 4. Calculate Final Amount
             const fullMonthPrice = Math.max(minPrice, employeeCount * pricePerEmp);
-            const amount = Math.floor((fullMonthPrice / daysInMonth) * billableDays);
+            const amount = Math.floor((fullMonthPrice / cycleDuration) * billableDays);
 
             return amount;
         } catch (e) {
