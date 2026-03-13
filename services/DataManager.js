@@ -2169,6 +2169,64 @@ class DataManager {
         return true;
     }
 
+    async renewSubscription(companyId) {
+        try {
+            const client = await this.getClientById(companyId);
+            if (!client) return { success: false, error: "Business not found" };
+
+            const sysConfig = await this.getSystemConfig();
+            const chargeDay = parseInt(sysConfig.chargeDay) || 1;
+            const chargeTime = sysConfig.chargeTime || "00:00";
+            const [chargeHour, chargeMin] = chargeTime.split(':').map(Number);
+
+            // Calculate next expiry: 2nd of the next month (as seen in record-payment)
+            // or according to chargeDay from sysConfig. 
+            // The user requested: "התשלום הבא יתבצע באופן יחסי - ועלייך לעדכן את ה-SubscriptionDate לזמן הנוכחי"
+            // Let's set it to the 2nd of the next month.
+            const nextExpiry = new Date();
+            nextExpiry.setMonth(nextExpiry.getMonth() + 1);
+            nextExpiry.setDate(chargeDay); 
+            nextExpiry.setHours(chargeHour, chargeMin, 0, 0);
+
+            client.subscriptionExpiry = nextExpiry.toISOString();
+            client.subscriptionDate = new Date().toISOString(); // Crucial for proration in next cycle
+            client.billingFailed = false;
+
+            // Record in payment history
+            if (!client.paymentHistory) client.paymentHistory = [];
+            client.paymentHistory.push({
+                date: new Date().toLocaleDateString('he-IL'),
+                fullDate: new Date().toISOString(),
+                amount: 0,
+                currency: 'ILS',
+                period: 1,
+                method: 'Manual Renewal',
+                description: 'חידוש מנוי ידני (ללא חוב)',
+                status: 'PAID',
+                statusDisplayName: 'חודש',
+                reference: 'MANUAL-RENEW'
+            });
+
+            await this.saveClients();
+
+            // Notify
+            const recipients = [client.email, 'tempusgeo@gmail.com'];
+            recipients.forEach(email => {
+                emailService.sendPaymentSuccessNotification(email, {
+                    businessName: client.businessName,
+                    amount: 0,
+                    activeEmployees: 0,
+                    newExpiry: nextExpiry.toLocaleDateString('he-IL')
+                }).catch(console.error);
+            });
+
+            return { success: true, newExpiry: nextExpiry.toLocaleDateString('he-IL') };
+        } catch (e) {
+            console.error('[DataManager] renewSubscription error:', e.message);
+            return { success: false, error: e.message };
+        }
+    }
+
     // --- MAINTENANCE TASKS ---
 
     async performAutoCheckout() {
@@ -2438,6 +2496,7 @@ class DataManager {
                     }
 
                     if (chargeRes.success) {
+                        client.billingFailed = false; // Reset on success
                         this.logMaintenance('BILLING', `✅ Billing successful for ${client.businessName} (₪${amount})`);
                         
                         // Record Payment if amount > 0
@@ -2490,6 +2549,7 @@ class DataManager {
                         client.lastBilledEmployeeCount = activeCount;
                         await this.saveClients();
                     } else {
+                        client.billingFailed = true; // Mark as failed
                         this.logMaintenance('BILLING', `❌ Billing failed for ${client.businessName}: ${chargeRes.raw || 'Unknown error'}`);
                         
                         // Send Failure Email
@@ -2501,6 +2561,7 @@ class DataManager {
                                 error: chargeRes.raw || 'שגיאת תקשורת'
                             }).catch(console.error);
                         });
+                        await this.saveClients();
                     }
                 }
 
