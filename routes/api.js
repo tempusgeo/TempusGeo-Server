@@ -612,6 +612,7 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 pricePerEmployee: config.pricePerEmployee || 0,
                 chargeDay: config.chargeDay || 1,
                 chargeTime: config.chargeTime || '00:00',
+                freeTrialDays: config.freeTrialDays || 0,
                 supportEnabled: config.supportEnabled || false
             }
         });
@@ -625,7 +626,7 @@ router.post('/super-admin/settings/update', async (req, res) => {
         const { 
             password, phone, tranzilaTerminal, tranzilaPass, 
             minMonthlyPrice, pricePerEmployee, chargeDay, chargeTime, 
-            supportEnabled 
+            freeTrialDays, supportEnabled 
         } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
 
@@ -637,6 +638,7 @@ router.post('/super-admin/settings/update', async (req, res) => {
             pricePerEmployee,
             chargeDay,
             chargeTime,
+            freeTrialDays: parseInt(freeTrialDays) || 0,
             supportEnabled
         });
 
@@ -1427,8 +1429,12 @@ router.post('/payment/process', async (req, res) => {
         const selectedPlan = allPlans.find(p => String(p.id) === String(planId));
 
         let resolvedPrice = price;
+        const isJ5 = req.body.action === 'create_token' || String(price) === '0';
+
         if (!resolvedPrice) {
-            if (selectedPlan) {
+            if (isJ5) {
+                resolvedPrice = '0.00';
+            } else if (selectedPlan) {
                 resolvedPrice = selectedPlan.price?.toString() || '0';
                 console.log(`[Payment] Resolved price for plan ${planId}: ${resolvedPrice}`);
             } else {
@@ -1485,6 +1491,7 @@ router.post('/payment/process', async (req, res) => {
         const payload = {
             terminalName: systemConfig.tranzilaTerminal,
             terminalPass: systemConfig.tranzilaPass,
+            action: isJ5 ? 'create_token' : 'charge',
             sum: resolvedPrice,
             ccno: cardInfo.cardNumber,
             expmonth: mm,
