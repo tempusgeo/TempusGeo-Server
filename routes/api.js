@@ -709,10 +709,14 @@ router.post('/super-admin/record-payment', async (req, res) => {
 
         let targetDate;
         const isFreeze = parseInt(months) === -999;
+        let description = "";
+        let statusDisplayName = "";
 
         if (isFreeze) {
-            // Freeze action: set expiry to NOW (today)
+            // Freeze action: set expiry to NOW (exact time)
             targetDate = new Date();
+            description = "הקפאת מנוי";
+            statusDisplayName = "הוקפא";
         } else {
             if (currentExpiry < now) {
                 // Expired: Start from the 2nd of the next month
@@ -728,9 +732,12 @@ router.post('/super-admin/record-payment', async (req, res) => {
             targetDate.setMonth(targetDate.getMonth() + parseInt(months));
             // Always align to the 2nd
             targetDate.setDate(2);
+            targetDate.setHours(23, 59, 59, 999);
+
+            description = months > 0 ? `חידוש מנוי ל-${months} חודשים` : `קיצור מנוי ב-${Math.abs(months)} חודשים`;
+            statusDisplayName = amount < 0 ? "החזר" : "שולם";
         }
 
-        targetDate.setHours(23, 59, 59, 999);
         client.subscriptionExpiry = targetDate.toISOString();
 
         // Record in payment history
@@ -738,14 +745,18 @@ router.post('/super-admin/record-payment', async (req, res) => {
         const displayMonths = isFreeze ? 0 : Math.abs(months);
         client.paymentHistory.push({
             date: new Date().toLocaleDateString('he-IL'),
+            fullDate: new Date().toISOString(),
             amount: Math.abs(amount),
             currency: 'ILS',
             period: displayMonths,
             method: method || 'Manual',
             reference: reference || '',
+            description: description,
             status: isFreeze ? 'FREEZE' : (amount < 0 ? 'REFUND' : 'PAID'),
+            statusDisplayName: statusDisplayName,
             isGodAction: true
         });
+
 
         await dataManager.saveClients();
 
