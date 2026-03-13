@@ -14,8 +14,14 @@ class AuthService {
         }
 
         const now = new Date();
-        const expiry = new Date(client.subscriptionExpiry);
-        const isExpired = expiry < now;
+        const expiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : null;
+        let isExpired = false;
+        
+        if (expiry) {
+            // Precise comparison: expiry must be strictly in the future
+            isExpired = expiry.getTime() <= now.getTime();
+        }
+
 
         const config = await dataManager.getCompanyConfig(client.id);
 
