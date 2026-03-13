@@ -90,6 +90,9 @@ class DataManager {
             // 4. Discovery: Search for "Orphan" directories and reconcile them to clients.json
             await this.discoverAndReconcileOrphans();
 
+            // 5. Cleanup: If __SYSTEM__ somehow slipped into clients, remove it
+            CACHE.clients = CACHE.clients.filter(c => c.id !== '__SYSTEM__');
+
             // 5. Load All Companies into RAM (Warmup)
             for (const client of CACHE.clients) {
                 await this.loadCompany(client.id);
@@ -174,10 +177,11 @@ class DataManager {
             let foundNew = false;
 
             for (const companyId of folders) {
-                // Check if folder is in CACHE.clients
+                // Check if folder is in CACHE.clients OR is a protected internal folder
                 const existsInMaster = CACHE.clients.some(c => c.id === companyId);
+                const isInternal = companyId.startsWith('__'); // Ignore __SYSTEM__, etc.
 
-                if (!existsInMaster) {
+                if (!existsInMaster && !isInternal) {
                     console.log(`[Orphan-Discovery] Found ghost client: ${companyId}. Attempting reconciliation...`);
 
                     try {
