@@ -450,26 +450,26 @@ class DataManager {
             if (!client) return 0;
 
             const sysConfig = await this.getSystemConfig();
-            const minPrice = sysConfig.minMonthlyPrice || 0;
-            const pricePerEmp = sysConfig.pricePerEmployee || 0;
-            const globalTrialDays = sysConfig.freeTrialDays || 0;
+            const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 0;
+            const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 0;
+            const globalTrialDays = parseInt(sysConfig.freeTrialDays) || 0;
 
             const now = new Date();
             const chargeDay = parseInt(sysConfig.chargeDay) || 1;
             const chargeTime = sysConfig.chargeTime || "00:00";
-            
-            // 1. Identify the billing cycle
+
+            // 1. Identify the billing cycle boundaries
             const nextCycle = this.getNextBillingDate(chargeDay, chargeTime);
             const prevCycle = new Date(nextCycle);
             prevCycle.setMonth(prevCycle.getMonth() - 1);
-            
+
             // Cycle Duration (days)
-            const cycleDuration = Math.round((nextCycle - prevCycle) / (1000 * 60 * 60 * 24));
+            const cycleDuration = Math.max(1, Math.round((nextCycle - prevCycle) / (1000 * 60 * 60 * 24)));
 
             // 2. Calculate Active Days in this cycle
             const joinedAt = client.joinedAt ? new Date(client.joinedAt) : now;
             const startOfActivity = joinedAt > prevCycle ? joinedAt : prevCycle;
-            const endOfActivity = now > nextCycle ? nextCycle : now;
+            const endOfActivity = now < nextCycle ? now : nextCycle;
 
             let activeDaysInCycle = Math.max(0, Math.ceil((endOfActivity - startOfActivity) / (1000 * 60 * 60 * 24)));
             if (activeDaysInCycle > cycleDuration) activeDaysInCycle = cycleDuration;
@@ -477,21 +477,38 @@ class DataManager {
             // 3. Trial Logic
             const trialUsedSoFar = client.freeTrialDaysUsed || 0;
             const trialLeft = Math.max(0, globalTrialDays - trialUsedSoFar);
-            const billableDays = Math.max(0, activeDaysInCycle - trialLeft);
-            const trialDaysConsumedInThisCycle = Math.min(activeDaysInCycle, trialLeft);
-            
-            // We don't update the client object here because this is a "calculator" 
-            // The caller (checkSubscriptions) will handle persistence.
 
-            // 4. Calculate Final Amount
-            const fullMonthPrice = Math.max(minPrice, employeeCount * pricePerEmp);
-            const amount = Math.floor((fullMonthPrice / cycleDuration) * billableDays);
+            const billableDays = Math.max(0, activeDaysInCycle - trialLeft);
+
+            // 4. Calculate Final Amount (pro-rata)
+            const fullCyclePrice = Math.max(minPrice, employeeCount * pricePerEmp);
+            if (billableDays === 0 || cycleDuration === 0 || fullCyclePrice === 0) return 0;
+            const amount = Math.floor((fullCyclePrice / cycleDuration) * billableDays);
 
             return amount;
         } catch (e) {
-            console.error('[Billing] Logic error:', e);
+            console.error('[Billing] calculateSubscriptionAmount error:', e.message);
             return 0;
         }
+    }
+
+    /**
+     * Returns the next billing date (Date object) based on the configured charge day and time.
+     * If today is before the charge time on the charge day, returns today at charge time.
+     * Otherwise returns the charge day/time in the next month.
+     */
+    getNextBillingDate(chargeDay, chargeTime) {
+        const now = new Date();
+        const day = parseInt(chargeDay) || 1;
+        const [h, m] = (chargeTime || '00:00').split(':').map(Number);
+
+        // Try this month
+        const thisMonth = new Date(now.getFullYear(), now.getMonth(), day, h, m, 0, 0);
+        if (thisMonth > now) return thisMonth;
+
+        // Otherwise next month
+        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, day, h, m, 0, 0);
+        return nextMonth;
     }
 
     async checkAndProcessAutoCharge() {
