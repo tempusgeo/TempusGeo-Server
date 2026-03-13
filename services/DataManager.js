@@ -2104,7 +2104,7 @@ class DataManager {
         return results;
     }
 
-    async extendSubscription(companyId, planId, price) {
+    async extendSubscription(companyId, planId, price, paymentMethod = null) {
         const client = await this.getClientById(companyId);
         if (!client) throw new Error("Company not found");
 
@@ -2140,6 +2140,19 @@ class DataManager {
         targetDate.setHours(23, 59, 59, 999);
 
         client.subscriptionExpiry = targetDate.toISOString();
+
+        // Save Payment Method if provided
+        if (paymentMethod && paymentMethod.token) {
+            client.paymentMethod = {
+                token: paymentMethod.token,
+                expMonth: paymentMethod.expMonth,
+                expYear: paymentMethod.expYear,
+                cardHolderId: paymentMethod.cardHolderId,
+                cardHolderName: paymentMethod.cardHolderName,
+                cvv: paymentMethod.cvv
+            };
+            client.autoChargeEnabled = true; // Auto-enable if card added/updated
+        }
 
         // Log payment
         if (!client.paymentHistory) client.paymentHistory = [];
