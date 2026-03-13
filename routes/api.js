@@ -401,7 +401,7 @@ router.post('/dispatch', async (req, res) => {
                 const isExpired = expiry < now;
 
                 const activeEmployees = await dataManager.countUniqueActiveEmployees(companyId, client?.subscriptionExpiry);
-                const expectedPayment = await dataManager.calculateSubscriptionAmount(companyId, activeEmployees);
+                const expectedPayment = await dataManager.calculateSubscriptionAmount(companyId, activeEmployees, true);
 
                 return res.json({
                     success: true,
