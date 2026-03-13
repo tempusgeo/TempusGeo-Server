@@ -393,6 +393,7 @@ router.post('/dispatch', async (req, res) => {
             // === SETTINGS ===
             case 'getAdminSettings': {
                 const config = await dataManager.getCompanyConfig(companyId);
+                const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
                 const holidays = await dataManager.getAvailableHolidays(companyId).catch(() => []);
                 const client = await dataManager.getClientById(companyId);
 
@@ -406,6 +407,7 @@ router.post('/dispatch', async (req, res) => {
                 return res.json({
                     success: true,
                     settings: config?.settings || {},
+                    maxShiftHours: sysConfig.maxShiftHours || 12,
                     adminEmail: config?.adminEmail || '',
                     supportPhone: config?.supportPhone || '',
                     availableHolidays: holidays,
@@ -610,6 +612,7 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 tranzilaPass: config.tranzilaPass || '',
                 minMonthlyPrice: config.minMonthlyPrice || 0,
                 pricePerEmployee: config.pricePerEmployee || 0,
+                maxShiftHours: config.maxShiftHours || 12,
                 chargeDay: config.chargeDay || 1,
                 chargeTime: config.chargeTime || '00:00',
                 freeTrialDays: config.freeTrialDays || 0,
@@ -626,7 +629,7 @@ router.post('/super-admin/settings/update', async (req, res) => {
         const { 
             password, phone, tranzilaTerminal, tranzilaPass, 
             minMonthlyPrice, pricePerEmployee, chargeDay, chargeTime, 
-            freeTrialDays, supportEnabled 
+            freeTrialDays, supportEnabled, maxShiftHours 
         } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
 
@@ -638,6 +641,7 @@ router.post('/super-admin/settings/update', async (req, res) => {
             pricePerEmployee,
             chargeDay,
             chargeTime,
+            maxShiftHours: parseFloat(maxShiftHours) || 12,
             freeTrialDays: parseInt(freeTrialDays) || 0,
             supportEnabled
         });
