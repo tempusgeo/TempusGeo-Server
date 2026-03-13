@@ -659,7 +659,8 @@ router.post('/super-admin/settings/update', async (req, res) => {
         });
     } catch (e) {
         console.error(`[SuperAdmin] Settings update failed:`, e.message);
-        res.status(500).json({ success: false, error: e.message });
+        // Explicitly return the error message so the user knows exactly what failed (Local vs GAS)
+        res.status(400).json({ success: false, error: e.message });
     }
 });
 
