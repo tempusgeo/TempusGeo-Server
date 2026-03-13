@@ -413,8 +413,13 @@ router.post('/dispatch', async (req, res) => {
                 const expiry = client?.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
                 const isExpired = expiry < now;
 
-                const activeEmployees = await dataManager.countUniqueActiveEmployees(companyId, client?.subscriptionExpiry);
-                const expectedPayment = await dataManager.calculateSubscriptionAmount(companyId, activeEmployees);
+                // nextCycle calculation
+                const nextCycle = dataManager.getNextBillingDate(sysConfig.chargeDay, sysConfig.chargeTime);
+                const prevCycle = new Date(nextCycle);
+                prevCycle.setMonth(prevCycle.getMonth() - 1);
+
+                const activeEmployees = await dataManager.countUniqueActiveEmployees(companyId, prevCycle, nextCycle);
+                const expectedPayment = await dataManager.calculateSubscriptionAmount(companyId);
 
                 return res.json({
                     success: true,
