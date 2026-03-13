@@ -38,6 +38,14 @@ class SyncManager {
         }
     }
 
+    /**
+     * Perform sync immediately and wait for result
+     */
+    async syncNow(type, payload, options) {
+        console.log(`[SyncManager] Performing immediate sync for ${type} (${options.companyId})`);
+        return await this.performSync({ type, payload, options });
+    }
+
     async processQueue() {
         if (this.queue.length === 0) {
             this.isProcessing = false;
