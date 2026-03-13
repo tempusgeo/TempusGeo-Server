@@ -627,7 +627,7 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 maxShiftHours: config.maxShiftHours || 12,
                 chargeDay: config.chargeDay || 1,
                 chargeTime: config.chargeTime || '00:00',
-                freeTrialDays: config.freeTrialDays || 0,
+
                 supportEnabled: config.supportEnabled || false
             }
         });
