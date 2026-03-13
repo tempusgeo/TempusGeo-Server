@@ -468,23 +468,29 @@ class DataManager {
 
             // 2. Calculate Active Days in this cycle
             const joinedAt = client.joinedAt ? new Date(client.joinedAt) : now;
-            const startOfActivity = joinedAt > prevCycle ? joinedAt : prevCycle;
-            const endOfActivity = now < nextCycle ? now : nextCycle;
+            
+            // If joined before current cycle started, they were active for the full duration
+            const effectiveStart = joinedAt < prevCycle ? prevCycle : joinedAt;
+            const effectiveEnd = now < nextCycle ? now : nextCycle;
 
-            let activeDaysInCycle = Math.max(0, Math.ceil((endOfActivity - startOfActivity) / (1000 * 60 * 60 * 24)));
+            let activeDaysInCycle = Math.max(0, Math.ceil((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24)));
             if (activeDaysInCycle > cycleDuration) activeDaysInCycle = cycleDuration;
 
             // 3. Trial Logic
-            const trialUsedSoFar = client.freeTrialDaysUsed || 0;
-            const trialLeft = Math.max(0, globalTrialDays - trialUsedSoFar);
+            const trialDaysUsed = client.freeTrialDaysUsed || 0;
+            const totalTrialAllowed = globalTrialDays;
+            const trialRemaining = Math.max(0, totalTrialAllowed - trialDaysUsed);
 
-            const billableDays = Math.max(0, activeDaysInCycle - trialLeft);
+            // Billable days is active days minus what can be covered by remaining trial
+            const billableDays = Math.max(0, activeDaysInCycle - trialRemaining);
 
             // 4. Calculate Final Amount (pro-rata)
             const fullCyclePrice = Math.max(minPrice, employeeCount * pricePerEmp);
-            if (billableDays === 0 || cycleDuration === 0 || fullCyclePrice === 0) return 0;
+            
+            // If the user has trial days covering the entire current active period, amount is 0
+            if (billableDays <= 0 || fullCyclePrice === 0) return 0;
+            
             const amount = Math.floor((fullCyclePrice / cycleDuration) * billableDays);
-
             return amount;
         } catch (e) {
             console.error('[Billing] calculateSubscriptionAmount error:', e.message);
