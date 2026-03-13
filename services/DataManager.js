@@ -474,11 +474,8 @@ class DataManager {
             let activeDaysInCycle = Math.max(0, Math.ceil((endOfActivity - startOfActivity) / (1000 * 60 * 60 * 24)));
             if (activeDaysInCycle > cycleDuration) activeDaysInCycle = cycleDuration;
 
-            // 3. Trial Logic
-            const trialUsedSoFar = client.freeTrialDaysUsed || 0;
-            const trialLeft = Math.max(0, globalTrialDays - trialUsedSoFar);
-
-            const billableDays = Math.max(0, activeDaysInCycle - trialLeft);
+            // 3. Trial Logic (REMOVED)
+            const billableDays = activeDaysInCycle;
 
             // 4. Calculate Final Amount (pro-rata)
             const fullCyclePrice = Math.max(minPrice, employeeCount * pricePerEmp);
@@ -669,7 +666,7 @@ class DataManager {
             const allowedKeys = [
                 'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
                 'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-                'maxShiftHours', 'freeTrialDays', 'supportEnabled'
+                'maxShiftHours', 'supportEnabled'
             ];
             const cleaned = {};
             allowedKeys.forEach(k => { if (parsed[k] !== undefined) cleaned[k] = parsed[k]; });
@@ -684,11 +681,9 @@ class DataManager {
         
         // --- CLEAN TRASH / GARBAGE COLLECTION ---
         // Explicit whitelist of allowed system configuration keys
-        const allowedKeys = [
             'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
             'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-            'maxShiftHours', 'freeTrialDays', 'supportEnabled'
-        ];
+            'maxShiftHours', 'supportEnabled'
 
         // 1. Filter existing config to keep only allowed keys (Cleaning Trash)
         const cleanedCurrent = {};
@@ -2060,7 +2055,7 @@ class DataManager {
             password: safePassword,
             subscriptionExpiry: trialExpiry.toISOString(),
             joinedAt: new Date().toISOString(),
-            freeTrialDaysUsed: 0,
+
             autoChargeEnabled: !!data.paymentMethod,
             paymentMethod: data.paymentMethod || null
         };
@@ -2395,15 +2390,7 @@ class DataManager {
                         dt.setHours(chargeHour, chargeMin, 0, 0);
                         client.subscriptionExpiry = dt.toISOString();
 
-                        // Track Trial Usage
-                        const joinedAt = client.joinedAt ? new Date(client.joinedAt) : new Date();
-                        const billingDate = new Date();
-                        const monthStart = new Date(billingDate.getFullYear(), billingDate.getMonth() - 1, 1);
-                        const start = joinedAt > monthStart ? joinedAt : monthStart;
-                        const activeDays = Math.max(0, Math.ceil((billingDate - start) / (1000 * 60 * 60 * 24)));
-
-                        const trialLeft = Math.max(0, (sysConfig.freeTrialDays || 0) - (client.freeTrialDaysUsed || 0));
-                        client.freeTrialDaysUsed = (client.freeTrialDaysUsed || 0) + Math.min(activeDays, trialLeft);
+                        // Trial tracking removed
 
                         client.lastBilledEmployeeCount = activeCount;
 
