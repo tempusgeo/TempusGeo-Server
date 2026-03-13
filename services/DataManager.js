@@ -663,19 +663,29 @@ class DataManager {
         const configFile = path.join(this.dataDir, 'system_config.json');
         try {
             const data = await fs.readFile(configFile, 'utf8');
-            return JSON.parse(data);
+            const parsed = JSON.parse(data);
+
+            // Clean on load to ensure stale data is purged
+            const allowedKeys = [
+                'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
+                'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
+                'maxShiftHours', 'freeTrialDays', 'supportEnabled'
+            ];
+            const cleaned = {};
+            allowedKeys.forEach(k => { if (parsed[k] !== undefined) cleaned[k] = parsed[k]; });
+            return cleaned;
         } catch (e) {
-            return {}; // Return empty if not exists
+            return {}; // Default empty config
         }
     }
 
     async updateSystemConfig(newConfig) {
         const current = await this.getSystemConfig();
-
+        
         // --- CLEAN TRASH / GARBAGE COLLECTION ---
         // Explicit whitelist of allowed system configuration keys
         const allowedKeys = [
-            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass', 'tranzilaPlans',
+            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
             'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
             'maxShiftHours', 'freeTrialDays', 'supportEnabled'
         ];
@@ -708,14 +718,16 @@ class DataManager {
         if (gasUrl) {
             try {
                 console.log('[DataManager] Syncing System Config to GAS...');
-                await syncManager.syncNow('CONFIG', updated, {
-                    companyId: '__SYSTEM__',
-                    gasUrl,
+                await syncManager.syncNow('CONFIG', updated, { 
+                    companyId: '__SYSTEM__', 
+                    gasUrl, 
                     password: process.env.SUPER_ADMIN_PASS || '123456'
                 });
                 console.log('[DataManager] System Config synced to GAS successfully.');
             } catch (e) {
                 console.error('[DataManager] Failed to sync System Config to GAS:', e.message);
+                // Critical: Throw error back to API so user knows GAS failed
+                throw new Error(`שמירה מקומית הצליחה אך הסנכרון לענן (GAS) נכשל: ${e.message}`);
             }
         }
 
