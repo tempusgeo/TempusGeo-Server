@@ -36,7 +36,7 @@ class DataManager {
         };
         this.maintenanceLogs.unshift(entry);
         if (this.maintenanceLogs.length > 500) this.maintenanceLogs.pop(); // Keep last 500
-        
+
         // Log to console as well
         console.log(`[Maintenance][${category}] ${message}`, details ? details : '');
     }
@@ -253,7 +253,7 @@ class DataManager {
         };
 
         // Background Refresh
-        this.refreshMetadata(companyId).catch(() => {});
+        this.refreshMetadata(companyId).catch(() => { });
     }
 
 
@@ -376,7 +376,7 @@ class DataManager {
         try {
             const now = new Date();
             const activeSet = new Set();
-            
+
             let startDate;
             if (subscriptionExpiry) {
                 startDate = new Date(subscriptionExpiry);
@@ -385,7 +385,7 @@ class DataManager {
                 startDate = new Date();
                 startDate.setDate(startDate.getDate() - 30);
             }
-            
+
             // Set now to end of today to be safe for comparisons
             const comparisonNow = new Date(now);
             comparisonNow.setHours(23, 59, 59, 999);
@@ -393,17 +393,17 @@ class DataManager {
             this.logMaintenance('DEBUG', `Counting employees for ${companyId}. Cycle: ${startDate.toISOString()} -> ${comparisonNow.toISOString()}`);
 
             let scanDate = new Date(startDate);
-            scanDate.setDate(1); 
+            scanDate.setDate(1);
             scanDate.setHours(0, 0, 0, 0);
 
             let monthsScanned = 0;
             while (scanDate <= comparisonNow) {
                 const year = scanDate.getFullYear();
                 const month = scanDate.getMonth() + 1;
-                
+
                 const shifts = await this.getShifts(companyId, year, month);
                 const employees = Object.keys(shifts);
-                
+
                 monthsScanned++;
                 let monthlyActive = 0;
 
@@ -411,7 +411,7 @@ class DataManager {
                     const empShifts = shifts[emp] || [];
                     const hasActiveShiftInCycle = empShifts.some(s => {
                         if (!s.start) return false;
-                        
+
                         // Robust Parse: Try number first, then string
                         let shiftTime;
                         if (!isNaN(s.start)) {
@@ -419,13 +419,13 @@ class DataManager {
                         } else {
                             shiftTime = new Date(s.start);
                         }
-                        
+
                         if (isNaN(shiftTime.getTime())) return false;
 
                         const isMatch = (shiftTime >= startDate && shiftTime <= comparisonNow);
                         return isMatch;
                     });
-                    
+
                     if (hasActiveShiftInCycle) {
                         activeSet.add(emp);
                         monthlyActive++;
@@ -527,7 +527,7 @@ class DataManager {
         if (currentH !== chargeH || currentM < chargeM || currentM > chargeM + 10) return;
 
         console.log(`[Auto-Charge] ⚡ Starting automatic billing cycle for day ${chargeDay}, time ${chargeTime}`);
-        
+
         // Prevent multiple runs in same window
         if (this._lastChargeRun === now.toDateString()) return;
         this._lastChargeRun = now.toDateString();
@@ -567,15 +567,15 @@ class DataManager {
 
                 if (chargeRes.success) {
                     console.log(`[Auto-Charge] ✅ Success for ${client.businessName}. Confirmation: ${chargeRes.confirmationCode}`);
-                    
+
                     // Update Expiry: Add 1 month, aligned to the 2nd
                     const newExpiry = new Date();
                     newExpiry.setMonth(newExpiry.getMonth() + 2); // To end of next month
                     newExpiry.setDate(2);
                     newExpiry.setHours(23, 59, 59, 999);
-                    
+
                     client.subscriptionExpiry = newExpiry.toISOString();
-                    
+
                     if (!client.paymentHistory) client.paymentHistory = [];
                     client.paymentHistory.push({
                         date: new Date().toLocaleDateString('he-IL'),
@@ -600,7 +600,7 @@ class DataManager {
 
                 } else {
                     console.error(`[Auto-Charge] ❌ Failed for ${client.businessName}: ${chargeRes.raw}`);
-                    
+
                     // Send Failure Notification + WhatsApp Fallback info
                     emailService.sendPaymentFailedNotification(client.email, {
                         businessName: client.businessName,
@@ -671,8 +671,35 @@ class DataManager {
 
     async updateSystemConfig(newConfig) {
         const current = await this.getSystemConfig();
-        const updated = { ...current, ...newConfig };
+
+        // --- CLEAN TRASH / GARBAGE COLLECTION ---
+        // Explicit whitelist of allowed system configuration keys
+        const allowedKeys = [
+            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass', 'tranzilaPlans',
+            'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
+            'maxShiftHours', 'freeTrialDays', 'supportEnabled'
+        ];
+
+        // 1. Filter existing config to keep only allowed keys (Cleaning Trash)
+        const cleanedCurrent = {};
+        allowedKeys.forEach(key => {
+            if (current[key] !== undefined) cleanedCurrent[key] = current[key];
+        });
+
+        // 2. Merge with new values (also filtered by whitelist)
+        const updated = { ...cleanedCurrent };
+        Object.keys(newConfig).forEach(key => {
+            if (allowedKeys.includes(key)) {
+                updated[key] = newConfig[key];
+            } else {
+                console.log(`[DataManager] Ignoring legacy or unknown key while saving: ${key}`);
+            }
+        });
+
+        console.log(`[DataManager] Final system configuration to save:`, JSON.stringify(updated));
+
         const configFile = path.join(this.dataDir, 'system_config.json');
+        await fs.mkdir(this.dataDir, { recursive: true });
         await fs.writeFile(configFile, JSON.stringify(updated, null, 2));
         const timestamp = await this.updateLastWriteTime();
 
@@ -681,15 +708,14 @@ class DataManager {
         if (gasUrl) {
             try {
                 console.log('[DataManager] Syncing System Config to GAS...');
-                await syncManager.syncNow('CONFIG', updated, { 
-                    companyId: '__SYSTEM__', 
-                    gasUrl, 
-                    password: process.env.SUPER_ADMIN_PASS || '123456' // Use first password as default for sync
+                await syncManager.syncNow('CONFIG', updated, {
+                    companyId: '__SYSTEM__',
+                    gasUrl,
+                    password: process.env.SUPER_ADMIN_PASS || '123456'
                 });
                 console.log('[DataManager] System Config synced to GAS successfully.');
             } catch (e) {
                 console.error('[DataManager] Failed to sync System Config to GAS:', e.message);
-                // We still return 'updated' because it's on local disk, but we logged the error.
             }
         }
 
@@ -775,7 +801,7 @@ class DataManager {
             }
             if (!CACHE.companies[companyId].metadata.years[year.toString()].includes(parseInt(month))) {
                 CACHE.companies[companyId].metadata.years[year.toString()].push(parseInt(month));
-                CACHE.companies[companyId].metadata.years[year.toString()].sort((a,b) => b-a);
+                CACHE.companies[companyId].metadata.years[year.toString()].sort((a, b) => b - a);
                 // Also update the persistent config
                 const currentConfig = CACHE.companies[companyId].config;
                 currentConfig.historyMetadata = CACHE.companies[companyId].metadata;
@@ -995,7 +1021,7 @@ class DataManager {
                 else if (maxDist > 0 && distMeters <= maxDist) distanceStr = `בטווח המורשה (${Math.round(distMeters)} מ' מהמשרד)`;
                 else if (distMeters < 1000) distanceStr = `${Math.round(distMeters)} מטרים מהמשרד`;
                 else distanceStr = `${(distMeters / 1000).toFixed(1)} ק"מ מהמשרד`;
-                
+
                 if (currentShift) currentShift.distance = distanceStr;
             }
 
@@ -1240,10 +1266,10 @@ class DataManager {
         try {
             console.log(`[Metadata] Refreshing metadata from GAS for ${companyId}`);
             const response = await axios.get(`${gasUrl}?action=getMetadataSummary&companyId=${companyId}&password=${bizConfig.password || ''}`, { timeout: 15000 });
-            
+
             if (response.data && response.data.success && response.data.metadata) {
                 const remoteMetadata = response.data.metadata;
-                
+
                 // 1. Scan Local Data
                 const localMetadata = { years: {} };
                 const companyDir = path.join(this.dataDir, 'companies', companyId);
@@ -1260,7 +1286,7 @@ class DataManager {
                             if (!isNaN(m)) mSet.add(m);
                         });
                         if (mSet.size > 0) {
-                            localMetadata.years[f] = Array.from(mSet).sort((a,b) => b-a);
+                            localMetadata.years[f] = Array.from(mSet).sort((a, b) => b - a);
                         }
                     }
                 }
@@ -1268,23 +1294,23 @@ class DataManager {
                 // 2. Merge: Remote (GAS Archive) + Local (Hot/Pending)
                 for (const y in remoteMetadata.years) {
                     const combined = new Set([...(localMetadata.years[y] || []), ...remoteMetadata.years[y]]);
-                    localMetadata.years[y] = Array.from(combined).sort((a,b) => b-a);
+                    localMetadata.years[y] = Array.from(combined).sort((a, b) => b - a);
                 }
 
                 // 3. Update RAM Cache
                 if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
                 CACHE.companies[companyId].metadata = localMetadata;
-                
+
                 // 4. Update config.json on disk
                 const configPath = path.join(companyDir, 'config.json');
                 const currentConfig = CACHE.companies[companyId].config;
                 currentConfig.historyMetadata = localMetadata;
-                
+
                 await fs.writeFile(configPath, JSON.stringify(currentConfig, null, 2));
-                
+
                 // 5. Sync back to GAS as a backup (Optional but good practice)
                 syncManager.enqueue('CONFIG', currentConfig, { companyId, gasUrl, password: currentConfig.password });
-                
+
                 console.log(`[Metadata] Successfully synced ${Object.keys(localMetadata.years).length} years for ${companyId}`);
                 return localMetadata;
             }
@@ -1307,9 +1333,9 @@ class DataManager {
             try {
                 if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
                 const meta = CACHE.companies[companyId].metadata;
-                
+
                 const hasYears = meta && meta.years && Object.keys(meta.years).length > 0;
-                
+
                 if (!hasYears) {
                     console.log(`[Metadata-Sync] ${companyId} is missing history filters. Fetching from GAS...`);
                     await this.refreshMetadata(companyId);
@@ -1866,7 +1892,7 @@ class DataManager {
 
     async getUserFullHistory(companyId, employeeName) {
         const allShifts = [];
-        const seenKeys = new Set(); 
+        const seenKeys = new Set();
 
         const addShift = (s) => {
             if (!s || !s.start) return;
@@ -1901,11 +1927,11 @@ class DataManager {
             const items = await fs.readdir(companyDir, { withFileTypes: true }).catch(() => []);
             for (const item of items) {
                 if (!item.isDirectory() || isNaN(parseInt(item.name))) continue;
-                
+
                 const year = item.name;
                 const yearDir = path.join(companyDir, year);
                 const monthFiles = await fs.readdir(yearDir).catch(() => []);
-                
+
                 for (const monthFile of monthFiles) {
                     let monthNum = NaN;
                     if (monthFile.endsWith('.json')) monthNum = parseInt(monthFile.replace('.json', ''));
@@ -2088,7 +2114,7 @@ class DataManager {
     async performAutoCheckout() {
         const now = new Date();
         const results = { checked: 0, closed: 0, errors: [] };
-        
+
         this.logMaintenance('CHECKOUT', `Starting recurring scan for ${CACHE.clients.length} businesses.`);
 
         for (const client of CACHE.clients) {
@@ -2124,7 +2150,7 @@ class DataManager {
                                     shift.note = (shift.note || "") + ` [Auto-Checkout: ${maxHours}h limit]`;
                                     changed = true;
                                     results.closed++;
-                                    
+
                                     this.logMaintenance('CHECKOUT', `Closed shift for ${user} in ${client.businessName}`, { duration: durationHours.toFixed(2), limit: maxHours });
 
                                     if (enableAlert && companyConfig.adminEmail) {
@@ -2254,9 +2280,9 @@ class DataManager {
         const now = new Date();
         const y = year || now.getFullYear();
         const m = month || (now.getMonth() + 1);
-        
+
         this.logMaintenance('REPORTS', `Starting monthly reports generation for ${m}/${y}`);
-        
+
         let sent = 0;
         let skip = 0;
         let errors = 0;
@@ -2271,10 +2297,10 @@ class DataManager {
 
                 // Calculate report data for the target month
                 const dashboard = await this.getDashboard(client.id, y, m);
-                
+
                 // Only send if there's any data or if it's explicitly requested
                 const hasData = dashboard.some(d => parseFloat(d.monthlyTotal.replace(':', '.')) > 0);
-                
+
                 if (!hasData) {
                     this.logMaintenance('REPORTS', `Skipping ${client.businessName} (No hours found for ${m}/${y})`);
                     skip++;
@@ -2282,15 +2308,15 @@ class DataManager {
                 }
 
                 await emailService.sendMonthlyReport(
-                    bizConfig.adminEmail, 
-                    dashboard, 
-                    y, m, 
-                    bizConfig.businessName || client.businessName, 
-                    bizConfig.settings?.salary || {}, 
-                    client.id, 
+                    bizConfig.adminEmail,
+                    dashboard,
+                    y, m,
+                    bizConfig.businessName || client.businessName,
+                    bizConfig.settings?.salary || {},
+                    client.id,
                     bizConfig.logoUrl
                 );
-                
+
                 this.logMaintenance('REPORTS', `✅ Sent report to ${client.businessName} (${bizConfig.adminEmail})`);
                 sent++;
             } catch (e) {
@@ -2298,7 +2324,7 @@ class DataManager {
                 errors++;
             }
         }
-        
+
         this.logMaintenance('REPORTS', `Finished: ${sent} sent, ${skip} skipped, ${errors} errors.`);
         return { success: true, sent, skip, errors };
     }
@@ -2307,21 +2333,21 @@ class DataManager {
         const now = new Date();
         const results = { expired: 0, valid: 0, charged: 0, failures: [] };
         const sysConfig = await this.getSystemConfig();
-        
+
         // Check if it's the right day and time to charge
         const chargeDay = parseInt(sysConfig.chargeDay) || 1;
         const [chargeHour, chargeMin] = (sysConfig.chargeTime || "00:00").split(':').map(Number);
-        
-        const isChargeTime = now.getDate() === chargeDay && 
-                           now.getHours() === chargeHour && 
-                           now.getMinutes() < 60; // Run once within the hour
+
+        const isChargeTime = now.getDate() === chargeDay &&
+            now.getHours() === chargeHour &&
+            now.getMinutes() < 60; // Run once within the hour
 
         this.logMaintenance('BILLING', `Starting subscription and renewal check. Target: Day ${chargeDay} @ ${chargeHour}:${chargeMin}.`);
 
         for (const client of CACHE.clients) {
             try {
                 if (!client.subscriptionExpiry) continue;
-                
+
                 const expiry = new Date(client.subscriptionExpiry);
                 const expired = expiry < now;
                 const daysLeft = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
@@ -2329,16 +2355,16 @@ class DataManager {
                 // 1. Handle Auto-Renewal if Expired
                 if (expired && client.autoChargeEnabled && client.paymentMethod?.token) {
                     this.logMaintenance('BILLING', `Retrospective billing cycle for ${client.businessName}.`);
-                    
+
                     const activeCount = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
                     const amount = await this.calculateSubscriptionAmount(client.id, activeCount);
-                    
+
                     let chargeRes = { success: true }; // Default to true for $0 cases
                     if (amount > 0) {
                         const pdesc = `מנוי TempusGeo - ${activeCount} עובדים (חיוב רטרוספקטיבי)`;
                         chargeRes = await tranzilaService.chargeToken({
                             sum: amount,
-                            currency: 1, 
+                            currency: 1,
                             pdesc: pdesc,
                             TranzilaTK: client.paymentMethod.token,
                             expmonth: client.paymentMethod.expMonth,
@@ -2356,19 +2382,19 @@ class DataManager {
                         dt.setDate(chargeDay);
                         dt.setHours(chargeHour, chargeMin, 0, 0);
                         client.subscriptionExpiry = dt.toISOString();
-                        
+
                         // Track Trial Usage
                         const joinedAt = client.joinedAt ? new Date(client.joinedAt) : new Date();
                         const billingDate = new Date();
                         const monthStart = new Date(billingDate.getFullYear(), billingDate.getMonth() - 1, 1);
                         const start = joinedAt > monthStart ? joinedAt : monthStart;
                         const activeDays = Math.max(0, Math.ceil((billingDate - start) / (1000 * 60 * 60 * 24)));
-                        
+
                         const trialLeft = Math.max(0, (sysConfig.freeTrialDays || 0) - (client.freeTrialDaysUsed || 0));
                         client.freeTrialDaysUsed = (client.freeTrialDaysUsed || 0) + Math.min(activeDays, trialLeft);
 
-                        client.lastBilledEmployeeCount = activeCount; 
-                        
+                        client.lastBilledEmployeeCount = activeCount;
+
                         if (amount > 0) {
                             this.logMaintenance('BILLING', `✅ Postpaid charge success for ${client.businessName} (₪${amount})`);
                             if (!client.paymentHistory) client.paymentHistory = [];
@@ -2395,7 +2421,7 @@ class DataManager {
                         } else {
                             this.logMaintenance('BILLING', `🛡️ Trial period auto-renewal for ${client.businessName} (₪0).`);
                         }
-                        
+
                         await this.saveClients();
                     } else {
                         this.logMaintenance('BILLING', `❌ Postpaid charge failed for ${client.businessName}: ${chargeRes.raw}`);
@@ -2416,12 +2442,12 @@ class DataManager {
                 }
 
                 // 2. Notifications for expiring soon
-                if (daysLeft <= 3 && daysLeft >= -1) { 
+                if (daysLeft <= 3 && daysLeft >= -1) {
                     results.expired++;
                     const bizConfig = await this.getCompanyConfig(client.id);
                     const activeCount = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
                     const amount = await this.calculateSubscriptionAmount(client.id, activeCount);
-                    
+
                     emailService.sendSubscriptionAlert(
                         client.email,
                         client.businessName,
@@ -2512,13 +2538,13 @@ class DataManager {
                 const bizConfig = await this.getCompanyConfig(client.id);
 
                 await emailService.sendMonthlyReport(
-                    client.email, 
-                    reportData, 
-                    year, 
-                    month, 
-                    client.businessName, 
-                    bizConfig.settings?.salary || {}, 
-                    client.id, 
+                    client.email,
+                    reportData,
+                    year,
+                    month,
+                    client.businessName,
+                    bizConfig.settings?.salary || {},
+                    client.id,
                     bizConfig.logoUrl
                 );
                 sent++;
