@@ -413,13 +413,9 @@ router.post('/dispatch', async (req, res) => {
                 const expiry = client?.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
                 const isExpired = expiry < now;
 
-                // nextCycle calculation
-                const nextCycle = dataManager.getNextBillingDate(sysConfig.chargeDay, sysConfig.chargeTime);
-                const prevCycle = new Date(nextCycle);
-                prevCycle.setMonth(prevCycle.getMonth() - 1);
-
-                const activeEmployees = await dataManager.countUniqueActiveEmployees(companyId, prevCycle, nextCycle);
+                const activeEmployees = await dataManager.countUniqueActiveEmployees(companyId);
                 const expectedPayment = await dataManager.calculateSubscriptionAmount(companyId);
+                const freezeAmount = await dataManager.calculateFreezeAmount(companyId);
 
                 return res.json({
                     success: true,
@@ -434,7 +430,8 @@ router.post('/dispatch', async (req, res) => {
                     paymentMethod: client?.paymentMethod || null,
                     autoChargeEnabled: client?.autoChargeEnabled || false,
                     activeEmployees: activeEmployees,
-                    expectedPayment: expectedPayment
+                    expectedPayment: expectedPayment,
+                    freezeAmount: freezeAmount
                 });
             }
 
@@ -706,40 +703,47 @@ router.post('/super-admin/record-payment', async (req, res) => {
         const client = await dataManager.getClientById(targetCompanyId);
         if (!client) return res.status(404).json({ success: false, error: "Business not found" });
 
-        // Adjust subscription expiry using "2nd of the month" logic
+        // Adjust subscription expiry
         const now = new Date();
         const currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
 
         let targetDate;
-        if (currentExpiry < now) {
-            // Expired: Start from the 2nd of the next month
+        const isFreeze = parseInt(months) === -999;
+
+        if (isFreeze) {
+            // Freeze action: set expiry to NOW (today)
             targetDate = new Date();
-            targetDate.setMonth(targetDate.getMonth() + 1);
-            targetDate.setDate(2);
         } else {
-            // Active: Just use current expiry as base
-            targetDate = new Date(currentExpiry);
+            if (currentExpiry < now) {
+                // Expired: Start from the 2nd of the next month
+                targetDate = new Date();
+                targetDate.setMonth(targetDate.getMonth() + 1);
+                targetDate.setDate(2);
+            } else {
+                // Active: Just use current expiry as base
+                targetDate = new Date(currentExpiry);
+            }
+
+            // Add months (handle negative months for refund/shortening)
+            targetDate.setMonth(targetDate.getMonth() + parseInt(months));
+            // Always align to the 2nd
+            targetDate.setDate(2);
         }
 
-        // Add months (handle negative months for refund/shortening)
-        targetDate.setMonth(targetDate.getMonth() + parseInt(months));
-
-        // Always align to the 2nd
-        targetDate.setDate(2);
         targetDate.setHours(23, 59, 59, 999);
-
         client.subscriptionExpiry = targetDate.toISOString();
 
         // Record in payment history
         if (!client.paymentHistory) client.paymentHistory = [];
+        const displayMonths = isFreeze ? 0 : Math.abs(months);
         client.paymentHistory.push({
             date: new Date().toLocaleDateString('he-IL'),
             amount: Math.abs(amount),
             currency: 'ILS',
-            period: Math.abs(months),
+            period: displayMonths,
             method: method || 'Manual',
             reference: reference || '',
-            status: amount < 0 ? 'REFUND' : 'PAID',
+            status: isFreeze ? 'FREEZE' : (amount < 0 ? 'REFUND' : 'PAID'),
             isGodAction: true
         });
 
