@@ -674,7 +674,25 @@ class DataManager {
         const updated = { ...current, ...newConfig };
         const configFile = path.join(this.dataDir, 'system_config.json');
         await fs.writeFile(configFile, JSON.stringify(updated, null, 2));
-        await this.updateLastWriteTime();
+        const timestamp = await this.updateLastWriteTime();
+
+        // Push to GAS synchronously to ensure it's saved before returning to Admin
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
+            try {
+                console.log('[DataManager] Syncing System Config to GAS...');
+                await syncManager.syncNow('CONFIG', updated, { 
+                    companyId: '__SYSTEM__', 
+                    gasUrl, 
+                    password: process.env.SUPER_ADMIN_PASS || '123456' // Use first password as default for sync
+                });
+                console.log('[DataManager] System Config synced to GAS successfully.');
+            } catch (e) {
+                console.error('[DataManager] Failed to sync System Config to GAS:', e.message);
+                // We still return 'updated' because it's on local disk, but we logged the error.
+            }
+        }
+
         return updated;
     }
 
