@@ -2595,10 +2595,18 @@ class DataManager {
 
 
                 // 2. Notifications for expiring soon
-                if (daysLeft <= 3 && daysLeft >= -1) {
+                // Only alert if: 
+                // - Auto-charge is OFF 
+                // - Expiry is within next 24 hours (but not yet expired)
+                // - We haven't sent an alert for THIS specific expiry date yet
+                const hoursLeft = (expiry - now) / (1000 * 60 * 60);
+                const shouldAlert = !client.autoChargeEnabled && 
+                                   hoursLeft > 0 && hoursLeft <= 24 && 
+                                   client.lastExpiryAlertDate !== client.subscriptionExpiry;
+
+                if (shouldAlert) {
                     results.expired++;
                     const bizConfig = await this.getCompanyConfig(client.id);
-                    const activeCount = await this.countUniqueActiveEmployees(client.id);
                     const subRes = await this.calculateSubscriptionAmount(client.id);
                     const amount = subRes.amount;
 
@@ -2609,7 +2617,13 @@ class DataManager {
                         client.subscriptionExpiry,
                         bizConfig.logoUrl,
                         amount
-                    ).catch(console.error);
+                    ).then(() => {
+                        // Mark as sent for this expiry period
+                        client.lastExpiryAlertDate = client.subscriptionExpiry;
+                        this.saveClients().catch(console.error);
+                    }).catch(console.error);
+                } else if (expired) {
+                    results.expired++;
                 } else {
                     results.valid++;
                 }
