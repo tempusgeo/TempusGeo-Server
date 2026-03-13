@@ -645,6 +645,8 @@ router.post('/super-admin/settings/update', async (req, res) => {
         } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
 
+        console.log(`[SuperAdmin] Updating system settings. maxShiftHours: ${maxShiftHours}`);
+
         await dataManager.updateSystemConfig({
             adminWhatsapp: phone,
             tranzilaTerminal,
