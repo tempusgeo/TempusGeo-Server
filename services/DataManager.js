@@ -882,6 +882,13 @@ class DataManager {
         // Fast RAM lookup
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
+        // --- AUTHORIZATION CHECK ---
+        const config = await this.getCompanyConfig(companyId);
+        const employees = config.employees || [];
+        if (!employees.includes(employeeName)) {
+            return { state: "UNAUTHORIZED", message: "אינך מופיע ברשימת העובדים המורשים של העסק." };
+        }
+
         // --- LAZY CHECK: Auto-Close if limit reached ---
         await this.checkAndApplyAutoCheckout(companyId, employeeName);
 
@@ -896,7 +903,7 @@ class DataManager {
         const lastShift = empShifts[empShifts.length - 1];
 
         // Fetch company config to check for hybrid status
-        const config = await this.getCompanyConfig(companyId);
+        // Reuse the 'config' variable declared above (line 886)
         const settings = config.settings || {};
         const isHybrid = settings.constraints && settings.constraints[employeeName] && settings.constraints[employeeName].isHybrid ? true : false;
 
@@ -991,31 +998,7 @@ class DataManager {
             return config.employees.sort();
         }
 
-        // Fallback: If employees list is empty in config, try to extract from current/previous months
-        // to migrate them into the config
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth() + 1;
-
-        const monthsToCheck = [
-            { y: year, m: month },
-            { y: month === 1 ? year - 1 : year, m: month === 1 ? 12 : month - 1 }
-        ];
-
-        const employeeSet = new Set();
-        for (const m of monthsToCheck) {
-            const shifts = await this.getShifts(companyId, m.y, m.m);
-            Object.keys(shifts).forEach(name => employeeSet.add(name));
-        }
-
-        const employees = Array.from(employeeSet).sort();
-
-        if (employees.length > 0) {
-            config.employees = employees;
-            await this.updateCompanyConfig(companyId, config);
-        }
-
-        return employees;
+        return []; // No employees added yet
     }
 
     async logShift(companyId, employeeName, action, timestamp, location, note, deviceId) {
@@ -1023,13 +1006,25 @@ class DataManager {
         const year = date.getFullYear();
         const month = date.getMonth() + 1;
 
-        // 1. Device ID Verification & Locking
+        // 1. Employee Verification & Device ID Locking
         const companyConfig = await this.getCompanyConfig(companyId);
+        const employees = companyConfig.employees || [];
+        
+        // Ensure employee is on the manager's list
+        if (!employees.includes(employeeName)) {
+            return {
+                success: false,
+                error: "AUTH_NAME_NOT_FOUND",
+                message: "עובד לא נמצא ברשימת המנהל. פנה למנהל להוספה."
+            };
+        }
+
         if (companyConfig.settings?.constraints) {
             const constraints = companyConfig.settings.constraints;
             const empConstraint = constraints[employeeName];
 
             if (empConstraint) {
+                // If device is already verified, check for mismatch
                 if (empConstraint.deviceIdVerified && empConstraint.deviceId) {
                     if (deviceId && empConstraint.deviceId !== deviceId) {
                         return {
@@ -1039,11 +1034,24 @@ class DataManager {
                         };
                     }
                 }
+                // If not verified and we have a device ID, lock it now
                 else if (deviceId) {
                     empConstraint.deviceId = deviceId;
                     empConstraint.deviceIdVerified = true;
                     await this.updateCompanyConfig(companyId, companyConfig);
                     console.log(`[DeviceLock] Locked ${employeeName} to device ${deviceId}`);
+                }
+            } else {
+                // Case where employee is in 'employees' list but missing from 'constraints'
+                // This shouldn't happen with the new addEmployee, but handles legacy or edge cases
+                if (!companyConfig.settings.constraints) companyConfig.settings.constraints = {};
+                companyConfig.settings.constraints[employeeName] = {
+                    deviceId: deviceId || "",
+                    deviceIdVerified: !!deviceId
+                };
+                await this.updateCompanyConfig(companyId, companyConfig);
+                if (deviceId) {
+                    console.log(`[DeviceLock] Locked ${employeeName} to device ${deviceId} (New constraint)`);
                 }
             }
         }
@@ -1626,6 +1634,19 @@ class DataManager {
 
         if (!config.employees.includes(name)) {
             config.employees.push(name);
+            
+            // Initialize constraints for the new employee to allow controlled Device ID locking
+            if (!config.settings) config.settings = {};
+            if (!config.settings.constraints) config.settings.constraints = {};
+            
+            if (!config.settings.constraints[name]) {
+                config.settings.constraints[name] = {
+                    deviceId: "",
+                    deviceIdVerified: false
+                };
+                console.log(`[DataManager] Initialized constraints for new employee: ${name}`);
+            }
+
             await this.updateCompanyConfig(companyId, config);
         }
 
