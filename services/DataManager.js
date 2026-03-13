@@ -349,7 +349,8 @@ class DataManager {
             let expectedPayment = 0;
             if (existsLocally) {
                 activeEmployees = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
-                expectedPayment = await this.calculateSubscriptionAmount(client.id, activeEmployees);
+                // For Super Admin Dashboard, we want to see the full potential monthly income
+                expectedPayment = await this.calculateSubscriptionAmount(client.id, activeEmployees, true);
             }
 
             return {
@@ -444,7 +445,7 @@ class DataManager {
         }
     }
 
-    async calculateSubscriptionAmount(companyId, employeeCount) {
+    async calculateSubscriptionAmount(companyId, employeeCount, fullCycleOnly = false) {
         try {
             const client = await this.getClientById(companyId);
             if (!client) return 0;
@@ -468,29 +469,33 @@ class DataManager {
 
             // 2. Calculate Active Days in this cycle
             const joinedAt = client.joinedAt ? new Date(client.joinedAt) : now;
+            const startOfActivity = joinedAt > prevCycle ? joinedAt : prevCycle;
             
-            // If joined before current cycle started, they were active for the full duration
-            const effectiveStart = joinedAt < prevCycle ? prevCycle : joinedAt;
-            const effectiveEnd = now < nextCycle ? now : nextCycle;
+            // For "Expected Billing", we assume activity until the end of original cycle
+            const endOfActivity = nextCycle; 
 
-            let activeDaysInCycle = Math.max(0, Math.ceil((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24)));
+            let activeDaysInCycle = Math.max(0, Math.ceil((endOfActivity - startOfActivity) / (1000 * 60 * 60 * 24)));
             if (activeDaysInCycle > cycleDuration) activeDaysInCycle = cycleDuration;
 
             // 3. Trial Logic
-            const trialDaysUsed = client.freeTrialDaysUsed || 0;
-            const totalTrialAllowed = globalTrialDays;
-            const trialRemaining = Math.max(0, totalTrialAllowed - trialDaysUsed);
+            const trialUsedSoFar = client.freeTrialDaysUsed || 0;
+            const trialLeft = Math.max(0, globalTrialDays - trialUsedSoFar);
 
-            // Billable days is active days minus what can be covered by remaining trial
-            const billableDays = Math.max(0, activeDaysInCycle - trialRemaining);
+            const billableDays = Math.max(0, activeDaysInCycle - trialLeft);
 
             // 4. Calculate Final Amount (pro-rata)
             const fullCyclePrice = Math.max(minPrice, employeeCount * pricePerEmp);
             
-            // If the user has trial days covering the entire current active period, amount is 0
-            if (billableDays <= 0 || fullCyclePrice === 0) return 0;
+            // If requesting full cycle projection (for Admin Dashboard / Settings display)
+            if (fullCycleOnly) return fullCyclePrice;
+
+            if (billableDays === 0 || cycleDuration === 0 || fullCyclePrice === 0) return 0;
+            
+            // If it's a full month for an old client, don't pro-rata downward due to rounding
+            if (billableDays >= cycleDuration) return fullCyclePrice;
             
             const amount = Math.floor((fullCyclePrice / cycleDuration) * billableDays);
+
             return amount;
         } catch (e) {
             console.error('[Billing] calculateSubscriptionAmount error:', e.message);
