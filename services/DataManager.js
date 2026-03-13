@@ -455,25 +455,24 @@ class DataManager {
             const globalTrialDays = sysConfig.freeTrialDays || 0;
 
             const now = new Date();
+            const chargeDay = parseInt(sysConfig.chargeDay) || 1;
+            const chargeTime = sysConfig.chargeTime || "00:00";
+            
+            // 1. Identify the billing cycle
+            const nextCycle = this.getNextBillingDate(chargeDay, chargeTime);
+            const prevCycle = new Date(nextCycle);
+            prevCycle.setMonth(prevCycle.getMonth() - 1);
+            
+            // Cycle Duration (days)
+            const cycleDuration = Math.round((nextCycle - prevCycle) / (1000 * 60 * 60 * 24));
+
+            // 2. Calculate Active Days in this cycle
             const joinedAt = client.joinedAt ? new Date(client.joinedAt) : now;
-            
-            // 1. Determine the relevant month for retrospective billing
-            // If calling on the 1st of March, we are billing for February.
-            const billingDate = new Date();
-            const lastMonth = new Date(billingDate.getFullYear(), billingDate.getMonth() - 1, 1);
-            const daysInMonth = new Date(lastMonth.getFullYear(), lastMonth.getMonth() + 1, 0).getDate();
+            const startOfActivity = joinedAt > prevCycle ? joinedAt : prevCycle;
+            const endOfActivity = now > nextCycle ? nextCycle : now;
 
-            // 2. Calculate Active Days in that month
-            // Start: Max of (JoinedAt, Start of last month)
-            // End: Start of this month (exclusive)
-            const monthStart = new Date(lastMonth.getFullYear(), lastMonth.getMonth(), 1);
-            const monthEnd = new Date(billingDate.getFullYear(), billingDate.getMonth(), 1);
-            
-            const start = joinedAt > monthStart ? joinedAt : monthStart;
-            const end = monthEnd;
-
-            let activeDays = Math.max(0, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
-            if (activeDays > daysInMonth) activeDays = daysInMonth;
+            let activeDaysInCycle = Math.max(0, Math.ceil((endOfActivity - startOfActivity) / (1000 * 60 * 60 * 24)));
+            if (activeDaysInCycle > cycleDuration) activeDaysInCycle = cycleDuration;
 
             // 3. Trial Logic
             const trialUsedSoFar = client.freeTrialDaysUsed || 0;
@@ -1977,12 +1976,9 @@ class DataManager {
         // Clean data
         const safePassword = data.password ? data.password.toString() : '';
 
-        // Subscription Expiry Logic: Always ends on the 1st of the FOLLOWING month.
-        // Example: Registered 7.3 -> Expiry 1.4.
-        const trialExpiry = new Date();
-        trialExpiry.setMonth(trialExpiry.getMonth() + 1);
-        trialExpiry.setDate(1);
-        trialExpiry.setHours(23, 59, 59, 999);
+        // Subscription Expiry Logic: Align with next chargeDay/chargeTime
+        const sysConfig = await this.getSystemConfig();
+        const trialExpiry = this.getNextBillingDate(sysConfig.chargeDay, sysConfig.chargeTime);
 
         const client = {
             id: newId,
@@ -2160,18 +2156,16 @@ class DataManager {
         const now = new Date();
         let currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
 
-        // Alignment Logic (1st of the month)
-        // If expired, start adding from the next month's 1st.
-        // If active, add to the current expiry date base.
+        // Alignment Logic (chargeDay)
+        const chargeDay = parseInt(systemConfig.chargeDay) || 1;
+        const chargeTime = systemConfig.chargeTime || "00:00";
 
         let targetDate;
         if (currentExpiry < now) {
-            // Expired: Start from the 1st of the next month
-            targetDate = new Date();
-            targetDate.setMonth(targetDate.getMonth() + 1);
-            targetDate.setDate(1);
+            // Expired: Start from the very next billing date
+            targetDate = this.getNextBillingDate(chargeDay, chargeTime);
         } else {
-            // Active: Just use current expiry as base
+            // Active: Base on current expiry
             targetDate = new Date(currentExpiry);
         }
 
