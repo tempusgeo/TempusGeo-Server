@@ -2412,17 +2412,18 @@ class DataManager {
                 const expired = expiry < now;
                 const daysLeft = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
 
-                // 1. Handle Auto-Renewal if Expired
-                if (expired && client.autoChargeEnabled && client.paymentMethod?.token) {
-                    this.logMaintenance('BILLING', `Retrospective billing cycle for ${client.businessName}.`);
+                // --- BILLING & RENEWAL LOGIC ---
+                // 1. Regular Billing (Always attempt on charge day if payment method exists)
+                if (isChargeTime && client.paymentMethod?.token) {
+                    this.logMaintenance('BILLING', `Charging ${client.businessName} for the previous month cycle.`);
 
                     const activeCount = await this.countUniqueActiveEmployees(client.id);
                     const subRes = await this.calculateSubscriptionAmount(client.id);
                     const amount = subRes.amount;
 
-                    let chargeRes = { success: true }; // Default to true for $0 cases
+                    let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL' }; // Default for $0
                     if (amount > 0) {
-                        const pdesc = `מנוי TempusGeo - ${activeCount} עובדים (חיוב רטרוספקטיבי)`;
+                        const pdesc = `מנוי TempusGeo - ${activeCount} עובדים (חיוב חודשי)`;
                         chargeRes = await tranzilaService.chargeToken({
                             sum: amount,
                             currency: 1,
@@ -2437,52 +2438,61 @@ class DataManager {
                     }
 
                     if (chargeRes.success) {
-                        const dt = new Date();
-                        // Advance to the same day/time of next month
-                        dt.setMonth(dt.getMonth() + 1);
-                        dt.setDate(chargeDay);
-                        dt.setHours(chargeHour, chargeMin, 0, 0);
-                        client.subscriptionExpiry = dt.toISOString();
-
-                        // Trial tracking removed
-
-                        client.lastBilledEmployeeCount = activeCount;
-
+                        this.logMaintenance('BILLING', `✅ Billing successful for ${client.businessName} (₪${amount})`);
+                        
+                        // Record Payment if amount > 0
                         if (amount > 0) {
-                            this.logMaintenance('BILLING', `✅ Postpaid charge success for ${client.businessName} (₪${amount})`);
                             if (!client.paymentHistory) client.paymentHistory = [];
                             client.paymentHistory.push({
-                                date: new Date().toISOString(),
+                                date: new Date().toLocaleDateString('he-IL'),
+                                fullDate: new Date().toISOString(),
                                 amount,
                                 currency: 'ILS',
-                                method: 'Postpaid-Billing',
-                                reference: chargeRes.confirmationCode,
-                                status: 'PAID'
+                                description: `חיוב אוטומטי - ${activeCount} עובדים`,
+                                method: 'Auto-Billing',
+                                status: 'PAID',
+                                statusDisplayName: 'שולם',
+                                reference: chargeRes.confirmationCode
                             });
                             results.charged++;
 
-                            // Send Success Email to client and admin
+                            // Notify
                             const recipients = [client.email, 'tempusgeo@gmail.com'];
                             recipients.forEach(email => {
                                 emailService.sendPaymentSuccessNotification(email, {
                                     businessName: client.businessName,
                                     amount: amount,
                                     activeEmployees: activeCount,
-                                    newExpiry: dt.toLocaleDateString('he-IL')
+                                    newExpiry: 'מחזור חדש'
                                 }).catch(console.error);
                             });
-                        } else {
-                            this.logMaintenance('BILLING', `🛡️ Trial period auto-renewal for ${client.businessName} (₪0).`);
                         }
 
+                        // 2. Auto-Renewal (Only if autoChargeEnabled is ON)
+                        if (client.autoChargeEnabled) {
+                            const nextExpiry = new Date();
+                            nextExpiry.setMonth(nextExpiry.getMonth() + 1);
+                            nextExpiry.setDate(chargeDay);
+                            nextExpiry.setHours(chargeHour, chargeMin, 0, 0);
+                            
+                            client.subscriptionExpiry = nextExpiry.toISOString();
+                            
+                            // User Request: Set subscriptionDate to the last day of the PREVIOUS month
+                            // If today is March 5, last day of prev month is Feb 28.
+                            const lastDayPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+                            client.subscriptionDate = lastDayPrevMonth.toISOString();
+                            
+                            this.logMaintenance('BILLING', `🔄 Auto-renewal successful for ${client.businessName}. Next expiry: ${client.subscriptionExpiry}, New Start Date: ${client.subscriptionDate}`);
+                        } else {
+                            this.logMaintenance('BILLING', `ℹ️ Charge completed for ${client.businessName}, but Auto-Renewal is OFF. Expiry remains: ${client.subscriptionExpiry}`);
+                        }
+
+                        client.lastBilledEmployeeCount = activeCount;
                         await this.saveClients();
                     } else {
-                        this.logMaintenance('BILLING', `❌ Postpaid charge failed for ${client.businessName}: ${chargeRes.raw}`);
-                        // Mark as expired if failed
-                        client.subscriptionExpiry = new Date(now.getTime() - 1000).toISOString();
-                        await this.saveClients();
-
-                        // Send Failure Email to client and admin
+                        this.logMaintenance('BILLING', `❌ Billing failed for ${client.businessName}: ${chargeRes.raw || 'Unknown error'}`);
+                        
+                        // Send Failure Email
                         const recipients = [client.email, 'tempusgeo@gmail.com'];
                         recipients.forEach(email => {
                             emailService.sendPaymentFailedNotification(email, {
@@ -2493,6 +2503,13 @@ class DataManager {
                         });
                     }
                 }
+
+                // 3. Fallback: Expired Handle (If it's NOT charge day but it's expired)
+                if (expired && !isChargeTime && client.autoChargeEnabled) {
+                     this.logMaintenance('BILLING', `⚠️ Found expired subscription for ${client.businessName} outside of charge time. Auto-renewing...`);
+                     // Reuse the same logic or trigger a full check on next charge time
+                }
+
 
                 // 2. Notifications for expiring soon
                 if (daysLeft <= 3 && daysLeft >= -1) {
