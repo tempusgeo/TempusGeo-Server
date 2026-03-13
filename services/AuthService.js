@@ -20,7 +20,8 @@ class AuthService {
         const config = await dataManager.getCompanyConfig(client.id);
 
         const activeEmployees = await dataManager.countUniqueActiveEmployees(client.id);
-        const expectedPayment = await dataManager.calculateSubscriptionAmount(client.id);
+        const subRes = await dataManager.calculateSubscriptionAmount(client.id);
+        const expectedPayment = subRes.amount;
 
         return {
             success: true,
