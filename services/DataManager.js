@@ -446,12 +446,52 @@ class DataManager {
 
     async calculateSubscriptionAmount(companyId, employeeCount) {
         try {
+            const client = await this.getClientById(companyId);
+            if (!client) return 0;
+
             const sysConfig = await this.getSystemConfig();
             const minPrice = sysConfig.minMonthlyPrice || 0;
             const pricePerEmp = sysConfig.pricePerEmployee || 0;
+            const globalTrialDays = sysConfig.freeTrialDays || 0;
+
+            const now = new Date();
+            const joinedAt = client.joinedAt ? new Date(client.joinedAt) : now;
             
-            return Math.max(minPrice, employeeCount * pricePerEmp);
+            // 1. Determine the relevant month for retrospective billing
+            // If calling on the 1st of March, we are billing for February.
+            const billingDate = new Date();
+            const lastMonth = new Date(billingDate.getFullYear(), billingDate.getMonth() - 1, 1);
+            const daysInMonth = new Date(lastMonth.getFullYear(), lastMonth.getMonth() + 1, 0).getDate();
+
+            // 2. Calculate Active Days in that month
+            // Start: Max of (JoinedAt, Start of last month)
+            // End: Start of this month (exclusive)
+            const monthStart = new Date(lastMonth.getFullYear(), lastMonth.getMonth(), 1);
+            const monthEnd = new Date(billingDate.getFullYear(), billingDate.getMonth(), 1);
+            
+            const start = joinedAt > monthStart ? joinedAt : monthStart;
+            const end = monthEnd;
+
+            let activeDays = Math.max(0, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+            if (activeDays > daysInMonth) activeDays = daysInMonth;
+
+            // 3. Trial Logic
+            const trialUsedSoFar = client.freeTrialDaysUsed || 0;
+            const trialLeft = Math.max(0, globalTrialDays - trialUsedSoFar);
+            
+            const billableDays = Math.max(0, activeDays - trialLeft);
+            const trialDaysConsumedInThisCycle = Math.min(activeDays, trialLeft);
+            
+            // We don't update the client object here because this is a "calculator" 
+            // The caller (checkSubscriptions) will handle persistence.
+
+            // 4. Calculate Final Amount
+            const fullMonthPrice = Math.max(minPrice, employeeCount * pricePerEmp);
+            const amount = Math.floor((fullMonthPrice / daysInMonth) * billableDays);
+
+            return amount;
         } catch (e) {
+            console.error('[Billing] Logic error:', e);
             return 0;
         }
     }
@@ -1949,9 +1989,12 @@ class DataManager {
             businessName: data.businessName,
             email: data.email,
             phone: data.phone,
-            password: safePassword, // Store password here for admin login
+            password: safePassword,
             subscriptionExpiry: trialExpiry.toISOString(),
-            joinedAt: new Date().toISOString()
+            joinedAt: new Date().toISOString(),
+            freeTrialDaysUsed: 0,
+            autoChargeEnabled: !!data.paymentMethod,
+            paymentMethod: data.paymentMethod || null
         };
 
         CACHE.clients.push(client);
@@ -2141,6 +2184,14 @@ class DataManager {
 
         client.subscriptionExpiry = targetDate.toISOString();
 
+        // Reset the billing baseline after a successful manual payment/settlement
+        try {
+            const activeEmployees = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
+            client.lastBilledEmployeeCount = activeEmployees;
+        } catch (err) {
+            console.error(`[DataManager] Baseline reset failed for ${client.id}:`, err.message);
+        }
+
         // Save Payment Method if provided
         if (paymentMethod && paymentMethod.token) {
             client.paymentMethod = {
@@ -2227,8 +2278,17 @@ class DataManager {
     async checkSubscriptions() {
         const now = new Date();
         const results = { expired: 0, valid: 0, charged: 0, failures: [] };
+        const sysConfig = await this.getSystemConfig();
         
-        this.logMaintenance('BILLING', `Starting subscription and renewal check.`);
+        // Check if it's the right day and time to charge
+        const chargeDay = parseInt(sysConfig.chargeDay) || 1;
+        const [chargeHour, chargeMin] = (sysConfig.chargeTime || "00:00").split(':').map(Number);
+        
+        const isChargeTime = now.getDate() === chargeDay && 
+                           now.getHours() === chargeHour && 
+                           now.getMinutes() < 60; // Run once within the hour
+
+        this.logMaintenance('BILLING', `Starting subscription and renewal check. Target: Day ${chargeDay} @ ${chargeHour}:${chargeMin}.`);
 
         for (const client of CACHE.clients) {
             try {
@@ -2240,16 +2300,18 @@ class DataManager {
 
                 // 1. Handle Auto-Renewal if Expired
                 if (expired && client.autoChargeEnabled && client.paymentMethod?.token) {
-                    this.logMaintenance('BILLING', `Subscription expired for ${client.businessName}. Attempting auto-renewal.`);
+                    this.logMaintenance('BILLING', `Retrospective billing cycle for ${client.businessName}.`);
                     
                     const activeCount = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
                     const amount = await this.calculateSubscriptionAmount(client.id, activeCount);
                     
+                    let chargeRes = { success: true }; // Default to true for $0 cases
                     if (amount > 0) {
-                        const chargeRes = await tranzilaService.chargeToken({
+                        const pdesc = `מנוי TempusGeo - ${activeCount} עובדים (חיוב רטרוספקטיבי)`;
+                        chargeRes = await tranzilaService.chargeToken({
                             sum: amount,
                             currency: 1, 
-                            pdesc: `מנוי TempusGeo - ${activeCount} עובדים`,
+                            pdesc: pdesc,
                             TranzilaTK: client.paymentMethod.token,
                             expmonth: client.paymentMethod.expMonth,
                             expyear: client.paymentMethod.expYear,
@@ -2257,31 +2319,71 @@ class DataManager {
                             contact: client.paymentMethod.cardHolderName,
                             mycvv: client.paymentMethod.cvv
                         });
+                    }
 
-                        if (chargeRes.success) {
-                            this.logMaintenance('BILLING', `✅ Auto-renewal success for ${client.businessName} (₪${amount})`);
-                            
-                            // Align to 1st of next month
-                            const newExpiry = new Date();
-                            newExpiry.setMonth(newExpiry.getMonth() + 1);
-                            newExpiry.setDate(1);
-                            newExpiry.setHours(23, 59, 59, 999);
-                            client.subscriptionExpiry = newExpiry.toISOString();
-                            
+                    if (chargeRes.success) {
+                        const dt = new Date();
+                        // Advance to the same day/time of next month
+                        dt.setMonth(dt.getMonth() + 1);
+                        dt.setDate(chargeDay);
+                        dt.setHours(chargeHour, chargeMin, 0, 0);
+                        client.subscriptionExpiry = dt.toISOString();
+                        
+                        // Track Trial Usage
+                        const joinedAt = client.joinedAt ? new Date(client.joinedAt) : new Date();
+                        const billingDate = new Date();
+                        const monthStart = new Date(billingDate.getFullYear(), billingDate.getMonth() - 1, 1);
+                        const start = joinedAt > monthStart ? joinedAt : monthStart;
+                        const activeDays = Math.max(0, Math.ceil((billingDate - start) / (1000 * 60 * 60 * 24)));
+                        
+                        const trialLeft = Math.max(0, (sysConfig.freeTrialDays || 0) - (client.freeTrialDaysUsed || 0));
+                        client.freeTrialDaysUsed = (client.freeTrialDaysUsed || 0) + Math.min(activeDays, trialLeft);
+
+                        client.lastBilledEmployeeCount = activeCount; 
+                        
+                        if (amount > 0) {
+                            this.logMaintenance('BILLING', `✅ Postpaid charge success for ${client.businessName} (₪${amount})`);
                             if (!client.paymentHistory) client.paymentHistory = [];
                             client.paymentHistory.push({
                                 date: new Date().toISOString(),
                                 amount,
                                 currency: 'ILS',
-                                method: 'Auto-Renewal',
+                                method: 'Postpaid-Billing',
                                 reference: chargeRes.confirmationCode,
                                 status: 'PAID'
                             });
-                            await this.saveClients();
                             results.charged++;
+
+                            // Send Success Email to client and admin
+                            const recipients = [client.email, 'tempusgeo@gmail.com'];
+                            recipients.forEach(email => {
+                                emailService.sendPaymentSuccessNotification(email, {
+                                    businessName: client.businessName,
+                                    amount: amount,
+                                    activeEmployees: activeCount,
+                                    newExpiry: dt.toLocaleDateString('he-IL')
+                                }).catch(console.error);
+                            });
                         } else {
-                            this.logMaintenance('BILLING', `❌ Auto-renewal failed for ${client.businessName}: ${chargeRes.raw}`);
+                            this.logMaintenance('BILLING', `🛡️ Trial period auto-renewal for ${client.businessName} (₪0).`);
                         }
+                        
+                        await this.saveClients();
+                    } else {
+                        this.logMaintenance('BILLING', `❌ Postpaid charge failed for ${client.businessName}: ${chargeRes.raw}`);
+                        // Mark as expired if failed
+                        client.subscriptionExpiry = new Date(now.getTime() - 1000).toISOString();
+                        await this.saveClients();
+
+                        // Send Failure Email to client and admin
+                        const recipients = [client.email, 'tempusgeo@gmail.com'];
+                        recipients.forEach(email => {
+                            emailService.sendPaymentFailedNotification(email, {
+                                businessName: client.businessName,
+                                amount: amount,
+                                error: chargeRes.raw || 'שגיאת תקשורת'
+                            }).catch(console.error);
+                        });
                     }
                 }
 
@@ -2289,12 +2391,16 @@ class DataManager {
                 if (daysLeft <= 3 && daysLeft >= -1) { 
                     results.expired++;
                     const bizConfig = await this.getCompanyConfig(client.id);
+                    const activeCount = await this.countUniqueActiveEmployees(client.id, client.subscriptionExpiry);
+                    const amount = await this.calculateSubscriptionAmount(client.id, activeCount);
+                    
                     emailService.sendSubscriptionAlert(
                         client.email,
                         client.businessName,
                         daysLeft,
                         client.subscriptionExpiry,
-                        bizConfig.logoUrl
+                        bizConfig.logoUrl,
+                        amount
                     ).catch(console.error);
                 } else {
                     results.valid++;
@@ -2304,7 +2410,13 @@ class DataManager {
                 results.failures.push(e.message);
             }
         }
+        await this.saveClients(); // Save tracking updates
         return results;
+    }
+
+    // Removed Mid-Cycle Auto-Charge Logic (Consolidated into renewal cycle)
+    async checkDeltaBilling(client) {
+        return; // Logic moved to checkSubscriptions renewal loop
     }
 
     async getStorageStats() {
