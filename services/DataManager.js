@@ -2554,42 +2554,52 @@ class DataManager {
         return { success: true, sent, skip, errors };
     }
 
-    async checkSubscriptions() {
+    async checkSubscriptions(isManual = false) {
         const now = new Date();
         const results = { expired: 0, valid: 0, charged: 0, failures: [] };
         const sysConfig = await this.getSystemConfig();
 
-        // Check if it's the right day and time to charge
-        const chargeDay = parseInt(sysConfig.chargeDay) || 1;
+        // Execution window preference (from settings)
         const [chargeHour, chargeMin] = (sysConfig.chargeTime || "00:00").split(':').map(Number);
-
-        const isChargeTime = now.getDate() === chargeDay &&
-            now.getHours() === chargeHour &&
-            now.getMinutes() < 60; // Run once within the hour
-
-        this.logMaintenance('BILLING', `Starting subscription and renewal check. Target: Day ${chargeDay} @ ${chargeHour}:${chargeMin}.`);
+        
+        // Automated background runs should respect the configured hour
+        if (!isManual) {
+            if (now.getHours() !== chargeHour) {
+                // Not the right time for automated run, silent skip
+                return results;
+            }
+        }
+        
+        this.logMaintenance('BILLING', `${isManual ? 'Manual' : 'Automated'} per-client subscription and renewal check started.`);
 
         for (const client of CACHE.clients) {
             try {
                 if (!client.subscriptionExpiry) continue;
 
                 const expiry = new Date(client.subscriptionExpiry);
-                const expired = expiry < now;
-                const daysLeft = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
+                const daysLeft = (expiry - now) / (1000 * 60 * 60 * 24);
+                
+                // --- PRECISION BILLING SAFEGUARDS ---
+                // 1. Charge only if expiry is in <= 1 day (including already expired)
+                const isImminentOrExpired = daysLeft <= 1;
+                
+                // 2. Globally auto-billing must be ON
+                const globalAutoBilling = sysConfig.autoBillingEnabled !== false;
+                
+                // 3. System-wide auto-renewal must be ON
+                const globalAutoRenewal = sysConfig.autoRenewalEnabled !== false;
 
-                // --- BILLING & RENEWAL LOGIC ---
-                // 1. Regular Billing (Always attempt on charge day if payment method exists)
-                const autoBillingEnabled = sysConfig.autoBillingEnabled !== false; // Default true if not set
-                if (isChargeTime && client.paymentMethod?.token && autoBillingEnabled) {
-                    this.logMaintenance('BILLING', `Charging ${client.businessName} for the previous month cycle.`);
-
+                if (isImminentOrExpired && client.paymentMethod?.token && globalAutoBilling) {
                     const activeCount = await this.countUniqueActiveEmployees(client.id);
                     const subRes = await this.calculateSubscriptionAmount(client.id);
                     const amount = subRes.amount;
 
-                    let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL' }; // Default for $0
-                    if (amount > 0) {
-                        const pdesc = `מנוי TempusGeo - ${activeCount} עובדים (חיוב חודשי)`;
+                    // 4. Charge only if debt is at least ₪1
+                    if (amount >= 1) {
+                        this.logMaintenance('BILLING', `🔄 Processing billing for ${client.businessName} (₪${amount}, Expiry: ${expiry.toLocaleDateString('he-IL')})`);
+
+                        let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL' }; 
+                        const pdesc = `TempusGeo - מנוי ל-${client.businessName} - ${activeCount} עובדים`;
                         chargeRes = await tranzilaService.chargeToken({
                             sum: amount,
                             currency: 1,
@@ -2601,21 +2611,18 @@ class DataManager {
                             contact: client.paymentMethod.cardHolderName,
                             mycvv: client.paymentMethod.cvv
                         });
-                    }
 
-                    if (chargeRes.success) {
-                        client.billingFailed = false; // Reset on success
-                        this.logMaintenance('BILLING', `✅ Billing successful for ${client.businessName} (₪${amount})`);
-                        
-                        // Record Payment if amount > 0
-                        if (amount > 0) {
+                        if (chargeRes.success) {
+                            client.billingFailed = false;
+                            this.logMaintenance('BILLING', `✅ Billing successful for ${client.businessName} (₪${amount})`);
+                            
                             if (!client.paymentHistory) client.paymentHistory = [];
                             client.paymentHistory.push({
                                 date: new Date().toLocaleDateString('he-IL'),
                                 fullDate: new Date().toISOString(),
                                 amount,
                                 currency: 'ILS',
-                                description: `חיוב אוטומטי - ${activeCount} עובדים`,
+                                description: `חיוב וחידוש אוטומטי - ${activeCount} עובדים`,
                                 method: 'Auto-Billing',
                                 status: 'PAID',
                                 statusDisplayName: 'שולם',
@@ -2623,7 +2630,6 @@ class DataManager {
                             });
                             results.charged++;
 
-                            // Notify
                             const recipients = [client.email, 'tempusgeo@gmail.com'];
                             recipients.forEach(email => {
                                 emailService.sendPaymentSuccessNotification(email, {
@@ -2633,62 +2639,42 @@ class DataManager {
                                     newExpiry: 'מחזור חדש'
                                 }).catch(console.error);
                             });
-                        }
 
-                        // 2. Auto-Renewal (Only if autoChargeEnabled is ON AND Global renewal is ON)
-                        const autoRenewalEnabled = sysConfig.autoRenewalEnabled !== false;
-                        if (client.autoChargeEnabled && autoRenewalEnabled) {
-                            const nextExpiry = new Date();
-                            nextExpiry.setMonth(nextExpiry.getMonth() + 1);
-                            nextExpiry.setDate(chargeDay);
-                            nextExpiry.setHours(chargeHour, chargeMin, 0, 0);
-                            
-                            client.subscriptionExpiry = nextExpiry.toISOString();
-                            this.logMaintenance('RENEWAL', `✅ Automated renewal for ${client.businessName}. New expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
-                            
-                            // User Request: Set subscriptionDate to the last day of the PREVIOUS month
-                            // If today is March 5, last day of prev month is Feb 28.
-                            const lastDayPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-                            client.subscriptionDate = lastDayPrevMonth.toISOString();
-                            
-                            this.logMaintenance('BILLING', `🔄 Auto-renewal successful for ${client.businessName}. Next expiry: ${client.subscriptionExpiry}, New Start Date: ${client.subscriptionDate}`);
+                            // Renew subscription only if client's auto-renewal is ON AND global is ON
+                            if (client.autoChargeEnabled && globalAutoRenewal) {
+                                const nextExpiry = new Date(expiry);
+                                nextExpiry.setMonth(nextExpiry.getMonth() + 1);
+                                nextExpiry.setHours(chargeHour, chargeMin, 0, 0);
+
+                                client.subscriptionExpiry = nextExpiry.toISOString();
+                                client.subscriptionDate = expiry.toISOString();
+                                
+                                this.logMaintenance('RENEWAL', `✅ Automated renewal for ${client.businessName}. New expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
+                            }
+
+                            client.lastBilledEmployeeCount = activeCount;
+                            await this.saveClients();
                         } else {
-                            this.logMaintenance('BILLING', `ℹ️ Charge completed for ${client.businessName}, but Auto-Renewal is OFF. Expiry remains: ${client.subscriptionExpiry}`);
+                            client.billingFailed = true;
+                            this.logMaintenance('BILLING', `❌ Billing failed for ${client.businessName}: ${chargeRes.raw || 'Payment rejected'}`);
+                            
+                            const recipients = [client.email, 'tempusgeo@gmail.com'];
+                            recipients.forEach(email => {
+                                emailService.sendPaymentFailedNotification(email, {
+                                    businessName: client.businessName,
+                                    amount: amount,
+                                    error: chargeRes.raw || 'סירוב מהבנק'
+                                }).catch(console.error);
+                            });
+                            await this.saveClients();
                         }
-
-                        client.lastBilledEmployeeCount = activeCount;
-                        await this.saveClients();
-                    } else {
-                        client.billingFailed = true; // Mark as failed
-                        this.logMaintenance('BILLING', `❌ Billing failed for ${client.businessName}: ${chargeRes.raw || 'Unknown error'}`);
-                        
-                        // Send Failure Email
-                        const recipients = [client.email, 'tempusgeo@gmail.com'];
-                        recipients.forEach(email => {
-                            emailService.sendPaymentFailedNotification(email, {
-                                businessName: client.businessName,
-                                amount: amount,
-                                error: chargeRes.raw || 'שגיאת תקשורת'
-                            }).catch(console.error);
-                        });
-                        await this.saveClients();
                     }
                 }
 
-                // 3. Fallback: Expired Handle (If it's NOT charge day but it's expired)
-                if (expired && !isChargeTime && client.autoChargeEnabled) {
-                     this.logMaintenance('BILLING', `⚠️ Found expired subscription for ${client.businessName} outside of charge time. Auto-renewing...`);
-                     // Reuse the same logic or trigger a full check on next charge time
-                }
-
-
-                // 2. Notifications for expiring soon
-                // Only alert if: 
-                // - Auto-charge is OFF 
-                // - Expiry is within X hours (default 24)
-                // - We haven't sent an alert for THIS specific expiry date yet
-                const noticeHours = (parseInt(sysConfig.subscriptionExpiryNotice) || 1) * 24; // Convert days to hours
+                // --- EXPIRY ALERTS ---
+                const noticeHours = (parseInt(sysConfig.subscriptionExpiryNotice) || 1) * 24;
                 const hoursLeft = (expiry - now) / (1000 * 60 * 60);
+
                 const shouldAlert = !client.autoChargeEnabled && 
                                    hoursLeft > 0 && hoursLeft <= noticeHours && 
                                    client.lastExpiryAlertDate !== client.subscriptionExpiry;
@@ -2702,16 +2688,15 @@ class DataManager {
                     emailService.sendSubscriptionAlert(
                         client.email,
                         client.businessName,
-                        daysLeft,
+                        Math.ceil(hoursLeft / 24),
                         client.subscriptionExpiry,
                         bizConfig.logoUrl,
                         amount
                     ).then(() => {
-                        // Mark as sent for this expiry period
                         client.lastExpiryAlertDate = client.subscriptionExpiry;
                         this.saveClients().catch(console.error);
                     }).catch(console.error);
-                } else if (expired) {
+                } else if (expiry < now) {
                     results.expired++;
                 } else {
                     results.valid++;
@@ -2721,7 +2706,7 @@ class DataManager {
                 results.failures.push(e.message);
             }
         }
-        await this.saveClients(); // Save tracking updates
+        await this.saveClients();
         return results;
     }
 
