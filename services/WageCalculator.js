@@ -13,6 +13,31 @@ class WageCalculator {
 
         const tz = 'Asia/Jerusalem';
 
+        // Helper: Get localized Date components in Asia/Jerusalem
+        const getLocalized = (timestamp) => {
+            const date = new Date(timestamp);
+            const formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone: tz,
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: false
+            });
+            const parts = formatter.formatToParts(date);
+            const p = {};
+            parts.forEach(part => p[part.type] = part.value);
+            
+            return {
+                year: parseInt(p.year),
+                month: parseInt(p.month),
+                day: parseInt(p.day),
+                hours: parseInt(p.hour),
+                minutes: parseInt(p.minute),
+                dayOfWeek: date.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' }), // Sun, Mon...
+                dayOfWeekNum: [ 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat' ].indexOf(date.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' })),
+                isoDate: `${p.year}-${p.month}-${p.day}`
+            };
+        };
+
         // Helper: Convert "18:00" to minutes from midnight
         const timeToMinutes = (timeStr) => {
             if (!timeStr) return 0;
@@ -46,10 +71,10 @@ class WageCalculator {
 
             // Helper to check if a specific timestamp is "Special" (Shabbat/Holiday)
             const getIsSpecial = (timestamp) => {
-                const d = new Date(timestamp);
-                const dayOfWeek = d.getDay(); // 0 = Sun, 5 = Fri, 6 = Sat
-                const minsFromMidnight = d.getHours() * 60 + d.getMinutes();
-                const isoDate = d.toISOString().split('T')[0];
+                const loc = getLocalized(timestamp);
+                const dayOfWeek = loc.dayOfWeekNum; 
+                const minsFromMidnight = loc.hours * 60 + loc.minutes;
+                const isoDate = loc.isoDate;
 
                 const isTodayHoliday = holidayDates.includes(isoDate);
 
@@ -58,9 +83,9 @@ class WageCalculator {
                 if (dayOfWeek === 6 && minsFromMidnight < weEndMins) return true; // Sat
 
                 // 2. Holiday Check
-                // We need tomorrow/yesterday to detect Eves and Ends
-                const tomorrowIso = new Date(d.getTime() + 86400000).toISOString().split('T')[0];
-                const isTomorrowHoliday = holidayDates.includes(tomorrowIso);
+                // We need tomorrow to detect Eve start
+                const tomorrowLoc = getLocalized(timestamp + 86400000);
+                const isTomorrowHoliday = holidayDates.includes(tomorrowLoc.isoDate);
 
                 if (!isTodayHoliday && isTomorrowHoliday) {
                     // EVE: Today NOT holiday, Tomorrow IS. Starts at weStartMins.
