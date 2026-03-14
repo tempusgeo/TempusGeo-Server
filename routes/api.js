@@ -635,7 +635,9 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 chargeDay: config.chargeDay || 1,
                 chargeTime: config.chargeTime || '00:00',
 
-                supportEnabled: config.supportEnabled || false
+                supportEnabled: config.supportEnabled || false,
+                appName: config.appName || '',
+                appLogoUrl: config.appLogoUrl || ''
             }
         });
     } catch (e) {
@@ -1724,6 +1726,19 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
             logs: dataManager.maintenanceLogs.slice(0, 50) 
         });
 
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+router.get('/system/branding', async (req, res) => {
+    try {
+        const systemConfig = await dataManager.getSystemConfig();
+        res.json({
+            success: true,
+            appName: systemConfig.appName || 'TempusGeo',
+            appLogoUrl: systemConfig.appLogoUrl || null
+        });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
