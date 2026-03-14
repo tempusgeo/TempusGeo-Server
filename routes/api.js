@@ -47,12 +47,16 @@ router.post('/dispatch', async (req, res) => {
 
             const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month);
             const wageResult = WageCalculator.calculateBreakdown(empShifts, bizConfig.settings?.salary || {}, holidayDates);
+            const formatTime = d => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' });
             return {
                 totalHours: formatHHMM(wageResult.totalHours),
                 weightedHours: formatHHMM(wageResult.weightedTotal),
                 totalHoursRaw: wageResult.totalHours, // Raw decimal for live frontend updates
                 weightedHoursRaw: wageResult.weightedTotal, // Raw decimal for live frontend updates
-                wageBreakdown: wageResult.breakdown
+                wageBreakdown: wageResult.breakdown,
+                // Add start/end times for live summary too if needed
+                start: empShifts.length > 0 ? formatTime(new Date(empShifts[empShifts.length - 1].start)) : null,
+                end: "--:--"
             };
         };
 
@@ -80,7 +84,7 @@ router.post('/dispatch', async (req, res) => {
                     
                     const startDate = new Date(parseInt(lastShift.start));
                     const endDate = new Date(parseInt(lastShift.end));
-                    const formatTime = d => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false });
+                    const formatTime = d => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' });
 
                     return {
                         duration: calculateDuration(lastShift.start, lastShift.end),
