@@ -1088,8 +1088,33 @@ class DataManager {
         const shifts = await this.getShifts(companyId, year, month);
         if (!shifts[employeeName]) shifts[employeeName] = [];
 
-        let currentShift = null;
         if (action === "IN") {
+            // --- TIME CONSTRAINTS CHECK (minStart / maxStart) ---
+            if (companyConfig.settings?.constraints?.[employeeName]) {
+                const c = companyConfig.settings.constraints[employeeName];
+                const nowIL = new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' });
+                
+                // minStart check
+                if (c.minStart && nowIL < c.minStart) {
+                    return {
+                        success: false,
+                        type: "CONSTRAINT",
+                        error: "כניסה מוקדמת מדי",
+                        limit: `מותר רק החל מ-${c.minStart}`
+                    };
+                }
+                
+                // maxStart check
+                if (c.maxStart && nowIL > c.maxStart) {
+                    return {
+                        success: false,
+                        type: "CONSTRAINT",
+                        error: "כניסה מאוחרת מדי",
+                        limit: `ניתן להיכנס רק עד-${c.maxStart}`
+                    };
+                }
+            }
+
             currentShift = { start: timestamp, end: null, location };
             shifts[employeeName].push(currentShift);
         } else if (action === "OUT") {
