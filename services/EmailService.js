@@ -91,12 +91,24 @@ class EmailService {
         // PRIORITY 1: JetServer SMTP Proxy
         if (this.jetserverUrl && this.jetserverUrl.startsWith('http')) {
             try {
+                // Ensure we get dynamic name if not provided
+                let finalName = item.name;
+                if (!finalName) {
+                    try {
+                        const dataManager = require('./DataManager');
+                        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+                        finalName = systemConfig.appName || config.APP_NAME;
+                    } catch (e) {
+                         finalName = config.APP_NAME;
+                    }
+                }
+
                 const response = await axios.post(this.jetserverUrl, {
                     secret: this.jetserverSecret,
                     to: item.to,
                     subject: item.subject,
                     html: item.html,
-                    name: item.name || config.APP_NAME,
+                    name: finalName,
                     smtp_host: config.SMTP.HOST,
                     smtp_port: config.SMTP.PORT,
                     smtp_user: config.SMTP.USER,
@@ -117,12 +129,24 @@ class EmailService {
         // PRIORITY 2: GAS Fallback
         if (this.gasUrl) {
             try {
+                // Ensure we get dynamic name if not provided
+                let finalName = item.name;
+                if (!finalName) {
+                    try {
+                        const dataManager = require('./DataManager');
+                        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+                        finalName = systemConfig.appName || config.APP_NAME;
+                    } catch (e) {
+                         finalName = config.APP_NAME;
+                    }
+                }
+
                 const emailData = {
                     action: 'sendEmail',
                     to: item.to,
                     subject: item.subject,
                     html: item.html,
-                    name: item.name || config.APP_NAME
+                    name: finalName
                 };
 
                 const response = await axios.post(this.gasUrl, emailData, {
@@ -181,9 +205,9 @@ class EmailService {
                     <!-- Footer -->
                     <div style="background-color: rgba(15, 23, 42, 0.5); padding: 12px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.05);">
                         <p style="margin: 0; color: #64748b; font-size: 11px; font-weight: 500;">
-                            ${footerText || 'מערכת ' + config.APP_NAME + ' - הודעה אוטומטית'}
+                            ${footerText || 'מערכת ' + (systemConfig.appName || config.APP_NAME) + ' - הודעה אוטומטית'}
                             <br>
-                            <span style="display: inline-block; margin-top: 4px; opacity: 0.5;">&copy; ${new Date().getFullYear()} ${config.APP_NAME}</span>
+                            <span style="display: inline-block; margin-top: 4px; opacity: 0.5;">&copy; ${new Date().getFullYear()} ${systemConfig.appName || config.APP_NAME}</span>
                         </p>
                     </div>
                 </div>
@@ -209,7 +233,11 @@ class EmailService {
             </div>
         `;
 
-        return this.sendEmail(to, `איפוס סיסמה - ${config.APP_NAME}`, this.getStyledTemplate(title, content));
+        const dataManager = require('./DataManager');
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+        const appName = systemConfig.appName || config.APP_NAME;
+
+        return this.sendEmail(to, `איפוס סיסמה - ${appName}`, this.getStyledTemplate(title, content));
     }
 
     async sendMonthlyReport(to, reportData, year, month, businessName, salaryConfig = {}, companyId, logoUrl = null) {
@@ -402,6 +430,10 @@ class EmailService {
     async sendDeltaBillingAlert(to, businessName, delta, currentCount, amount, logoUrl = null) {
         const title = 'עדכון חיוב: גידול בכמות העובדים';
         const previousCount = currentCount - delta;
+        const dataManager = require('./DataManager');
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+        const appName = systemConfig.appName || config.APP_NAME;
+
         const content = `
             <p style="text-align: right; color: #ffffff; font-size: 15px; margin-bottom: 20px;">שלום <strong>${businessName}</strong>,</p>
             <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">המערכת זיהתה גידול בכמות העובדים הפעילים בעסק שלך במהלך מחזור החיוב הנוכחי.</p>
@@ -425,7 +457,7 @@ class EmailService {
             </div>
 
             <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 13px;">
-                בהתאם למודל המנוי הגמיש של <strong>${config.APP_NAME}</strong>, החיוב מתעדכן אוטומטית לפי כמות העובדים הפעילים. 
+                בהתאם למודל המנוי הגמיש של <strong>${appName}</strong>, החיוב מתעדכן אוטומטית לפי כמות העובדים הפעילים. 
                 <br><br>
                 <strong>שים לב:</strong> במידה וקיים אמצעי תשלום שמור, החיוב יבוצע אוטומטית. במידה ולא, אנא היכנס למערכת כדי להסדיר את ההפרש ולהבטיח פעילות רציפה.
             </p>
