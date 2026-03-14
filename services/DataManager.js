@@ -1209,54 +1209,55 @@ class DataManager {
                     timeout: 5000
                 });
                 if (response.data && response.data.success && Array.isArray(response.data.holidays)) {
-                    const holidays = response.data.holidays;
+                    const holidays = response.data.holidays; // Array of {name, category, date, ...}
                     const events = response.data.events || {}; // { 'YYYY-MM-DD': ['Holiday'] }
 
-                    // Map holidays to their date ranges
-                    return holidays.map(hName => {
-                        const name = typeof hName === 'string' ? hName : hName.name;
-
-                        // Current timestamp and threshold (60 days ago)
-                        const now = new Date();
-                        const threshold = new Date(now.getTime() - (60 * 24 * 60 * 60 * 1000));
-                        const thresholdStr = threshold.toISOString().split('T')[0];
-
-                        // 1. Find all dates for this holiday and filter for relevance (from 60 days ago onwards)
+                    return holidays.map(h => {
+                        const name = typeof h === 'string' ? h : h.name;
+                        // Use date from GAS if provided, otherwise find first in events
+                        let nearestDate = (h && typeof h === 'object' && h.date) ? h.date : null;
+                        
+                        // Find ALL dates for display range and fallback
                         const allDates = Object.keys(events).filter(d => events[d].includes(name)).sort();
-                        const relevantDates = allDates.filter(d => d >= thresholdStr);
+                        if (!nearestDate && allDates.length > 0) {
+                            const nowStr = new Date().toISOString().split('T')[0];
+                            nearestDate = allDates.find(d => d >= nowStr) || allDates[allDates.length - 1];
+                        }
 
-                        let displayDate = null;
-                        if (relevantDates.length > 0) {
-                            // 2. Identify the FIRST contiguous block (to avoid spanning multiple years)
-                            const firstBlock = [];
-                            firstBlock.push(relevantDates[0]);
-
-                            for (let i = 1; i < relevantDates.length; i++) {
-                                const prev = new Date(relevantDates[i - 1]);
-                                const curr = new Date(relevantDates[i]);
-                                const diffDays = (curr - prev) / (1000 * 60 * 60 * 24);
-
-                                if (diffDays <= 1) { // Same day or next day is part of the same holiday block
-                                    firstBlock.push(relevantDates[i]);
-                                } else {
-                                    // Gap found, we have our first occurrence block
-                                    break;
-                                }
-                            }
-
+                        // Formatting for display
+                        let displayDate = "";
+                        if (allDates.length > 0) {
                             const format = (dStr) => {
                                 const [y, m, d] = dStr.split('-');
                                 return `${d}/${m}/${y.slice(-2)}`;
                             };
-
-                            if (firstBlock.length === 1) {
-                                displayDate = format(firstBlock[0]);
-                            } else {
-                                displayDate = `${format(firstBlock[0])} - ${format(firstBlock[firstBlock.length - 1])}`;
+                            
+                            // Find current/relevant block for this holiday
+                            const now = new Date();
+                            const threshold = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+                            const thresholdStr = threshold.toISOString().split('T')[0];
+                            const relevantDates = allDates.filter(d => d >= thresholdStr);
+                            
+                            if (relevantDates.length > 0) {
+                                const block = [relevantDates[0]];
+                                for (let i = 1; i < relevantDates.length; i++) {
+                                    const prev = new Date(relevantDates[i-1]);
+                                    const curr = new Date(relevantDates[i]);
+                                    if ((curr - prev) / 86400000 <= 1) block.push(relevantDates[i]);
+                                    else break;
+                                }
+                                if (block.length === 1) displayDate = format(block[0]);
+                                else displayDate = `${format(block[0])} - ${format(block[block.length-1])}`;
                             }
                         }
 
-                        return { name, displayDate };
+                        return { 
+                            name, 
+                            date: nearestDate, 
+                            displayDate,
+                            category: h.category || "General",
+                            allDates // Useful for WageCalculator later
+                        };
                     });
                 }
             }
@@ -1274,16 +1275,20 @@ class DataManager {
         const bizConfig = await this.getCompanyConfig(companyId);
         const selectedNames = bizConfig.salary?.holidays?.eligible || bizConfig.salary?.selectedHolidays || [];
 
-        // Filter for specific month/year AND user selection
-        return allHolidays
-            .filter(h => {
-                if (!h.date || !h.name) return false;
-                const hDate = new Date(h.date);
-                return hDate.getFullYear() === year &&
-                    (hDate.getMonth() + 1) === month &&
-                    selectedNames.includes(h.name);
-            })
-            .map(h => h.date); // Returns array of "yyyy-MM-dd"
+        // Collect all dates from all relevant holidays that fall in this month/year
+        const holidayDates = [];
+        allHolidays.forEach(h => {
+            if (selectedNames.includes(h.name) && Array.isArray(h.allDates)) {
+                h.allDates.forEach(dStr => {
+                    const [y, m, d] = dStr.split('-').map(Number);
+                    if (y === year && m === month) {
+                        holidayDates.push(dStr);
+                    }
+                });
+            }
+        });
+
+        return [...new Set(holidayDates)].sort(); // Returns array of "yyyy-MM-dd"
     }
 
     // --- HISTORY META ---
