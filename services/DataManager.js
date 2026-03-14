@@ -128,8 +128,19 @@ class DataManager {
             }, 60 * 60 * 1000);
 
             // Trigger once on startup after 1 minute for immediate status check
-            setTimeout(() => {
-                this.logMaintenance('SYSTEM', 'Startup maintenance sequence starting...');
+            setTimeout(async () => {
+                this.logMaintenance('SYSTEM', 'Startup maintenance sequence successful.');
+
+                // Push system config to EmailService to ensure correct sender names
+                try {
+                    const systemConfig = await this.getSystemConfig();
+                    if (emailService && emailService.setSystemConfig) {
+                        emailService.setSystemConfig(systemConfig);
+                    }
+                } catch (err) {
+                    console.error('[DataManager] Failed to sync config to EmailService on startup:', err.message);
+                }
+
                 this.performAutoCheckout().catch(e => console.error(`[Startup Auto-Checkout] Failed:`, e.message));
                 this.checkSubscriptions().catch(e => console.error(`[Startup Sub-Check] Failed:`, e.message));
                 this.runGlobalArchiveCycle().catch(e => console.error(`[Startup Clean] Failed:`, e.message));
@@ -762,14 +773,18 @@ class DataManager {
         Object.keys(newConfig).forEach(key => {
             if (allowedKeys.includes(key)) {
                 updated[key] = newConfig[key];
-            } else {
-                console.log(`[DataManager] Ignoring legacy or unknown key while saving: ${key}`);
             }
         });
 
         console.log(`[DataManager] Final system configuration to save:`, JSON.stringify(updated));
 
         this._systemConfig = updated; // Update cache
+
+        // Sync with EmailService
+        if (emailService && emailService.setSystemConfig) {
+            emailService.setSystemConfig(updated);
+        }
+        
         const configFile = path.join(this.dataDir, 'system_config.json');
         await fs.mkdir(this.dataDir, { recursive: true });
         await fs.writeFile(configFile, JSON.stringify(updated, null, 2));
