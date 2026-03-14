@@ -71,7 +71,19 @@ class EmailService {
     }
 
     async sendEmail(to, subject, html, attachments = [], name = null) {
-        this.addToQueue(to, subject, html, attachments, name || config.APP_NAME);
+        let finalName = name;
+        let finalLogo = null;
+        
+        try {
+            const dataManager = require('./DataManager');
+            const systemConfig = await dataManager.getSystemConfig();
+            if (!finalName) finalName = systemConfig.appName || config.APP_NAME;
+            finalLogo = systemConfig.appLogoUrl;
+        } catch (e) {
+            if (!finalName) finalName = config.APP_NAME;
+        }
+
+        this.addToQueue(to, subject, html, attachments, finalName);
         return { success: true, message: 'Queued' };
     }
 
@@ -140,8 +152,12 @@ class EmailService {
 
     // Helper for consistent styling (Compact Version)
     getStyledTemplate(title, content, footerText = '', logoUrl = null, businessName = null) {
-        const logoHtml = logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height: 40px; margin-bottom: 8px; border-radius: 6px;">` : '';
-        const displayBusinessName = businessName || config.APP_NAME;
+        const dataManager = require('./DataManager');
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {}; 
+        
+        const finalLogo = logoUrl || systemConfig.appLogoUrl || null;
+        const logoHtml = finalLogo ? `<img src="${finalLogo}" alt="Logo" style="max-height: 40px; margin-bottom: 8px; border-radius: 6px;">` : '';
+        const displayBusinessName = businessName || systemConfig.appName || config.APP_NAME;
 
         return `
             <div dir="rtl" style="font-family: 'Rubik', 'Inter', 'Segoe UI', sans-serif; background-color: #0f172a; margin: 0; padding: 10px 5px; color: #ffffff;">
