@@ -1636,6 +1636,28 @@ class DataManager {
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
         const config = CACHE.companies[companyId].config;
 
+        const client = await this.getClientById(companyId);
+        if (!client) throw new Error("Client not found for deletion validation.");
+
+        // Determine the billing cycle start date (subscription renewal date)
+        const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
+        
+        // Load current and previous month shifts to check for activity since renewal
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1;
+        const currentShifts = await this.getShifts(companyId, currentYear, currentMonth);
+        
+        const userShifts = currentShifts[name] || [];
+        
+        // Check if there are any shifts on or after the subscriptionDate in the current month
+        for (const shift of userShifts) {
+            const shiftDate = shift.start ? new Date(shift.start) : new Date(shift.date); // Fallback to date if start missing
+            if (shiftDate >= subscriptionDate) {
+                throw new Error("לא ניתן למחוק את העובד משום שהחתים משמרת במחזור החיוב הנוכחי. תוכל למחוק אותו רק לאחר תאריך חידוש התוקף, בתנאי שלא יחתים משמרות נוספות.");
+            }
+        }
+
         // Remove from employees list
         if (config.employees) {
             config.employees = config.employees.filter(e => e !== name);
@@ -1653,28 +1675,8 @@ class DataManager {
 
         await this.updateCompanyConfig(companyId, config);
 
-        // Thoroughly remove from shifts to prevent getEmployees() from "resurrecting" the employee
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth() + 1;
-
-        const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const prevYear = prevDate.getFullYear();
-        const prevMonth = prevDate.getMonth() + 1;
-
-        const periods = [
-            { y: currentYear, m: currentMonth },
-            { y: prevYear, m: prevMonth }
-        ];
-
-        for (const p of periods) {
-            const shifts = await this.getShifts(companyId, p.y, p.m);
-            if (shifts[name]) {
-                delete shifts[name];
-                await this.saveShifts(companyId, p.y, p.m, shifts);
-            }
-        }
-
+        // DO NOT delete from shifts history (periods loop removed) to ensure accurate billing for past work.
+        
         return { success: true };
     }
 
