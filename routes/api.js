@@ -1678,8 +1678,8 @@ router.post('/payment/process', async (req, res) => {
 
 // Middleware for Maintenance Auth
 const maintenanceAuth = (req, res, next) => {
-    // Check both header and body for better compatibility
-    const token = req.headers['x-maintenance-token'] || (req.body && req.body.token);
+    // Check header, body, and query for compatibility (GET requests use query)
+    const token = req.headers['x-maintenance-token'] || (req.body && req.body.token) || req.query.token;
     const validToken = process.env.MAINTENANCE_TOKEN || config.JETSERVER_TOKEN || 'maintenance-secret-123';
     
     if (token !== validToken) {
@@ -1701,9 +1701,10 @@ router.post('/maintenance/auto-checkout', maintenanceAuth, async (req, res) => {
 
 router.post('/maintenance/subscription-check', maintenanceAuth, async (req, res) => {
     try {
-        dataManager.logMaintenance('BILLING', 'Admin triggered manual Subscription/Billing Check');
-        const results = await dataManager.checkSubscriptions();
-        res.json({ success: true, results, logs: dataManager.maintenanceLogs.BILLING });
+        dataManager.logMaintenance('BILLING', 'Admin triggered manual Subscription/Billing/Renewal Check');
+        dataManager.logMaintenance('RENEWAL', 'Admin triggered manual Subscription/Billing/Renewal Check');
+        const results = await dataManager.checkSubscriptions(true);
+        res.json({ success: true, results, logs: dataManager.maintenanceLogs.ALL });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -1735,6 +1736,7 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
             month = parseInt(req.body.month);
         }
 
+        dataManager.logMaintenance('REPORTS', `Admin triggered manual report generation for ${month}/${year}`);
         const results = await dataManager.runMonthlyReports(year, month);
         res.json({ 
             success: true, 
