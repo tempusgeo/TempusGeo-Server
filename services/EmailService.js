@@ -19,12 +19,18 @@ class EmailService {
     }
 
     setSystemConfig(systemConfig) {
+        if (!systemConfig) return;
+        
+        // Multi-tenant: EmailService should NOT store a single appName.
+        // It should use the systemConfig passed here for GLOBAL system emails (recovery etc),
+        // but for specific company emails, it should use the company ID to fetch config.
+        
         if (systemConfig.appName !== undefined) {
-            this.appName = systemConfig.appName || config.APP_NAME;
-            console.log(`[Email] App Name updated to: ${this.appName}`);
+            this.systemAppName = systemConfig.appName || config.APP_NAME;
+            console.log(`[Email] System App Name updated to: ${this.systemAppName}`);
         }
         if (systemConfig.appLogoUrl !== undefined) {
-            this.appLogoUrl = systemConfig.appLogoUrl || null;
+            this.systemAppLogoUrl = systemConfig.appLogoUrl || null;
         }
     }
 
@@ -75,9 +81,9 @@ class EmailService {
     async sendEmail(to, subject, html, attachments = [], name = null) {
         let finalName = name;
 
-        // If no specific name provided, use the global app name (or default)
-        if (!finalName || finalName === config.APP_NAME) {
-            finalName = this.appName || config.APP_NAME;
+        // If no specific name provided, use the system name as fallback
+        if (!finalName || finalName === config.APP_NAME || finalName === "TempusGeo") {
+            finalName = this.systemAppName || config.APP_NAME;
         }
 
         this.addToQueue(to, subject, html, attachments, finalName);
@@ -90,8 +96,8 @@ class EmailService {
             try {
                 // Ensure we get dynamic name if not provided or is default
                 let finalName = item.name;
-                if (!finalName || finalName === config.APP_NAME) {
-                    finalName = this.appName || config.APP_NAME;
+                if (!finalName || finalName === config.APP_NAME || finalName === "TempusGeo") {
+                    finalName = this.systemAppName || config.APP_NAME;
                 }
 
                 const response = await axios.post(this.jetserverUrl, {
@@ -122,8 +128,8 @@ class EmailService {
             try {
                 // Ensure we get dynamic name if not provided or is default
                 let finalName = item.name;
-                if (!finalName || finalName === config.APP_NAME) {
-                    finalName = this.appName || config.APP_NAME;
+                if (!finalName || finalName === config.APP_NAME || finalName === "TempusGeo") {
+                    finalName = this.systemAppName || config.APP_NAME;
                 }
 
                 const emailData = {
@@ -162,11 +168,11 @@ class EmailService {
     // Helper for consistent styling (Compact Version)
     getStyledTemplate(title, content, footerText = '', logoUrl = null, businessName = null) {
         const dataManager = require('./DataManager');
-        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : (this.systemAppName ? { appName: this.systemAppName, appLogoUrl: this.systemAppLogoUrl } : {});
 
-        const finalLogo = logoUrl || systemConfig.appLogoUrl || null;
+        const finalLogo = logoUrl || systemConfig.appLogoUrl || this.systemAppLogoUrl || null;
         const logoHtml = finalLogo ? `<img src="${finalLogo}" alt="Logo" style="max-height: 40px; margin-bottom: 8px; border-radius: 6px;">` : '';
-        const displayBusinessName = businessName || systemConfig.appName || config.APP_NAME;
+        const displayBusinessName = businessName || systemConfig.appName || this.systemAppName || config.APP_NAME;
 
         return `
             <div dir="rtl" style="font-family: 'Rubik', 'Inter', 'Segoe UI', sans-serif; background-color: #0f172a; margin: 0; padding: 10px 5px; color: #ffffff;">
