@@ -1691,9 +1691,9 @@ const maintenanceAuth = (req, res, next) => {
 
 router.post('/maintenance/auto-checkout', maintenanceAuth, async (req, res) => {
     try {
-        dataManager.logMaintenance('MANUAL', 'Admin triggered manual Auto-Checkout');
+        dataManager.logMaintenance('CHECKOUT', 'Admin triggered manual Auto-Checkout');
         const results = await dataManager.performAutoCheckout();
-        res.json({ success: true, results, logs: dataManager.maintenanceLogs.slice(0, 50) });
+        res.json({ success: true, results, logs: dataManager.maintenanceLogs.CHECKOUT });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -1701,16 +1701,20 @@ router.post('/maintenance/auto-checkout', maintenanceAuth, async (req, res) => {
 
 router.post('/maintenance/subscription-check', maintenanceAuth, async (req, res) => {
     try {
-        dataManager.logMaintenance('MANUAL', 'Admin triggered manual Subscription/Billing Check');
+        dataManager.logMaintenance('BILLING', 'Admin triggered manual Subscription/Billing Check');
         const results = await dataManager.checkSubscriptions();
-        res.json({ success: true, results, logs: dataManager.maintenanceLogs.slice(0, 50) });
+        res.json({ success: true, results, logs: dataManager.maintenanceLogs.BILLING });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
 });
 
 router.get('/maintenance/logs', maintenanceAuth, async (req, res) => {
-    res.json({ success: true, logs: dataManager.maintenanceLogs });
+    const category = req.query.category;
+    if (category && dataManager.maintenanceLogs[category]) {
+        return res.json({ success: true, logs: dataManager.maintenanceLogs[category] });
+    }
+    res.json({ success: true, logs: dataManager.maintenanceLogs.ALL || [] });
 });
 
 router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) => {
@@ -1735,7 +1739,7 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
         res.json({ 
             success: true, 
             ...results, 
-            logs: dataManager.maintenanceLogs.slice(0, 50) 
+            logs: dataManager.maintenanceLogs.REPORTS 
         });
 
     } catch (e) {
