@@ -24,7 +24,13 @@ class DataManager {
         this.dataDir = config.DATA_DIR;
         this.clientsFile = path.join(this.dataDir, 'clients.json');
         this.metadataFile = path.join(this.dataDir, 'metadata.json');
-        this.maintenanceLogs = []; // RAM storage for live admin logs
+        this.maintenanceLogs = {
+            CHECKOUT: [],
+            BILLING: [],
+            REPORTS: [],
+            SYSTEM: [],
+            ERROR: []
+        }; // RAM storage for live admin logs
         this.init();
     }
 
@@ -35,8 +41,20 @@ class DataManager {
             message,
             details
         };
-        this.maintenanceLogs.unshift(entry);
-        if (this.maintenanceLogs.length > 500) this.maintenanceLogs.pop(); // Keep last 500
+        
+        // Ensure category exists
+        if (!this.maintenanceLogs[category]) {
+            this.maintenanceLogs[category] = [];
+        }
+        
+        this.maintenanceLogs[category].unshift(entry);
+        if (this.maintenanceLogs[category].length > 100) this.maintenanceLogs[category].pop(); // Keep last 100 as per user request
+        
+        // Also keep a global "all" log for compatibility/backup if needed, but let's stick to categories
+        // To keep the existing behavior of 'logs' endpoint without breaking, we can have a 'GENERAL' or just return them all combined
+        if (!this.maintenanceLogs.ALL) this.maintenanceLogs.ALL = [];
+        this.maintenanceLogs.ALL.unshift(entry);
+        if (this.maintenanceLogs.ALL.length > 500) this.maintenanceLogs.ALL.pop();
 
         // Log to console as well
         console.log(`[Maintenance][${category}] ${message}`, details ? details : '');
@@ -104,10 +122,20 @@ class DataManager {
                 console.error(`[Metadata-Sync] Global sync failed:`, err.message);
             });
 
-            // 5. Start Automatic Maintenance Tasks (Check every 30 seconds for checkout, 5 mins for others)
-            setInterval(() => {
-                this.performAutoCheckout().catch(e => console.error(`[Auto-Checkout] Failed:`, e.message));
-            }, 30 * 1000);
+            // 5. Start Automatic Maintenance Tasks
+            setInterval(async () => {
+                const sysConfig = await this.getSystemConfig();
+                const freq = parseInt(sysConfig.shiftCheckFrequency) || 0.5; // default 0.5 min = 30s
+                
+                // If freq is 0, disable auto-check
+                if (freq <= 0) return;
+
+                const now = Date.now();
+                if (!this._lastAutoCheckout || (now - this._lastAutoCheckout) >= (freq * 60 * 1000)) {
+                    this._lastAutoCheckout = now;
+                    this.performAutoCheckout().catch(e => console.error(`[Auto-Checkout] Failed:`, e.message));
+                }
+            }, 30 * 1000); // Check every 30s if it's time to run
 
             // 6. Start Daily Cleanup & Archive Trigger (Every 24 hours)
             setInterval(() => {
@@ -120,10 +148,19 @@ class DataManager {
             }, 60 * 60 * 1000);
 
             // 8. Monthly Reports Scheduler (Check every hour)
-            setInterval(() => {
+            setInterval(async () => {
                 const now = new Date();
-                if (now.getDate() === 1 && now.getHours() === 9) {
-                    this.runMonthlyReports().catch(e => console.error(`[Monthly-Reports] Scheduler Failed:`, e.message));
+                const sysConfig = await this.getSystemConfig();
+                const targetDay = parseInt(sysConfig.monthlyReportDay) || 1;
+                const [targetH, targetM] = (sysConfig.monthlyReportHour || "09:00").split(':').map(Number);
+
+                if (now.getDate() === targetDay && now.getHours() === targetH) {
+                    // Prevent double run in same hour
+                    const runKey = `reports-${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}`;
+                    if (this._lastReportRun !== runKey) {
+                        this._lastReportRun = runKey;
+                        this.runMonthlyReports().catch(e => console.error(`[Monthly-Reports] Scheduler Failed:`, e.message));
+                    }
                 }
             }, 60 * 60 * 1000);
 
@@ -740,7 +777,9 @@ class DataManager {
             const allowedKeys = [
                 'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
                 'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-                'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl'
+                'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
+                'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
+                'autoBillingEnabled', 'autoRenewalEnabled'
             ];
             const cleaned = {};
             allowedKeys.forEach(k => { if (parsed[k] !== undefined) cleaned[k] = parsed[k]; });
@@ -759,7 +798,9 @@ class DataManager {
         const allowedKeys = [
             'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
             'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-            'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl'
+            'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
+            'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
+            'autoBillingEnabled', 'autoRenewalEnabled'
         ];
 
         // 1. Filter existing config to keep only allowed keys (Cleaning Trash)
@@ -2537,7 +2578,8 @@ class DataManager {
 
                 // --- BILLING & RENEWAL LOGIC ---
                 // 1. Regular Billing (Always attempt on charge day if payment method exists)
-                if (isChargeTime && client.paymentMethod?.token) {
+                const autoBillingEnabled = sysConfig.autoBillingEnabled !== false; // Default true if not set
+                if (isChargeTime && client.paymentMethod?.token && autoBillingEnabled) {
                     this.logMaintenance('BILLING', `Charging ${client.businessName} for the previous month cycle.`);
 
                     const activeCount = await this.countUniqueActiveEmployees(client.id);
@@ -2592,8 +2634,9 @@ class DataManager {
                             });
                         }
 
-                        // 2. Auto-Renewal (Only if autoChargeEnabled is ON)
-                        if (client.autoChargeEnabled) {
+                        // 2. Auto-Renewal (Only if autoChargeEnabled is ON AND Global renewal is ON)
+                        const autoRenewalEnabled = sysConfig.autoRenewalEnabled !== false;
+                        if (client.autoChargeEnabled && autoRenewalEnabled) {
                             const nextExpiry = new Date();
                             nextExpiry.setMonth(nextExpiry.getMonth() + 1);
                             nextExpiry.setDate(chargeDay);
@@ -2640,11 +2683,12 @@ class DataManager {
                 // 2. Notifications for expiring soon
                 // Only alert if: 
                 // - Auto-charge is OFF 
-                // - Expiry is within next 24 hours (but not yet expired)
+                // - Expiry is within X hours (default 24)
                 // - We haven't sent an alert for THIS specific expiry date yet
+                const noticeHours = (parseInt(sysConfig.subscriptionExpiryNotice) || 1) * 24; // Convert days to hours
                 const hoursLeft = (expiry - now) / (1000 * 60 * 60);
                 const shouldAlert = !client.autoChargeEnabled && 
-                                   hoursLeft > 0 && hoursLeft <= 24 && 
+                                   hoursLeft > 0 && hoursLeft <= noticeHours && 
                                    client.lastExpiryAlertDate !== client.subscriptionExpiry;
 
                 if (shouldAlert) {
