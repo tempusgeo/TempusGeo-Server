@@ -64,7 +64,7 @@ router.post('/dispatch', async (req, res) => {
             return `${h}:${m.toString().padStart(2, '0')}`;
         };
 
-        const getRecentShiftSummary = async (cid, name, forceThreshold = 300000) => {
+        const getRecentShiftSummary = async (cid, name, forceThreshold = 86400000) => { // Updated to 24h
             const now = new Date();
             const year = now.getFullYear();
             const month = now.getMonth() + 1;
@@ -77,10 +77,19 @@ router.post('/dispatch', async (req, res) => {
                     const bizConfig = await dataManager.getCompanyConfig(cid);
                     const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month);
                     const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates);
+                    
+                    const startDate = new Date(parseInt(lastShift.start));
+                    const endDate = new Date(parseInt(lastShift.end));
+                    const formatTime = d => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false });
+
                     return {
                         duration: calculateDuration(lastShift.start, lastShift.end),
                         weightedHours: formatHHMM(shiftWage.weightedTotal),
-                        wageBreakdown: shiftWage.breakdown
+                        wageBreakdown: shiftWage.breakdown,
+                        start: formatTime(startDate),
+                        end: formatTime(endDate),
+                        startRaw: lastShift.start,
+                        endRaw: lastShift.end
                     };
                 }
             }
