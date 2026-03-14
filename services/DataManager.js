@@ -12,7 +12,8 @@ const tranzilaService = require('./TranzilaService');
 const CACHE = {
     clients: [], // Array of client objects
     companies: {},
-    historicalData: {} // Cache for cold data from GAS: { companyId: { 'year-month': data } }
+    historicalData: {}, // Cache for cold data from GAS: { companyId: { 'year-month': data } }
+    systemConfig: null
 };
 
 // HOT STORAGE CONFIG
@@ -708,22 +709,32 @@ class DataManager {
 
     // --- SYSTEM CONFIG (Global) ---
     async getSystemConfig() {
+        return this.getSystemConfigSync();
+    }
+
+    getSystemConfigSync() {
         const configFile = path.join(this.dataDir, 'system_config.json');
         try {
-            const data = await fs.readFile(configFile, 'utf8');
+            // Using require or synchronous read is tricky in async environment,
+            // but for system config it's small. Let's use a cached version.
+            if (this._systemConfig) return this._systemConfig;
+            
+            const fsSync = require('fs');
+            if (!fsSync.existsSync(configFile)) return {};
+            const data = fsSync.readFileSync(configFile, 'utf8');
             const parsed = JSON.parse(data);
 
-            // Clean on load to ensure stale data is purged
             const allowedKeys = [
                 'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
                 'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-                'maxShiftHours', 'supportEnabled'
+                'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl'
             ];
             const cleaned = {};
             allowedKeys.forEach(k => { if (parsed[k] !== undefined) cleaned[k] = parsed[k]; });
+            this._systemConfig = cleaned;
             return cleaned;
         } catch (e) {
-            return {}; // Default empty config
+            return {};
         }
     }
 
@@ -735,7 +746,7 @@ class DataManager {
         const allowedKeys = [
             'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
             'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-            'maxShiftHours', 'supportEnabled'
+            'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl'
         ];
 
         // 1. Filter existing config to keep only allowed keys (Cleaning Trash)
@@ -756,6 +767,7 @@ class DataManager {
 
         console.log(`[DataManager] Final system configuration to save:`, JSON.stringify(updated));
 
+        this._systemConfig = updated; // Update cache
         const configFile = path.join(this.dataDir, 'system_config.json');
         await fs.mkdir(this.dataDir, { recursive: true });
         await fs.writeFile(configFile, JSON.stringify(updated, null, 2));
