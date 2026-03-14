@@ -19,12 +19,12 @@ class EmailService {
     }
 
     setSystemConfig(systemConfig) {
-        if (systemConfig.appName) {
-            this.appName = systemConfig.appName;
+        if (systemConfig.appName !== undefined) {
+            this.appName = systemConfig.appName || config.APP_NAME;
             console.log(`[Email] App Name updated to: ${this.appName}`);
         }
-        if (systemConfig.appLogoUrl) {
-            this.appLogoUrl = systemConfig.appLogoUrl;
+        if (systemConfig.appLogoUrl !== undefined) {
+            this.appLogoUrl = systemConfig.appLogoUrl || null;
         }
     }
 
