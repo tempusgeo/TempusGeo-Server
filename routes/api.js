@@ -201,16 +201,15 @@ router.post('/dispatch', async (req, res) => {
 
                 const status = await dataManager.getEmployeeStatus(companyId, rest.name);
 
-                // Enriched summaries
-                const monthlySummary = await getMonthlySummary(companyId, rest.name);
-                const lastShiftSummary = type === 'OUT' ? await getRecentShiftSummary(companyId, rest.name, 60000) : null;
+                // Run summaries asynchronously so the user doesn't wait
+                getMonthlySummary(companyId, rest.name).catch(() => {});
+                if (type === 'OUT') getRecentShiftSummary(companyId, rest.name, 60000).catch(() => {});
 
+                // Calculate a basic fast summary for immediate UI feedback instead of the complex one
                 return res.json({
                     success: true,
                     ...status,
-                    message: type === 'IN' ? 'נכנסת בהצלחה' : 'יצאת בהצלחה',
-                    monthlySummary,
-                    lastShiftSummary
+                    message: type === 'IN' ? 'נכנסת בהצלחה' : 'יצאת בהצלחה'
                 });
             }
 
