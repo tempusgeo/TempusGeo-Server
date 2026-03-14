@@ -266,6 +266,7 @@ class EmailService {
                             <td style="padding: 10px 5px; font-weight: 700; color: #ffffff; font-size: 13px;">${employee}</td>
                             <td style="padding: 10px 5px; text-align: center; color: #94a3b8; font-size: 13px;">${shifts.length}</td>
                             <td style="padding: 10px 5px; text-align: center; color: #10b981; font-weight: 800; font-size: 13px;">${wageResult.totalHours}</td>
+                            <td style="padding: 10px 5px; text-align: center; color: #a855f7; font-weight: 800; font-size: 13px;">${wageResult.weightedTotal}</td>
                             <td style="padding: 10px 5px; text-align: right; direction: rtl;">${breakdownHtml}</td>
                         </tr>
                     `;
@@ -278,6 +279,7 @@ class EmailService {
                             <td style="padding: 10px 5px; color: #ffffff; font-size: 13px;">${employee}</td>
                             <td style="padding: 10px 5px; text-align: center; color: #94a3b8; font-size: 13px;">${shifts.length}</td>
                             <td style="padding: 10px 5px; text-align: center; color: #ffffff; font-size: 13px;">${totalHours.toFixed(2)}</td>
+                            <td style="padding: 10px 5px; text-align: center; color: #ffffff; font-size: 13px;">-</td>
                             <td style="padding: 10px 5px; text-align: right; color: #f43f5e; font-size: 11px;">שגיאה</td>
                         </tr>
                     `;
@@ -285,7 +287,7 @@ class EmailService {
             }
         } catch (globalErr) {
             console.error(`[EmailService] Monthly report table generation failed:`, globalErr.message);
-            tableRows = '<tr><td colspan="4" style="color:#f43f5e; text-align:center; padding: 15px;">שגיאה ביצירת הטבלה</td></tr>';
+            tableRows = '<tr><td colspan="5" style="color:#f43f5e; text-align:center; padding: 15px;">שגיאה ביצירת הטבלה</td></tr>';
         }
 
         const content = `
@@ -296,11 +298,12 @@ class EmailService {
                             <th style="padding: 12px 5px; text-align: right; font-weight: 700;">עובד</th>
                             <th style="padding: 12px 5px; text-align: center; font-weight: 700;">משמ'</th>
                             <th style="padding: 12px 5px; text-align: center; font-weight: 700;">סה"כ</th>
+                            <th style="padding: 12px 5px; text-align: center; font-weight: 700;">שכר</th>
                             <th style="padding: 12px 5px; text-align: right; font-weight: 700;">פירוט</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${tableRows || '<tr><td colspan="4" style="padding:20px; text-align:center; color: #64748b;">אין נתונים</td></tr>'}
+                        ${tableRows || '<tr><td colspan="5" style="padding:20px; text-align:center; color: #64748b;">אין נתונים</td></tr>'}
                     </tbody>
                 </table>
             </div>
