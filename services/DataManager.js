@@ -1087,7 +1087,7 @@ class DataManager {
 
         const shifts = await this.getShifts(companyId, year, month);
         if (!shifts[employeeName]) shifts[employeeName] = [];
-
+        let currentShift = null;
         if (action === "IN") {
             // --- TIME CONSTRAINTS CHECK (minStart / maxStart) ---
             if (companyConfig.settings?.constraints?.[employeeName]) {
