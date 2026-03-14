@@ -12,18 +12,20 @@ class EmailService {
         this.jetserverUrl = config.JETSERVER_MAIL_URL;
         this.jetserverSecret = config.JETSERVER_MAIL_SECRET;
 
-        // Try to identify if we are configured to use Jetserver
-        if (this.jetserverUrl && this.jetserverUrl.startsWith('http')) {
-            console.log(`[Email] Primary Provider Configured: JetServer SMTP Proxy`);
-        } else {
-            console.log(`[Email] JetServer Proxy not configured. Using GAS Relay as primary engine.`);
-        }
-
-        if (!this.gasUrl && !this.transporter) {
-            console.error('[Email] ⚠️  No email provider (SMTP or GAS) configured! Emails will fail.');
-        }
+        this.appName = config.APP_NAME;
+        this.appLogoUrl = null;
 
         this.startWorker();
+    }
+
+    setSystemConfig(systemConfig) {
+        if (systemConfig.appName) {
+            this.appName = systemConfig.appName;
+            console.log(`[Email] App Name updated to: ${this.appName}`);
+        }
+        if (systemConfig.appLogoUrl) {
+            this.appLogoUrl = systemConfig.appLogoUrl;
+        }
     }
 
     startWorker() {
@@ -72,15 +74,10 @@ class EmailService {
 
     async sendEmail(to, subject, html, attachments = [], name = null) {
         let finalName = name;
-        let finalLogo = null;
-        
-        try {
-            const dataManager = require('./DataManager');
-            const systemConfig = await dataManager.getSystemConfig();
-            if (!finalName) finalName = systemConfig.appName || config.APP_NAME;
-            finalLogo = systemConfig.appLogoUrl;
-        } catch (e) {
-            if (!finalName) finalName = config.APP_NAME;
+
+        // If no specific name provided, use the global app name (or default)
+        if (!finalName || finalName === config.APP_NAME) {
+            finalName = this.appName || config.APP_NAME;
         }
 
         this.addToQueue(to, subject, html, attachments, finalName);
@@ -91,16 +88,10 @@ class EmailService {
         // PRIORITY 1: JetServer SMTP Proxy
         if (this.jetserverUrl && this.jetserverUrl.startsWith('http')) {
             try {
-                // Ensure we get dynamic name if not provided
+                // Ensure we get dynamic name if not provided or is default
                 let finalName = item.name;
-                if (!finalName) {
-                    try {
-                        const dataManager = require('./DataManager');
-                        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
-                        finalName = systemConfig.appName || config.APP_NAME;
-                    } catch (e) {
-                         finalName = config.APP_NAME;
-                    }
+                if (!finalName || finalName === config.APP_NAME) {
+                    finalName = this.appName || config.APP_NAME;
                 }
 
                 const response = await axios.post(this.jetserverUrl, {
@@ -129,16 +120,10 @@ class EmailService {
         // PRIORITY 2: GAS Fallback
         if (this.gasUrl) {
             try {
-                // Ensure we get dynamic name if not provided
+                // Ensure we get dynamic name if not provided or is default
                 let finalName = item.name;
-                if (!finalName) {
-                    try {
-                        const dataManager = require('./DataManager');
-                        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
-                        finalName = systemConfig.appName || config.APP_NAME;
-                    } catch (e) {
-                         finalName = config.APP_NAME;
-                    }
+                if (!finalName || finalName === config.APP_NAME) {
+                    finalName = this.appName || config.APP_NAME;
                 }
 
                 const emailData = {
@@ -177,8 +162,8 @@ class EmailService {
     // Helper for consistent styling (Compact Version)
     getStyledTemplate(title, content, footerText = '', logoUrl = null, businessName = null) {
         const dataManager = require('./DataManager');
-        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {}; 
-        
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+
         const finalLogo = logoUrl || systemConfig.appLogoUrl || null;
         const logoHtml = finalLogo ? `<img src="${finalLogo}" alt="Logo" style="max-height: 40px; margin-bottom: 8px; border-radius: 6px;">` : '';
         const displayBusinessName = businessName || systemConfig.appName || config.APP_NAME;
