@@ -34,7 +34,7 @@ class WageCalculator {
                 minutes: parseInt(p.minute),
                 dayOfWeek: date.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' }), // Sun, Mon...
                 dayOfWeekNum: [ 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat' ].indexOf(date.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' })),
-                isoDate: `${p.year}-${p.month}-${p.day}`
+                isoDate: `${p.year}-${p.month.padStart(2, '0')}-${p.day.padStart(2, '0')}`
             };
         };
 
