@@ -2107,13 +2107,39 @@ class DataManager {
         CACHE.clients.push(client);
         await this.saveClients();
 
+        // Prepare detailed default holidays
+        const defaultHolidaysDetails = [];
+        const eligibleDefaults = config.MAJOR_HOLIDAYS || [];
+
+        // Attempt a one-time cold fetch to GAS to populate initial dates, don't wait if it fails
+        try {
+            const gasUrl = config.GAS_COLD_STORAGE_URL;
+            if (gasUrl) {
+                const response = await axios.get(`${gasUrl}?action=getHolidays&companyId=new&password=`, { timeout: 10000 }).catch(() => null);
+                if (response?.data?.success && response.data.events) {
+                    const events = response.data.events;
+                    eligibleDefaults.forEach(hName => {
+                       const translated = config.HOLIDAY_MAPPING?.[hName] || hName;
+                       const allDates = Object.keys(events).filter(d => events[d].includes(hName) || events[d].includes(translated)).sort();
+                       let hDate = null;
+                       if (allDates.length > 0) {
+                           const nowStr = new Date().toISOString().split('T')[0];
+                           hDate = allDates.find(d => d >= nowStr) || allDates[allDates.length - 1];
+                       }
+                       defaultHolidaysDetails.push({ name: hName, date: hDate, allDates });
+                    });
+                }
+            }
+        } catch(e) { console.error("[DataManager] Initial holiday fetch failed:", e.message); }
+
         const companyConfig = {
             companyId: newId,
             businessName: data.businessName,
             settings: {
                 salary: {
                     holidays: {
-                        eligible: config.MAJOR_HOLIDAYS || []
+                        eligible: eligibleDefaults,
+                        details: defaultHolidaysDetails.length > 0 ? defaultHolidaysDetails : eligibleDefaults.map(h => ({ name: h, date: null, allDates: [] }))
                     }
                 }
             },
