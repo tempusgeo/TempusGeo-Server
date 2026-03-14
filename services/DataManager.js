@@ -254,7 +254,9 @@ class DataManager {
         CACHE.companies[companyId] = {
             config: configData,
             shifts: {}, // Will load shifts on demand per month
-            metadata: configData.historyMetadata || { years: {} }
+            metadata: configData.historyMetadata || { years: {} },
+            holidays: null,
+            holidaysLastFetch: 0
         };
 
         // Background Refresh
@@ -1202,89 +1204,39 @@ class DataManager {
 
     async getAvailableHolidays(companyId) {
         try {
-            const configObj = await this.getCompanyConfig(companyId);
-            const gasUrl = configObj?.gasUrl || config.GAS_COLD_STORAGE_URL;
-            if (gasUrl) {
-                const response = await axios.get(`${gasUrl}?action=getHolidays&companyId=${companyId}&password=${configObj?.password || ''}`, {
-                    timeout: 5000
-                });
-                if (response.data && response.data.success && Array.isArray(response.data.holidays)) {
-                    const holidays = response.data.holidays; // Array of {name, category, date, ...}
-                    const events = response.data.events || {}; // { 'YYYY-MM-DD': ['Holiday'] }
-
-                    return holidays.map(h => {
-                        const name = typeof h === 'string' ? h : h.name;
-                        // Use date from GAS if provided, otherwise find first in events
-                        let nearestDate = (h && typeof h === 'object' && h.date) ? h.date : null;
-                        
-                        // Find ALL dates for display range and fallback
-                        const allDates = Object.keys(events).filter(d => events[d].includes(name)).sort();
-                        if (!nearestDate && allDates.length > 0) {
-                            const nowStr = new Date().toISOString().split('T')[0];
-                            nearestDate = allDates.find(d => d >= nowStr) || allDates[allDates.length - 1];
-                        }
-
-                        // Formatting for display
-                        let displayDate = "";
-                        if (allDates.length > 0) {
-                            const format = (dStr) => {
-                                const [y, m, d] = dStr.split('-');
-                                return `${d}/${m}/${y.slice(-2)}`;
-                            };
-                            
-                            // Find current/relevant block for this holiday
-                            const now = new Date();
-                            const threshold = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
-                            const thresholdStr = threshold.toISOString().split('T')[0];
-                            const relevantDates = allDates.filter(d => d >= thresholdStr);
-                            
-                            if (relevantDates.length > 0) {
-                                const block = [relevantDates[0]];
-                                for (let i = 1; i < relevantDates.length; i++) {
-                                    const prev = new Date(relevantDates[i-1]);
-                                    const curr = new Date(relevantDates[i]);
-                                    if ((curr - prev) / 86400000 <= 1) block.push(relevantDates[i]);
-                                    else break;
-                                }
-                                if (block.length === 1) displayDate = format(block[0]);
-                                else displayDate = `${format(block[0])} - ${format(block[block.length-1])}`;
-                            }
-                        }
-
-                        return { 
-                            name, 
-                            date: nearestDate, 
-                            displayDate,
-                            category: h.category || "General",
-                            allDates // Useful for WageCalculator later
-                        };
-                    });
-                }
-            }
+            const bizConfig = await this.getCompanyConfig(companyId);
+            const details = bizConfig.settings?.salary?.holidays?.details || [];
+            return details;
         } catch (e) {
-            console.error(`[Holidays] Failed to fetch from GAS for ${companyId}:`, e.message);
+            console.error(`[DataManager] getAvailableHolidays error:`, e.message);
+            return [];
         }
-        const defaults = Array.isArray(config.MAJOR_HOLIDAYS) ? config.MAJOR_HOLIDAYS : [];
-        return defaults.map(h => ({ name: String(h), date: null }));
+    }
+
+    async refreshHolidays(companyId) {
+        // Disabled: relying on local config instead of GAS lookup
+        return [];
     }
 
     async getHolidayDatesForMonth(companyId, year, month) {
-        const allHolidays = await this.getAvailableHolidays(companyId);
-        if (!Array.isArray(allHolidays)) return [];
-
-        const bizConfig = await this.getCompanyConfig(companyId);
-        const selectedNames = bizConfig.salary?.holidays?.eligible || bizConfig.salary?.selectedHolidays || [];
+        const details = await this.getAvailableHolidays(companyId);
+        if (!Array.isArray(details)) return [];
 
         // Collect all dates from all relevant holidays that fall in this month/year
         const holidayDates = [];
-        allHolidays.forEach(h => {
-            if (selectedNames.includes(h.name) && Array.isArray(h.allDates)) {
+        details.forEach(h => {
+            if (Array.isArray(h.allDates)) {
                 h.allDates.forEach(dStr => {
                     const [y, m, d] = dStr.split('-').map(Number);
                     if (y === year && m === month) {
                         holidayDates.push(dStr);
                     }
                 });
+            } else if (h.date) {
+                const [y, m, d] = h.date.split('-').map(Number);
+                if (y === year && m === month) {
+                    holidayDates.push(h.date);
+                }
             }
         });
 
@@ -2155,16 +2107,22 @@ class DataManager {
         CACHE.clients.push(client);
         await this.saveClients();
 
-        const config = {
+        const companyConfig = {
             companyId: newId,
             businessName: data.businessName,
-            settings: {},
+            settings: {
+                salary: {
+                    holidays: {
+                        eligible: config.MAJOR_HOLIDAYS || []
+                    }
+                }
+            },
             polygon: data.polygon || [],
             adminEmail: data.email,
             logoUrl: data.logoUrl || null
         };
 
-        await this.updateCompanyConfig(newId, config);
+        await this.updateCompanyConfig(newId, companyConfig);
 
         return client;
     }
