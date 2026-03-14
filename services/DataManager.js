@@ -27,6 +27,7 @@ class DataManager {
         this.maintenanceLogs = {
             CHECKOUT: [],
             BILLING: [],
+            RENEWAL: [], // Category for subscription extensions/renewals
             REPORTS: [],
             SYSTEM: [],
             ERROR: []
@@ -2643,6 +2644,7 @@ class DataManager {
                             nextExpiry.setHours(chargeHour, chargeMin, 0, 0);
                             
                             client.subscriptionExpiry = nextExpiry.toISOString();
+                            this.logMaintenance('RENEWAL', `✅ Automated renewal for ${client.businessName}. New expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
                             
                             // User Request: Set subscriptionDate to the last day of the PREVIOUS month
                             // If today is March 5, last day of prev month is Feb 28.
