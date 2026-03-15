@@ -200,9 +200,9 @@ class EmailService {
                     </div>
 
                     <!-- Content -->
-                    <div style="padding: 15px; text-align: right;">
+                    <div style="padding: 15px; text-align: right; direction: rtl;">
                         <h2 style="color: #ffffff; margin-top: 0; margin-bottom: 15px; font-size: 18px; font-weight: 700; text-align: center;">${title}</h2>
-                        <div style="background: rgba(0, 0, 0, 0.15); border-radius: 10px; padding: 15px; border: 1px solid rgba(255, 255, 255, 0.05);">
+                        <div style="background: rgba(0, 0, 0, 0.15); border-radius: 10px; padding: 15px; border: 1px solid rgba(255, 255, 255, 0.05); direction: rtl; text-align: right;">
                             ${content}
                         </div>
                     </div>
@@ -306,15 +306,15 @@ class EmailService {
         }
 
         const content = `
-            <div class="table-wrapper" style="background: rgba(0, 0, 0, 0.1); border-radius: 10px; overflow: hidden;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+            <div class="table-wrapper" style="background: rgba(0, 0, 0, 0.1); border-radius: 10px; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 11px; direction: rtl; min-width: 480px;">
                     <thead>
                         <tr style="background-color: rgba(255, 255, 255, 0.03); color: #94a3b8;">
-                            <th style="padding: 12px 5px; text-align: right; font-weight: 700;">עובד</th>
-                            <th style="padding: 12px 5px; text-align: center; font-weight: 700;">משמ'</th>
-                            <th style="padding: 12px 5px; text-align: center; font-weight: 700;">סה"כ</th>
-                            <th style="padding: 12px 5px; text-align: center; font-weight: 700;">שכר</th>
-                            <th style="padding: 12px 5px; text-align: right; font-weight: 700;">פירוט</th>
+                            <th style="padding: 12px 6px; text-align: right; font-weight: 700;">עובד</th>
+                            <th style="padding: 12px 6px; text-align: center; font-weight: 700;">משמרות</th>
+                            <th style="padding: 12px 6px; text-align: center; font-weight: 700;">סה"כ</th>
+                            <th style="padding: 12px 6px; text-align: center; font-weight: 700;">שכר</th>
+                            <th style="padding: 12px 6px; text-align: right; font-weight: 700;">פירוט</th>
                         </tr>
                     </thead>
                     <tbody>
