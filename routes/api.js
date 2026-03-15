@@ -7,6 +7,7 @@ const emailService = require('../services/EmailService');
 const WageCalculator = require('../services/WageCalculator');
 const config = require('../config');
 const axios = require('axios');
+const archiver = require('archiver');
 
 // ================================================================
 // UNIVERSAL ACTION DISPATCHER
@@ -407,11 +408,6 @@ router.post('/dispatch', async (req, res) => {
                 });
 
                 return res.json({ success: true });
-            }
-
-            case 'adminExportFullHistory': {
-                // Redirect to GAS cold storage for full export (Render only holds recent data)
-                return res.json({ success: false, error: 'Use GAS export endpoint directly', redirectToGAS: true });
             }
 
             case 'getUserFullHistory': {
@@ -1759,6 +1755,108 @@ router.get('/system/branding', async (req, res) => {
         });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// --- NEW: Direct ZIP Download for Full History ---
+router.get('/download/full-history/:companyId/:password', async (req, res) => {
+    const { companyId, password } = req.params;
+
+    try {
+        // 1. Validation
+        const bizConfig = await dataManager.getCompanyConfig(companyId);
+        if (!bizConfig) return res.status(404).send('Business not found');
+        if (bizConfig.password !== password) return res.status(401).send('Unauthorized');
+
+        // 2. Fetch Data
+        const fullData = await dataManager.getFullHistoryForExport(companyId);
+
+        // 3. Setup ZIP
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        res.attachment(`Full_History_${bizConfig.businessName || companyId}_${new Date().toISOString().slice(0, 10)}.zip`);
+        archive.on('error', (err) => { throw err; });
+        archive.pipe(res);
+
+        // helper for hebrew names and dates
+        const hebrewMonths = ['', 'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+        const hebrewDays = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
+        // 4. Generate Files for each employee
+        for (const [employeeName, shifts] of Object.entries(fullData)) {
+            // Group by month for this employee
+            const months = {};
+            shifts.sort((a, b) => (parseInt(b.start) || 0) - (parseInt(a.start) || 0)).forEach(s => {
+                const d = new Date(parseInt(s.start) || s.start);
+                if (isNaN(d.getTime())) return;
+                const key = `${(d.getMonth() + 1).toString().padStart(2, '0')}.${d.getFullYear()}`;
+                if (!months[key]) months[key] = [];
+                months[key].push(s);
+            });
+
+            // Build XLS HTML
+            let xml = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        table { border-collapse: collapse; width: 100%; direction: rtl; }
+        th, td { border: 1px solid #000; padding: 5px; text-align: center; font-family: Arial, sans-serif; }
+        .header { background-color: #dbeafe; font-weight: bold; }
+        .title { font-size: 18px; font-weight: bold; background-color: #f3f4f6; text-align: center; }
+        .meta { background-color: #ffffff; text-align: right; font-weight: bold; }
+    </style>
+</head>
+<body>`;
+
+            for (const [monthKey, monthShifts] of Object.entries(months)) {
+                xml += `
+<table>
+    <tr><td colspan="7" class="title">דוח שעות - ${monthKey} - ${bizConfig.businessName}</td></tr>
+    <tr><td colspan="7" class="meta">שם העובד: ${employeeName} <br> תאריך הפקה: ${new Date().toLocaleDateString('he-IL')}</td></tr>
+    <tr class="header">
+        <th>תאריך</th><th>יום</th><th>חודש</th><th>שנה</th><th>כניסה</th><th>יציאה</th><th>משך</th>
+    </tr>`;
+
+                monthShifts.forEach(s => {
+                    const sd = s.start ? new Date(parseInt(s.start) || s.start) : null;
+                    const ed = s.end ? new Date(parseInt(s.end) || s.end) : null;
+                    let dur = '-';
+                    if (sd && ed) {
+                        const diffMs = ed - sd;
+                        const h = Math.floor(diffMs / 3600000);
+                        const m = Math.floor((diffMs % 3600000) / 60000);
+                        dur = `${h}:${m.toString().padStart(2, '0')}`;
+                    }
+                    
+                    xml += `
+    <tr>
+        <td>${sd ? sd.getDate() + "/" + (sd.getMonth() + 1) + "/" + sd.getFullYear() : '-'}</td>
+        <td>${sd ? hebrewDays[sd.getDay()] : '-'}</td>
+        <td>${sd ? hebrewMonths[sd.getMonth() + 1] : '-'}</td>
+        <td>${sd ? sd.getFullYear() : '-'}</td>
+        <td>${sd ? sd.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+        <td>${ed ? ed.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : 'פתוחה'}</td>
+        <td>${dur}</td>
+    </tr>`;
+                });
+                xml += `</table><br style="page-break-after:always;">`;
+            }
+
+            xml += `</body></html>`;
+
+            // Clean filename for ZIP (sanitize special chars)
+            const safeName = employeeName.replace(/[\/\\?%*:|"<>]/g, '_');
+            archive.append(xml, { name: `History_${safeName}.xls` });
+        }
+
+        // 5. Finalize
+        await archive.finalize();
+
+    } catch (e) {
+        console.error('[DownloadHistory] Error:', e.message);
+        if (!res.headersSent) {
+            res.status(500).send('Error generating ZIP: ' + e.message);
+        }
     }
 });
 
