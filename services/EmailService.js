@@ -175,34 +175,49 @@ class EmailService {
         const displayBusinessName = businessName || systemConfig.appName || this.systemAppName || config.APP_NAME;
 
         return `
-            <div dir="rtl" style="font-family: 'Rubik', 'Inter', 'Segoe UI', sans-serif; background-color: #0f172a; margin: 0; padding: 10px 5px; color: #ffffff;">
+            <!DOCTYPE html>
+            <html dir="rtl" lang="he">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap" rel="stylesheet">
-                <div style="max-width: 450px; margin: 0 auto; background-color: #1e293b; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.05);">
+                <style>
+                    body { margin: 0; padding: 0; }
+                    @media only screen and (max-width: 600px) {
+                        .main-container { width: 100% !important; border-radius: 0 !important; }
+                        .table-wrapper { overflow-x: auto !important; }
+                        table { min-width: 450px !important; }
+                    }
+                </style>
+            </head>
+            <body style="background-color: #0f172a; font-family: 'Rubik', sans-serif; color: #ffffff; padding: 10px 0;">
+                <div class="main-container" style="max-width: 600px; margin: 0 auto; background-color: #1e293b; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);">
                     
                     <!-- Header -->
-                    <div style="background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); padding: 15px; text-align: center;">
+                    <div style="background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); padding: 20px 15px; text-align: center;">
                         ${logoHtml}
-                        <h1 style="color: #ffffff; margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.5px;">${displayBusinessName}</h1>
+                        <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 700;">${displayBusinessName}</h1>
                     </div>
 
                     <!-- Content -->
-                    <div style="padding: 15px; color: #e2e8f0; font-size: 14px; line-height: 1.4; text-align: right;">
-                        <h2 style="color: #ffffff; margin-top: 0; margin-bottom: 12px; font-size: 18px; font-weight: 700; text-align: center;">${title}</h2>
-                        <div style="background: rgba(0, 0, 0, 0.15); border-radius: 10px; padding: 15px; border: 1px solid rgba(255, 255, 255, 0.05); text-align: right;">
+                    <div style="padding: 15px; text-align: right;">
+                        <h2 style="color: #ffffff; margin-top: 0; margin-bottom: 15px; font-size: 18px; font-weight: 700; text-align: center;">${title}</h2>
+                        <div style="background: rgba(0, 0, 0, 0.15); border-radius: 10px; padding: 15px; border: 1px solid rgba(255, 255, 255, 0.05);">
                             ${content}
                         </div>
                     </div>
 
                     <!-- Footer -->
-                    <div style="background-color: rgba(15, 23, 42, 0.5); padding: 12px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.05);">
-                        <p style="margin: 0; color: #64748b; font-size: 11px; font-weight: 500;">
+                    <div style="background-color: rgba(15, 23, 42, 0.5); padding: 15px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.05);">
+                        <p style="margin: 0; color: #64748b; font-size: 12px;">
                             ${footerText || 'מערכת ' + (systemConfig.appName || config.APP_NAME) + ' - הודעה אוטומטית'}
                             <br>
-                            <span style="display: inline-block; margin-top: 4px; opacity: 0.5;">&copy; ${new Date().getFullYear()} ${systemConfig.appName || config.APP_NAME}</span>
+                            <span style="opacity: 0.5; margin-top: 5px; display: block;">&copy; ${new Date().getFullYear()} ${systemConfig.appName || config.APP_NAME}</span>
                         </p>
                     </div>
                 </div>
-            </div>
+            </body>
+            </html>
         `;
     }
 
@@ -263,11 +278,11 @@ class EmailService {
 
                     tableRows += `
                         <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
-                            <td style="padding: 10px 5px; font-weight: 700; color: #ffffff; font-size: 13px;">${employee}</td>
-                            <td style="padding: 10px 5px; text-align: center; color: #94a3b8; font-size: 13px;">${shifts.length}</td>
-                            <td style="padding: 10px 5px; text-align: center; color: #10b981; font-weight: 800; font-size: 13px;">${wageResult.totalHours}</td>
-                            <td style="padding: 10px 5px; text-align: center; color: #a855f7; font-weight: 800; font-size: 13px;">${wageResult.weightedTotal}</td>
-                            <td style="padding: 10px 5px; text-align: right; direction: rtl;">${breakdownHtml}</td>
+                            <td style="padding: 8px 4px; font-weight: 700; color: #ffffff; font-size: 11px;">${employee}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #94a3b8; font-size: 11px;">${shifts.length}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #10b981; font-weight: 800; font-size: 11px;">${wageResult.totalHours}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #a855f7; font-weight: 800; font-size: 11px;">${wageResult.weightedTotal}</td>
+                            <td style="padding: 8px 4px; text-align: right; direction: rtl;">${breakdownHtml}</td>
                         </tr>
                     `;
                 } catch (calcErr) {
@@ -276,11 +291,11 @@ class EmailService {
                     shifts.forEach(s => { if (s.start && s.end) totalHours += (new Date(s.end) - new Date(s.start)) / 3600000; });
                     tableRows += `
                         <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
-                            <td style="padding: 10px 5px; color: #ffffff; font-size: 13px;">${employee}</td>
-                            <td style="padding: 10px 5px; text-align: center; color: #94a3b8; font-size: 13px;">${shifts.length}</td>
-                            <td style="padding: 10px 5px; text-align: center; color: #ffffff; font-size: 13px;">${totalHours.toFixed(2)}</td>
-                            <td style="padding: 10px 5px; text-align: center; color: #ffffff; font-size: 13px;">-</td>
-                            <td style="padding: 10px 5px; text-align: right; color: #f43f5e; font-size: 11px;">שגיאה</td>
+                            <td style="padding: 8px 4px; color: #ffffff; font-size: 11px;">${employee}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #94a3b8; font-size: 11px;">${shifts.length}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #ffffff; font-size: 11px;">${totalHours.toFixed(2)}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #ffffff; font-size: 11px;">-</td>
+                            <td style="padding: 8px 4px; text-align: right; color: #f43f5e; font-size: 10px;">שגיאה</td>
                         </tr>
                     `;
                 }
@@ -291,8 +306,8 @@ class EmailService {
         }
 
         const content = `
-            <div style="background: rgba(0, 0, 0, 0.1); border-radius: 10px; overflow: hidden;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <div class="table-wrapper" style="background: rgba(0, 0, 0, 0.1); border-radius: 10px; overflow: hidden;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
                     <thead>
                         <tr style="background-color: rgba(255, 255, 255, 0.03); color: #94a3b8;">
                             <th style="padding: 12px 5px; text-align: right; font-weight: 700;">עובד</th>
@@ -307,7 +322,7 @@ class EmailService {
                     </tbody>
                 </table>
             </div>
-            <p style="margin-top: 20px; color: #94a3b8; font-size: 12px; text-align: center; font-style: italic;">לדוח מפורט, היכנס למערכת הניהול.</p>
+            <p style="margin-top: 20px; color: #94a3b8; font-size: 11px; text-align: center; font-style: italic;">לדוח מפורט, היכנס למערכת הניהול.</p>
         `;
 
         return this.sendEmail(to, title + ` - ${businessName}`, this.getStyledTemplate(title, content, '', logoUrl, businessName));
