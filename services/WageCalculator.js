@@ -124,12 +124,12 @@ class WageCalculator {
                     let addedRate = 0;
                     if (otMapObj[`h${hourIndex}`] !== undefined) {
                         addedRate = parseFloat(otMapObj[`h${hourIndex}`]);
+                    } else if (otMapArr && otMapArr[hourIndex - 1] !== undefined) {
+                        addedRate = parseFloat(otMapArr[hourIndex - 1]);
                     } else {
+                        // Default Israeli Law Overtime
                         if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
                         else if (hourIndex >= 11) addedRate = 0.5;
-                        else if (otMapArr && otMapArr[hourIndex - 1] !== undefined) {
-                            addedRate = parseFloat(otMapArr[hourIndex - 1]);
-                        }
                     }
                     ratePercent = 100 + (addedRate * 100);
                 }
@@ -152,7 +152,15 @@ class WageCalculator {
                     let addedRate = weMapObj[`h${hourIndex}`] !== undefined ? parseFloat(weMapObj[`h${hourIndex}`]) : (hourIndex >= 9 ? 0.75 : 0.5);
                     ratePercent = 100 + (addedRate * 100);
                 } else {
-                    let addedRate = otMapObj[`h${hourIndex}`] !== undefined ? parseFloat(otMapObj[`h${hourIndex}`]) : ((hourIndex === 9 || hourIndex === 10) ? 0.25 : (hourIndex >= 11 ? 0.5 : (otMapArr[hourIndex - 1] || 0)));
+                    let addedRate = 0;
+                    if (otMapObj[`h${hourIndex}`] !== undefined) {
+                        addedRate = parseFloat(otMapObj[`h${hourIndex}`]);
+                    } else if (otMapArr && otMapArr[hourIndex - 1] !== undefined) {
+                        addedRate = parseFloat(otMapArr[hourIndex - 1]);
+                    } else {
+                        if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
+                        else if (hourIndex >= 11) addedRate = 0.5;
+                    }
                     ratePercent = 100 + (addedRate * 100);
                 }
                 if (!breakdown[ratePercent]) breakdown[ratePercent] = 0;
