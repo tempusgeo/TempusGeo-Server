@@ -411,7 +411,33 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'adminGetFullHistory': {
+                const config = await dataManager.getCompanyConfig(companyId);
+                const salarySettings = config.settings?.salary || {};
+                const holidays = await dataManager.getAvailableHolidays(companyId).catch(() => []);
+                const holidayDates = [];
+                holidays.forEach(h => {
+                    if (Array.isArray(h.allDates)) h.allDates.forEach(d => holidayDates.push(d));
+                    else if (h.date) holidayDates.push(h.date);
+                });
+                const uniqueHolidayDates = [...new Set(holidayDates)];
+
                 const fullData = await dataManager.getFullHistoryForExport(companyId);
+                
+                // Enrich with weighted hours per shift
+                for (const [employeeName, shifts] of Object.entries(fullData)) {
+                    for (const shift of shifts) {
+                        if (shift.start && shift.end) {
+                            try {
+                                const report = WageCalculator.calculateBreakdown([shift], salarySettings, uniqueHolidayDates);
+                                shift.weightedTotal = report.weightedTotal;
+                            } catch (e) {
+                                shift.weightedTotal = 0;
+                            }
+                        } else {
+                            shift.weightedTotal = 0;
+                        }
+                    }
+                }
                 return res.json({ success: true, data: fullData });
             }
 
