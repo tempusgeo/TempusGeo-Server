@@ -301,8 +301,8 @@ router.post('/dispatch', async (req, res) => {
                     success: true,
                     shifts: formattedShifts,
                     holidayDates,
-                    totalHours: formatHHMM(wageResult.totalHours),
-                    weightedHours: formatHHMM(wageResult.weightedTotal),
+                    totalHours: wageResult.totalHours,
+                    weightedHours: wageResult.weightedTotal,
                     wageBreakdown: wageResult.breakdown
                 });
             }
