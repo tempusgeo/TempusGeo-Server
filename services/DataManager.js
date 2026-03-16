@@ -2263,6 +2263,9 @@ class DataManager {
         if (CACHE.companies[companyId]) {
             delete CACHE.companies[companyId];
         }
+        if (CACHE.historicalData[companyId]) {
+            delete CACHE.historicalData[companyId];
+        }
 
         // 4. Delete from filesystem
         const companyDir = path.join(this.dataDir, 'companies', companyId);
