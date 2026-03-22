@@ -254,19 +254,12 @@ class EmailService {
             const WageCalculator = require('./WageCalculator');
             const dataManager = require('./DataManager');
 
-            // Fetch holiday dates for this specific month/company
-            let holidayDates = [];
-            if (companyId) {
-                try {
-                    holidayDates = await dataManager.getHolidayDatesForMonth(companyId, year, month);
-                } catch (err) {
-                    console.error(`[EmailService] Failed to fetch holiday dates for ${companyId}:`, err.message);
-                }
-            }
+            const bizConfig = await dataManager.getCompanyConfig(companyId);
 
             // Construct HTML Table
             for (const [employee, shifts] of Object.entries(reportData)) {
                 try {
+                    const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, year, month, employee);
                     const wageResult = WageCalculator.calculateBreakdown(shifts, salaryConfig, holidayDates);
 
                     let breakdownHtml = '';
