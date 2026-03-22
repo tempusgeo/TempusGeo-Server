@@ -1300,13 +1300,27 @@ class DataManager {
         return [];
     }
 
-    async getHolidayDatesForMonth(companyId, year, month) {
-        const details = await this.getAvailableHolidays(companyId);
+    async getHolidayDatesForMonth(companyId, year, month, employeeName = null) {
+        const bizConfig = await this.getCompanyConfig(companyId);
+        const details = bizConfig.settings?.salary?.holidays?.details || [];
         if (!Array.isArray(details)) return [];
+
+        let eligibleNames = null;
+        if (employeeName && bizConfig.settings?.constraints?.[employeeName]) {
+            eligibleNames = bizConfig.settings.constraints[employeeName].qualifyingHolidays;
+        }
+
+        // If no employee specific settings, fallback to global (legacy support)
+        if (!eligibleNames) {
+            eligibleNames = bizConfig.settings?.salary?.holidays?.eligible;
+        }
 
         // Collect all dates from all relevant holidays that fall in this month/year
         const holidayDates = [];
         details.forEach(h => {
+            // Filter by name if eligibleNames is defined
+            if (eligibleNames && !eligibleNames.includes(h.name)) return;
+
             if (Array.isArray(h.allDates)) {
                 h.allDates.forEach(dStr => {
                     const [y, m, d] = dStr.split('-').map(Number);
