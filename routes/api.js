@@ -474,8 +474,8 @@ router.post('/dispatch', async (req, res) => {
                     paymentMethod: client?.paymentMethod || null,
                     autoChargeEnabled: client?.autoChargeEnabled || false,
                     activeEmployees: activeEmployees,
-                    expectedPayment: expectedPayment,
-                    freezeAmount: freezeAmount
+                    expectedPayment: expectedPayment?.amount || 0,
+                    freezeAmount: freezeAmount?.amount || 0
                 });
             }
 
