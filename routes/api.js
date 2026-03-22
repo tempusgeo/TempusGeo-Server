@@ -46,7 +46,7 @@ router.post('/dispatch', async (req, res) => {
                 }
             }
 
-            const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month);
+            const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month, name);
             const wageResult = WageCalculator.calculateBreakdown(empShifts, bizConfig.settings?.salary || {}, holidayDates);
             const formatTime = d => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' });
             return {
@@ -80,7 +80,7 @@ router.post('/dispatch', async (req, res) => {
             if (lastShift && lastShift.end) {
                 if (Date.now() - parseInt(lastShift.end) < forceThreshold) {
                     const bizConfig = await dataManager.getCompanyConfig(cid);
-                    const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month);
+                    const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month, name);
                     const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates);
                     
                     const startDate = new Date(parseInt(lastShift.start));
@@ -294,7 +294,7 @@ router.post('/dispatch', async (req, res) => {
                     };
                 });
 
-                const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, parseInt(rest.year), parseInt(rest.month));
+                const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, parseInt(rest.year), parseInt(rest.month), rest.name);
                 const wageResult = WageCalculator.calculateBreakdown(rawShifts, bizConfig.settings?.salary || {}, holidayDates);
 
                 return res.json({
@@ -425,10 +425,24 @@ router.post('/dispatch', async (req, res) => {
                 
                 // Enrich with weighted hours per shift
                 for (const [employeeName, shifts] of Object.entries(fullData)) {
+                    // For each employee, we need their specific holiday dates
+                    // getHolidayDatesForMonth(cid, year, month, name) returns for a specific month.
+                    // But 'getFullHistory' might span multiple months/years.
+                    // It's better to build a custom set of dates for this employee across all time.
+                    
+                    const eligibleNames = config.settings?.constraints?.[employeeName]?.qualifyingHolidays || config.settings?.salary?.holidays?.eligible;
+                    const employeeHolidayDates = [];
+                    holidays.forEach(h => {
+                        if (eligibleNames && !eligibleNames.includes(h.name)) return;
+                        if (Array.isArray(h.allDates)) h.allDates.forEach(d => employeeHolidayDates.push(d));
+                        else if (h.date) employeeHolidayDates.push(h.date);
+                    });
+                    const uniqueEmpHolidayDates = [...new Set(employeeHolidayDates)];
+
                     for (const shift of shifts) {
                         if (shift.start && shift.end) {
                             try {
-                                const report = WageCalculator.calculateBreakdown([shift], salarySettings, uniqueHolidayDates);
+                                const report = WageCalculator.calculateBreakdown([shift], salarySettings, uniqueEmpHolidayDates);
                                 shift.weightedTotal = report.weightedTotal;
                             } catch (e) {
                                 shift.weightedTotal = 0;
