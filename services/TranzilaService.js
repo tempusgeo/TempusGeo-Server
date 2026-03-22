@@ -44,11 +44,12 @@ class TranzilaService {
         // The PHP script expects specific fields and a security token.
 
         try {
+            const secureToken = config.JETSERVER_TOKEN || 'tempusgeo_proxy_9988_secure';
             console.log("Proxying payment to JetServer...", config.JETSERVER_PAYMENT_URL);
             const response = await axios.post(config.JETSERVER_PAYMENT_URL, payload, {
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-jetserver-token': config.JETSERVER_TOKEN
+                    'x-jetserver-token': secureToken
                 }
             });
             return response.data;
