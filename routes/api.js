@@ -495,6 +495,9 @@ router.post('/dispatch', async (req, res) => {
 
             case 'saveAdminSettings': {
                 await dataManager.saveAdminSettings(companyId, rest.settings, rest.adminEmail);
+                if (rest.settings && rest.settings.invoiceDetails) {
+                    await dataManager.updateCompanyConfig(companyId, { invoiceDetails: rest.settings.invoiceDetails });
+                }
                 return res.json({ success: true });
             }
 
@@ -526,7 +529,7 @@ router.post('/dispatch', async (req, res) => {
             }
 
             case 'saveCardToken': {
-                const { cardName, cardId, cardNumber, expMonth, expYear, cvv } = rest.paymentDetails;
+                const { cardName, cardId, cardNumber, expMonth, expYear, cvv, businessId } = rest.paymentDetails;
                 
                 // 1. Get Token from Tranzila (J5)
                 const payload = {
@@ -556,7 +559,8 @@ router.post('/dispatch', async (req, res) => {
                         expYear: expYear,
                         cardHolderName: cardName,
                         cardHolderId: cardId,
-                        cvv: cvv
+                        cvv: cvv,
+                        businessId: businessId
                     });
 
                     return res.json({ success: true, last4 });
@@ -1659,7 +1663,8 @@ router.post('/payment/process', async (req, res) => {
                     expYear: yy,
                     cardHolderId: myid,
                     cardHolderName: cardInfo.cardName || cardInfo.cardHolder || '',
-                    cvv: cardInfo.cvv || ''
+                    cvv: cardInfo.cvv || '',
+                    businessId: cardInfo.businessId
                 } : null;
 
                 const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice, pMethod);
@@ -1696,7 +1701,8 @@ router.post('/payment/process', async (req, res) => {
                 expYear: yy,
                 cardHolderId: myid,
                 cardHolderName: cardInfo.cardName || cardInfo.cardHolder || '',
-                cvv: cardInfo.cvv || ''
+                cvv: cardInfo.cvv || '',
+                businessId: cardInfo.businessId
             } : null;
 
             // NEW_SETUP = עסק בשלב הרישום שטרם קיבל companyId אמיתי
