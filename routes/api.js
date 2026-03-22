@@ -1490,11 +1490,12 @@ router.post('/payment/process', async (req, res) => {
     try {
         const { companyId, planId, paymentDetails, price } = req.body;
         // Support old cardData format if legacy client, but prefer paymentDetails
+        const cardInfo = paymentDetails || req.body.cardData || {};
         const isJ5 = req.body.action === 'create_token' || String(price) === '0';
 
         console.log(`[Payment] Starting process for company: ${companyId}, plan: ${planId}, isJ5: ${isJ5}`);
 
-        if (!cardInfo || (!isJ5 && (!companyId || !planId))) {
+        if (!cardInfo.cardNumber || (!isJ5 && (!companyId || !planId))) {
             return res.status(400).json({ success: false, error: 'Missing required fields: companyId, planId, or paymentDetails' });
         }
 
