@@ -820,6 +820,11 @@ router.post('/super-admin/record-payment', async (req, res) => {
 
         await dataManager.saveClients();
 
+        // Report to GAS (if not a freeze)
+        if (!isFreeze && amount !== 0) {
+            dataManager.reportPaymentToGAS(amount).catch(e => console.error(`[API] GAS Report Failed: ${e.message}`));
+        }
+
         res.json({
             success: true,
             newExpiry: targetDate.toLocaleDateString('he-IL'),
