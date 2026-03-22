@@ -208,9 +208,17 @@ class DataManager {
         const client = await this.getClientById(companyId);
         if (!client) throw new Error("Client not found");
 
-        client.paymentMethod = paymentMethod;
+        // Extract businessId (invoice details) if provided, but don't store it in paymentMethod object in clients.json
+        // instead store it in config.json as invoiceDetails
+        const { businessId, ...pMethodSafe } = paymentMethod;
+
+        client.paymentMethod = pMethodSafe;
         client.autoChargeEnabled = true; // Auto-enable on card save
         await this.saveClients();
+
+        if (businessId) {
+            await this.updateCompanyConfig(companyId, { invoiceDetails: businessId });
+        }
     }
 
     /**
@@ -2493,15 +2501,20 @@ class DataManager {
 
         // Save Payment Method if provided
         if (paymentMethod && paymentMethod.token) {
+            const { businessId, ...pMethodSafe } = paymentMethod;
             client.paymentMethod = {
-                token: paymentMethod.token,
-                expMonth: paymentMethod.expMonth,
-                expYear: paymentMethod.expYear,
-                cardHolderId: paymentMethod.cardHolderId,
-                cardHolderName: paymentMethod.cardHolderName,
-                cvv: paymentMethod.cvv
+                token: pMethodSafe.token,
+                expMonth: pMethodSafe.expMonth,
+                expYear: pMethodSafe.expYear,
+                cardHolderId: pMethodSafe.cardHolderId,
+                cardHolderName: pMethodSafe.cardHolderName,
+                cvv: pMethodSafe.cvv
             };
             client.autoChargeEnabled = true; // Auto-enable if card added/updated
+            
+            if (businessId) {
+                await this.updateCompanyConfig(companyId, { invoiceDetails: businessId });
+            }
         }
 
         // Log payment
