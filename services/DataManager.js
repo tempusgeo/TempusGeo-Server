@@ -690,6 +690,9 @@ class DataManager {
 
                     await this.saveClients();
 
+                    // Report to GAS
+                    this.reportPaymentToGAS(amount).catch(e => console.error(`[DataManager] GAS Report Failed: ${e.message}`));
+
                     // Send Success Email
                     emailService.sendPaymentSuccessNotification(client.email, {
                         businessName: client.businessName,
@@ -2513,6 +2516,9 @@ class DataManager {
             status: 'PAID'
         });
 
+        // Report to GAS
+        this.reportPaymentToGAS(price).catch(e => console.error(`[DataManager] GAS Report Failed: ${e.message}`));
+
         // Save
         await this.saveClients();
         return client;
@@ -2616,8 +2622,10 @@ class DataManager {
                         this.logMaintenance('BILLING', `🔄 Processing billing for ${client.businessName} (₪${amount}, Expiry: ${expiry.toLocaleDateString('he-IL')})`);
 
                         let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL' }; 
-                        const pdesc = `TempusGeo - מנוי ל-${client.businessName} - ${activeCount} עובדים`;
+                        const pdesc = `TempusGeo - מנוי ל-${activeCount} עובדים`;
                         chargeRes = await tranzilaService.chargeToken({
+                            supplier: sysConfig.tranzilaTerminal,
+                            TranzilaPW: sysConfig.tranzilaPass,
                             sum: amount,
                             currency: 1,
                             pdesc: pdesc,
@@ -2633,6 +2641,9 @@ class DataManager {
                             client.billingFailed = false;
                             this.logMaintenance('BILLING', `✅ Billing successful for ${client.businessName} (₪${amount})`);
                             
+                            // Report to GAS
+                            this.reportPaymentToGAS(amount).catch(e => console.error(`[DataManager] GAS Report Failed: ${e.message}`));
+
                             if (!client.paymentHistory) client.paymentHistory = [];
                             client.paymentHistory.push({
                                 date: new Date().toLocaleDateString('he-IL'),
@@ -2874,6 +2885,23 @@ class DataManager {
             if (d < minMeters) minMeters = d;
         }
         return minMeters;
+    }
+
+    async reportPaymentToGAS(amount) {
+        if (!amount || isNaN(parseFloat(amount))) return;
+        
+        const gasUrl = "https://script.google.com/macros/s/AKfycby8ysV1QxiL1PKABQ99mF1CFK4h9a3vdGhwfXrRt-FTodtgcViykv7-wanVuF1i7iHx/exec";
+        try {
+            console.log(`[GAS-API] Reporting payment/credit: ${amount}`);
+            // Use a short timeout to prevent blocking
+            await axios.post(gasUrl, {
+                action: "ADD_TO_SHEET2",
+                number: parseFloat(amount)
+            }, { timeout: 10000 });
+            console.log(`[GAS-API] Success reporting ${amount}`);
+        } catch (e) {
+            console.error(`[GAS-API] Failed to report ${amount}:`, e.message);
+        }
     }
 }
 
