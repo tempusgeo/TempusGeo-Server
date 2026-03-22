@@ -1684,7 +1684,14 @@ router.post('/payment/process', async (req, res) => {
             // אין להפעיל extendSubscription - רק להחזיר הצלחה לפרונטאנד
             if (!companyId || companyId === 'NEW_SETUP') {
                 console.log('[Payment] NEW_SETUP verification successful - returning token to client');
-                return res.json({ success: true, newExpiry: null, tranzilaResponse: fullData, paymentMethod: pMethod });
+                try {
+                    const sysConfig = await dataManager.getSystemConfig();
+                    const trialExpiry = dataManager.getNextBillingDate(sysConfig.chargeDay || 1, sysConfig.chargeTime || "00:00");
+                    return res.json({ success: true, newExpiry: trialExpiry.toISOString(), tranzilaResponse: fullData, paymentMethod: pMethod });
+                } catch(e) {
+                    console.error('[Payment] NEW_SETUP trialExpiry calculation error', e);
+                    return res.json({ success: true, newExpiry: null, tranzilaResponse: fullData, paymentMethod: pMethod });
+                }
             }
 
             const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice, pMethod);
