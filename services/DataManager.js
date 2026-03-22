@@ -2460,8 +2460,8 @@ class DataManager {
         // Add the months from the plan
         targetDate.setMonth(targetDate.getMonth() + monthsToAdd);
 
-        // Ensure it's exactly the 1st day (consistent alignment)
-        targetDate.setDate(1);
+        // Ensure it aligns with the chargeDay setting
+        targetDate.setDate(chargeDay);
         targetDate.setHours(23, 59, 59, 999);
 
         client.subscriptionExpiry = targetDate.toISOString();
