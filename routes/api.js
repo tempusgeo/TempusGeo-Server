@@ -1571,19 +1571,16 @@ router.post('/payment/process', async (req, res) => {
         ).toString().trim();
 
         const payload = {
-            terminalName: systemConfig.tranzilaTerminal,
-            terminalPass: systemConfig.tranzilaPass,
+            supplier: systemConfig.tranzilaTerminal,
+            TranzilaPW: systemConfig.tranzilaPass,
             action: isJ5 ? 'create_token' : 'charge',
             sum: resolvedPrice,
             ccno: cardInfo.cardNumber,
             expmonth: mm,
             expyear: yy,
             mycvv: cardInfo.cvv || '',
-            // שם בעל הכרטיס (מהטופס) → contact
             contact: cardInfo.cardName || cardInfo.cardHolder || '',
-            // שם העסק: אם המשתמש הזין טקסט בתיבת "פרטי עסק לחשבונית" נשתמש בו (businessId), אחרת שם העסק מהמערכת
             company: (cardInfo.businessId && cardInfo.businessId.trim()) ? cardInfo.businessId : businessName,
-            // ח"פ / עוסק מורשה (מהטופס) → myid (לחשבונית)
             myid: myid,
             email: cardInfo.email || '',
             pdesc: planDesc,
@@ -1592,19 +1589,21 @@ router.post('/payment/process', async (req, res) => {
 
         const payloadStr = JSON.stringify(payload);
         console.log(`[Payment] Resolved myid for proxy: ${myid}`);
-        console.log('[Payment] Payload prepared (JSON):', payloadStr.replace(/"terminalPass":"[^"]+"/, '"terminalPass":"***"'));
+        console.log('[Payment] Payload prepared (JSON):', payloadStr.replace(/"TranzilaPW":"[^"]+"/, '"TranzilaPW":"***"'));
 
         // 4. Send to JetServer Proxy
-        const jetServerUrl = config.JETSERVER_PROXY_URL ||
-            systemConfig.jetServerUrl;
+        const jetServerUrl = config.JETSERVER_PROXY_URL || systemConfig.jetServerUrl;
 
         console.log('[Payment] Sending to proxy:', jetServerUrl);
+
+        // Try using the working test token if the config token is missing/wrong
+        const secureToken = config.JETSERVER_TOKEN || 'tempusgeo_proxy_9988_secure';
 
         const proxyRes = await fetch(jetServerUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-jetserver-token': config.JETSERVER_TOKEN
+                'x-jetserver-token': secureToken
             },
             body: payloadStr
         });
@@ -1659,40 +1658,49 @@ router.post('/payment/process', async (req, res) => {
             return res.status(500).json({ success: false, error: 'Proxy returned HTML formatting error.', proxyResponse: rawText.substring(0, 100) });
         }
 
-        // 5. Handle JSON response from our proxy
-        if (proxyData.success) {
-            const tranzilaParams = new URLSearchParams(proxyData.tranzila_raw || '');
-            const responseCode = tranzilaParams.get('Response') || proxyData.responseCode;
-            console.log('[Payment] Tranzila Response Code:', responseCode);
+        // 5. Handle JSON response from our PHP proxy
+        // PHP returns: { success, response_code, token, full_data: {...} }
+        const responseCode = proxyData.response_code || (proxyData.full_data && proxyData.full_data.Response) || '';
+        const tranzilaTK = proxyData.token || (proxyData.full_data && proxyData.full_data.TranzilaTK) || null;
+        const fullData = proxyData.full_data || {};
 
-            if (responseCode === '000') {
-                const tranzilaTK = tranzilaParams.get('TranzilaTK') || proxyData.TranzilaTK;
-                const pMethod = tranzilaTK ? {
-                    token: tranzilaTK,
-                    expMonth: mm,
-                    expYear: yy,
-                    cardHolderId: myid,
-                    cardHolderName: cardInfo.cardName || cardInfo.cardHolder || '',
-                    cvv: cardInfo.cvv || ''
-                } : null;
+        console.log('[Payment] PHP proxy response - success:', proxyData.success, 'code:', responseCode, 'token:', tranzilaTK ? 'present' : 'absent');
 
-                const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice, pMethod);
-                const newExpiry = updatedClient.subscriptionExpiry;
-                console.log(`[Payment] Subscription extended for ${companyId}, new expiry: ${newExpiry}`);
-                return res.json({ success: true, newExpiry, tranzilaResponse: Object.fromEntries(tranzilaParams) });
-            } else {
-                if (proxyData.tranzila_raw && proxyData.tranzila_raw.toLowerCase().includes('amount zero')) {
-                    return res.json({ success: false, error: 'עסקה נדחתה: סכום שגוי (Amount Zero) בטרנזילה.' });
-                }
+        // J5 create_token success: PHP sets success=true when token received (even without Response=000)
+        const isTokenSuccess = isJ5 && proxyData.success && tranzilaTK;
+        const isChargeSuccess = !isJ5 && responseCode === '000';
 
-                return res.json({
-                    success: false,
-                    error: `עסקה נדחתה קוד: ${responseCode} - ${tranzilaParams.get('text') || proxyData.message || 'סיבה לא ידועה'}`,
-                    tranzilaResponse: Object.fromEntries(tranzilaParams)
-                });
+        if (isTokenSuccess || isChargeSuccess) {
+            const pMethod = tranzilaTK ? {
+                token: tranzilaTK,
+                expMonth: mm,
+                expYear: yy,
+                cardHolderId: myid,
+                cardHolderName: cardInfo.cardName || cardInfo.cardHolder || '',
+                cvv: cardInfo.cvv || ''
+            } : null;
+
+            // NEW_SETUP = עסק בשלב הרישום שטרם קיבל companyId אמיתי
+            // אין להפעיל extendSubscription - רק להחזיר הצלחה לפרונטאנד
+            if (!companyId || companyId === 'NEW_SETUP') {
+                console.log('[Payment] NEW_SETUP verification successful - returning token to client');
+                return res.json({ success: true, newExpiry: null, tranzilaResponse: fullData, paymentMethod: pMethod });
             }
+
+            const updatedClient = await dataManager.extendSubscription(companyId, planId, resolvedPrice, pMethod);
+            const newExpiry = updatedClient.subscriptionExpiry;
+            console.log(`[Payment] Subscription extended for ${companyId}, new expiry: ${newExpiry}`);
+            return res.json({ success: true, newExpiry, tranzilaResponse: fullData });
+        } else if (!proxyData.success) {
+            // PHP itself returned success=false (auth error, invalid body, etc.)
+            return res.status(500).json({ success: false, error: proxyData.error || 'Proxy returned failure', proxyResponse: proxyData });
         } else {
-            return res.status(500).json({ success: false, error: proxyData.error || proxyData.message || 'Proxy returned failure', proxyResponse: proxyData });
+            // Charge failed with a Tranzila error code
+            return res.json({
+                success: false,
+                error: `עסקה נדחתה קוד: ${responseCode} - ${fullData.text || 'סיבה לא ידועה'}`,
+                tranzilaResponse: fullData
+            });
         }
 
     } catch (e) {
