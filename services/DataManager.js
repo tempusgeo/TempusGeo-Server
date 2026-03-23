@@ -2199,6 +2199,14 @@ class DataManager {
         const sysConfig = await this.getSystemConfig();
         const trialExpiry = this.getNextBillingDate(sysConfig.chargeDay, sysConfig.chargeTime);
 
+        let pMethodSafe = null;
+        let invoiceDetails = null;
+        if (data.paymentMethod) {
+            const { invoiceDetails: invDet, ...rest } = data.paymentMethod;
+            pMethodSafe = Object.keys(rest).length ? rest : null;
+            invoiceDetails = invDet;
+        }
+
         const client = {
             id: newId,
             businessName: data.businessName,
@@ -2209,8 +2217,8 @@ class DataManager {
             subscriptionDate: new Date().toISOString(), // Initial registration date
             joinedAt: new Date().toISOString(),
 
-            autoChargeEnabled: !!data.paymentMethod,
-            paymentMethod: data.paymentMethod || null
+            autoChargeEnabled: !!pMethodSafe,
+            paymentMethod: pMethodSafe
         };
 
         CACHE.clients.push(client);
@@ -2256,6 +2264,10 @@ class DataManager {
             adminEmail: data.email,
             logoUrl: data.logoUrl || null
         };
+
+        if (invoiceDetails) {
+            companyConfig.invoiceDetails = invoiceDetails;
+        }
 
         await this.updateCompanyConfig(newId, companyConfig);
 
@@ -2636,12 +2648,13 @@ class DataManager {
                     const subRes = await this.calculateSubscriptionAmount(client.id);
                     const amount = subRes.amount;
 
-                    // 4. Charge only if debt is at least ₪1
+                    // 4. Process charge or free renewal
+                    let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: 'סכום 0 ₪ - חודש חינם' };
+                    const pdesc = `TempusGeo - מנוי ל-${activeCount} עובדים`;
+
                     if (amount >= 1) {
                         this.logMaintenance('BILLING', `🔄 Processing billing for ${client.businessName} (₪${amount}, Expiry: ${expiry.toLocaleDateString('he-IL')})`);
 
-                        let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL' }; 
-                        const pdesc = `TempusGeo - מנוי ל-${activeCount} עובדים`;
                         chargeRes = await tranzilaService.chargeToken({
                             supplier: sysConfig.tranzilaTerminal,
                             TranzilaPW: sysConfig.tranzilaPass,
@@ -2655,8 +2668,11 @@ class DataManager {
                             contact: client.paymentMethod.cardHolderName,
                             mycvv: client.paymentMethod.cvv
                         });
+                    } else {
+                        this.logMaintenance('BILLING', `🔄 Processing free renewal for ${client.businessName} (₪0 - No active employees/price)`);
+                    }
 
-                        if (chargeRes.success) {
+                    if (chargeRes.success) {
                             client.billingFailed = false;
                             this.logMaintenance('BILLING', `✅ Billing successful for ${client.businessName} (₪${amount})`);
                             
@@ -2716,7 +2732,6 @@ class DataManager {
                             await this.saveClients();
                         }
                     }
-                }
 
                 // --- EXPIRY ALERTS ---
                 const noticeHours = (parseInt(sysConfig.subscriptionExpiryNotice) || 1) * 24;
