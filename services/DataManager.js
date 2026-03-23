@@ -2259,6 +2259,12 @@ class DataManager {
 
         await this.updateCompanyConfig(newId, companyConfig);
 
+        // Send Welcome Email
+        if (client.email) {
+            emailService.sendWelcomeEmail(client.email, client.businessName, client.id, client.password)
+                .catch(err => console.error(`[DataManager] Failed to send welcome email to ${client.id}:`, err.message));
+        }
+
         return client;
     }
 
