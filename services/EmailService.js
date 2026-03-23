@@ -246,6 +246,44 @@ class EmailService {
         return this.sendEmail(to, `איפוס סיסמה - ${appName}`, this.getStyledTemplate(title, content));
     }
 
+    async sendWelcomeEmail(to, businessName, companyId, password) {
+        const title = 'ברוכים הבאים למערכת!';
+        const dataManager = require('./DataManager');
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+        const appName = systemConfig.appName || config.APP_NAME;
+
+        const content = `
+            <p style="text-align: right; margin-bottom: 15px;">שלום <strong>${businessName}</strong>,</p>
+            <p style="text-align: right;">אנחנו שמחים שהצטרפת למערכת <strong>${appName}</strong>! החשבון שלך נוצר בהצלחה.</p>
+            
+            <div style="background: rgba(99, 102, 241, 0.1); border-right: 4px solid #6366f1; padding: 20px; margin: 20px 0; border-radius: 12px;">
+                <h3 style="color: #ffffff; font-size: 16px; margin: 0 0 15px 0; text-align: right;">פרטי ההתחברות שלך:</h3>
+                <table style="width: 100%; color: #ffffff; font-size: 14px;">
+                    <tr>
+                        <td style="color: #94a3b8; text-align: right; padding: 5px 0;">מספר עסק:</td>
+                        <td style="text-align: left; font-weight: 700;">${companyId}</td>
+                    </tr>
+                    <tr>
+                        <td style="color: #94a3b8; text-align: right; padding: 5px 0;">סיסמת מנהל:</td>
+                        <td style="text-align: left; font-weight: 700;">${password}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <p style="text-align: right; font-size: 14px; color: #94a3b8; line-height: 1.6;">
+                כעת ניתן להתחבר ללוח הבקרה ולהתחיל לנהל את נוכחות העובדים שלך בקלות.
+                <br>
+                מומלץ לשנות את הסיסמה לאחר ההתחברות הראשונית באזור ההגדרות.
+            </p>
+            
+            <div style="text-align: center; margin-top: 30px;">
+                <a href="${config.APP_URL || '#'}" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 14px 40px; border-radius: 12px; font-weight: 800; font-size: 16px; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);">כניסה למערכת</a>
+            </div>
+        `;
+
+        return this.sendEmail(to, `ברוכים הבאים ל-${appName} - ${businessName}`, this.getStyledTemplate(title, content, '', null, businessName));
+    }
+
     async sendMonthlyReport(to, reportData, year, month, businessName, salaryConfig = {}, companyId, logoUrl = null) {
         const title = `דוח שעות חודשי: ${month}/${year}`;
         let tableRows = '';
