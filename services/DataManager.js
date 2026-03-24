@@ -949,7 +949,8 @@ class DataManager {
             const holidayDates = await this.getHolidayDatesForMonth(companyId, year, month);
             const salaryConfig = companyConfig.settings?.salary || {};
 
-            const result = WageCalculator.calculateBreakdown([shift], salaryConfig, holidayDates);
+            const workWeekType = config.settings?.constraints?.[employeeName]?.workWeekType || '5day';
+            const result = WageCalculator.calculateBreakdown([shift], salaryConfig, holidayDates, workWeekType);
 
             return {
                 duration: this.formatHHMM(result.totalHours),
@@ -1138,6 +1139,7 @@ class DataManager {
         // Ensure target month loaded
         const shifts = await this.getShifts(companyId, targetYear, targetMonth);
         const employees = await this.getEmployees(companyId);
+        const bizConfig = await this.getCompanyConfig(companyId);
 
         const dashboard = [];
 
@@ -1171,7 +1173,8 @@ class DataManager {
                 return s;
             });
 
-            const wageResult = require('./WageCalculator').calculateBreakdown(shiftsForCalculation, (await this.getCompanyConfig(companyId)).settings?.salary || {}, holidayDates);
+            const workWeekType = bizConfig.settings?.constraints?.[emp]?.workWeekType || '5day';
+            const wageResult = require('./WageCalculator').calculateBreakdown(shiftsForCalculation, bizConfig.settings?.salary || {}, holidayDates, workWeekType);
 
             dashboard.push({
                 name: emp,
@@ -2506,320 +2509,177 @@ class DataManager {
 
         for (const client of CACHE.clients) {
             try {
-                if (!client.subscriptionExpiry) continue;
-
-                const expiry = new Date(client.subscriptionExpiry);
-                const daysLeft = (expiry - now) / (1000 * 60 * 60 * 24);
-                
-                // --- PRECISION BILLING SAFEGUARDS ---
-                // 1. Charge only if expiry is in <= 1 day (including already expired)
-                const isImminentOrExpired = daysLeft <= 1;
-                
-                // 2. Globally auto-billing must be ON
-                const globalAutoBilling = sysConfig.autoBillingEnabled !== false;
-                
-                // 3. System-wide auto-renewal must be ON
-                const globalAutoRenewal = sysConfig.autoRenewalEnabled !== false;
-
-                if (isImminentOrExpired && client.paymentMethod?.token && globalAutoBilling) {
-                    const activeCount = await this.countUniqueActiveEmployees(client.id);
-                    const subRes = await this.calculateSubscriptionAmount(client.id);
-                    const amount = subRes.amount;
-
-                    // 4. Process charge or free renewal
-                    let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: 'סכום 0 ₪ - חודש חינם' };
-                    const pdesc = `TempusGeo - מנוי ל-${activeCount} עובדים`;
-
-                    if (amount >= 1) {
-                        this.logMaintenance('BILLING', `🔄 Processing billing for ${client.businessName} (₪${amount}, Expiry: ${expiry.toLocaleDateString('he-IL')})`);
-
-                        chargeRes = await tranzilaService.chargeToken({
-                            supplier: sysConfig.tranzilaTerminal,
-                            TranzilaPW: sysConfig.tranzilaPass,
-                            sum: amount,
-                            currency: 1,
-                            pdesc: pdesc,
-                            TranzilaTK: client.paymentMethod.token,
-                            expmonth: client.paymentMethod.expMonth,
-                            expyear: client.paymentMethod.expYear,
-                            myid: client.paymentMethod.cardHolderId || client.id,
-                            company: client.paymentMethod.businessId || client.businessName, // Invoice details
-                            contact: client.paymentMethod.cardHolderName || client.businessName,
-                            mycvv: client.paymentMethod.cvv
-                        });
-                    } else {
-                        this.logMaintenance('BILLING', `🔄 Processing free renewal for ${client.businessName} (₪0 - No active employees/price)`);
-                    }
-
-                    if (chargeRes.success) {
-                            client.billingFailed = false;
-                            this.logMaintenance('BILLING', `✅ Billing successful for ${client.businessName} (₪${amount})`);
-                            
-                            // Report to GAS
-                            this.reportPaymentToGAS(amount).catch(e => console.error(`[DataManager] GAS Report Failed: ${e.message}`));
-
-                            if (!client.paymentHistory) client.paymentHistory = [];
-                            client.paymentHistory.push({
-                                date: new Date().toLocaleDateString('he-IL'),
-                                fullDate: new Date().toISOString(),
-                                amount,
-                                currency: 'ILS',
-                                description: `חיוב וחידוש אוטומטי - ${activeCount} עובדים`,
-                                method: 'Auto-Billing',
-                                status: 'PAID',
-                                statusDisplayName: 'שולם',
-                                reference: chargeRes.confirmationCode
-                            });
-                            results.charged++;
-
-                            const recipients = [client.email, 'tempusgeo@gmail.com'];
-                            recipients.forEach(email => {
-                                emailService.sendPaymentSuccessNotification(email, {
-                                    businessName: client.businessName,
-                                    amount: amount,
-                                    activeEmployees: activeCount,
-                                    newExpiry: 'מחזור חדש'
-                                }).catch(console.error);
-                            });
-
-                            // Renew subscription only if client's auto-renewal is ON AND global is ON
-                            if (client.autoChargeEnabled && globalAutoRenewal) {
-                                // Rigid target: 1st of the month after current expiry @ 04:00
-                                const nextExpiry = new Date(expiry);
-                                nextExpiry.setMonth(nextExpiry.getMonth() + 1);
-                                nextExpiry.setDate(1);
-                                nextExpiry.setHours(4, 0, 0, 0);
-
-                                client.subscriptionExpiry = nextExpiry.toISOString();
-                                client.subscriptionDate = expiry.toISOString();
-                                
-                                this.logMaintenance('RENEWAL', `✅ Automated renewal for ${client.businessName}. New expiry: ${nextExpiry.toLocaleDateString('he-IL')} 04:00`);
-                            }
-
-                            client.lastBilledEmployeeCount = activeCount;
-                            await this.saveClients();
-                        } else {
-                            client.billingFailed = true;
-                            this.logMaintenance('BILLING', `❌ Billing failed for ${client.businessName}: ${chargeRes.raw || 'Payment rejected'}`);
-                            
-                            const recipients = [client.email, 'tempusgeo@gmail.com'];
-                            recipients.forEach(email => {
-                                emailService.sendPaymentFailedNotification(email, {
-                                    businessName: client.businessName,
-                                    amount: amount,
-                                    error: chargeRes.raw || 'סירוב מהבנק'
-                                }).catch(console.error);
-                            });
-                            await this.saveClients();
-                        }
-                    }
-
-                // --- EXPIRY ALERTS ---
-                const noticeHours = 2 * 24; // Hardcoded to 2 days as per requirement
-                const hoursLeft = (expiry - now) / (1000 * 60 * 60);
-
-                const shouldAlert = !client.autoChargeEnabled && 
-                                   hoursLeft > 0 && hoursLeft <= noticeHours && 
-                                   client.lastExpiryAlertDate !== client.subscriptionExpiry;
-
-                if (shouldAlert) {
-                    results.expired++;
-                    const bizConfig = await this.getCompanyConfig(client.id);
-                    const subRes = await this.calculateSubscriptionAmount(client.id);
-                    const amount = subRes.amount;
-
-                    emailService.sendSubscriptionAlert(
-                        client.email,
-                        client.businessName,
-                        Math.ceil(hoursLeft / 24),
-                        client.subscriptionExpiry,
-                        bizConfig.logoUrl,
-                        amount
-                    ).then(() => {
-                        client.lastExpiryAlertDate = client.subscriptionExpiry;
-                        this.saveClients().catch(console.error);
-                    }).catch(console.error);
-                } else if (expiry < now) {
-                    results.expired++;
-                } else {
-                    results.valid++;
-                }
-            } catch (e) {
-                this.logMaintenance('ERROR', `Sub-check failed for ${client.id}: ${e.message}`);
-                results.failures.push(e.message);
+                const res = await this.processSingleClientSubscription(client, isManual, sysConfig, now);
+                if (res.charged) results.charged++;
+                if (res.expired) results.expired++;
+                if (res.valid) results.valid++;
+                if (res.failure) results.failures.push(res.failure.error);
+            } catch (err) {
+                this.logMaintenance('ERROR', `Sub-check failed for ${client.id}: ${err.message}`);
+                results.failures.push(err.message);
             }
         }
-        await this.saveClients();
         return results;
     }
 
-    // Removed Mid-Cycle Auto-Charge Logic (Consolidated into renewal cycle)
-    async checkDeltaBilling(client) {
-        return; // Logic moved to checkSubscriptions renewal loop
-    }
+    /**
+     * Triggers a real charge and renewal for a specific client (Manual Action).
+     */
+    async chargeClientManually(clientId) {
+        const client = CACHE.clients.find(c => c.id === clientId);
+        if (!client) throw new Error(`Business ID ${clientId} not found`);
 
-    async getStorageStats() {
-        const sizes = { total: 0, items: [] };
-
-        const readDirRec = async (dir, relativePath = '') => {
-            try {
-                const files = await fs.readdir(dir);
-                for (const file of files) {
-                    const fullPath = path.join(dir, file);
-                    const relPath = path.join(relativePath, file);
-                    const stat = await fs.stat(fullPath);
-                    if (stat.isDirectory()) {
-                        await readDirRec(fullPath, relPath);
-                    } else {
-                        sizes.total += stat.size;
-                        sizes.items.push({ name: relPath, size: stat.size, timestamp: stat.mtimeMs });
-                    }
-                }
-            } catch (e) { /* ignore missing dirs */ }
-        };
-
-        await readDirRec(this.dataDir);
-        sizes.items.sort((a, b) => b.size - a.size);
-        sizes.items = sizes.items.slice(0, 100); // Only keep top 100 largest files
-        return sizes;
-    }
-
-    async runGlobalArchiveCycle() {
-        console.log(`[DataManager] Global Archive Cycle Triggered at ${new Date().toISOString()}`);
-        for (const client of CACHE.clients) {
-            try {
-                const res = await this.archiveAndCleanup(client.id);
-                if (res.archived > 0) {
-                    console.log(`[DataManager] Cleaned up ${res.archived} months for ${client.id}`);
-                }
-                // Also check subscriptions
-                await this.checkSubscriptions();
-            } catch (err) {
-                console.error(`[DataManager] Cleanup failed for ${client.id}:`, err.message);
-            }
-        }
-    }
-
-    async runMonthlyReports(targetYear = null, targetMonth = null) {
-        // Defaults to previous month if not provided
+        const sysConfig = await this.getSystemConfig();
         const now = new Date();
-        let year = targetYear || now.getFullYear();
-        let month = targetMonth || now.getMonth(); // 0-11. If 0 (Jan), we want Dec of prev year.
 
-        if (!targetYear && month === 0) {
-            month = 12;
-            year -= 1;
-        }
-
-        console.log(`[DataManager] Starting Monthly Reports for ${month}/${year}`);
-
-        let sent = 0;
-        let errors = 0;
-
-        for (const client of CACHE.clients) {
-            if (!client.email) continue;
-            try {
-                const reportData = await this.getShiftsHybrid(client.id, year, month);
-                const bizConfig = await this.getCompanyConfig(client.id);
-
-                await emailService.sendMonthlyReport(
-                    client.email,
-                    reportData,
-                    year,
-                    month,
-                    client.businessName,
-                    bizConfig.settings?.salary || {},
-                    client.id,
-                    bizConfig.logoUrl
-                );
-                sent++;
-
-                // Auto Archive past data to GAS
-                console.log(`[DataManager] Triggering Auto-Archive for ${client.id}`);
-                await this.archiveAndCleanup(client.id);
-
-            } catch (e) {
-                console.error(`[DataManager] Failed report for ${client.id}: ${e.message}`);
-                errors++;
-            }
-        }
-
-        console.log(`[DataManager] Reports Process Complete. Sent: ${sent}, Errors: ${errors}`);
-        return { sent, errors };
-    }
-    // --- GEOLOCATION HELPERS ---
-
-    calculateDistance(lat1, lon1, lat2, lon2) {
-        const R = 6371e3; // metres
-        const φ1 = lat1 * Math.PI / 180;
-        const φ2 = lat2 * Math.PI / 180;
-        const Δφ = (lat2 - lat1) * Math.PI / 180;
-        const Δλ = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c; // in metres
-    }
-
-    isPointInPolygon(lat, lng, polygon) {
-        if (!polygon || polygon.length < 3) return false;
-        let inside = false;
-        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-            const xi = polygon[i].lat, yi = polygon[i].lng;
-            const xj = polygon[j].lat, yj = polygon[j].lng;
-            const intersect = ((yi > lng) !== (yj > lng)) && (lat < (xj - xi) * (lng - yi) / (yj - yi) + xi);
-            if (intersect) inside = !inside;
-        }
-        return inside;
-    }
-
-    calculateDistanceToPolygon(lat, lng, polygon) {
-        if (!polygon || polygon.length < 3) return 0;
-
-        // If inside, distance is 0
-        if (this.isPointInPolygon(lat, lng, polygon)) return 0;
-
-        let minMeters = Infinity;
-        const p = { lat, lng };
-
-        for (let i = 0; i < polygon.length; i++) {
-            const v = polygon[i];
-            const w = polygon[(i + 1) % polygon.length];
-
-            // Nearest projection on segment
-            const l2 = (v.lat - w.lat) ** 2 + (v.lng - w.lng) ** 2;
-            let t = 0;
-            if (l2 > 0) {
-                t = ((p.lat - v.lat) * (w.lat - v.lat) + (p.lng - v.lng) * (w.lng - v.lng)) / l2;
-                t = Math.max(0, Math.min(1, t));
-            }
-
-            const projLat = v.lat + t * (w.lat - v.lat);
-            const projLng = v.lng + t * (w.lng - v.lng);
-
-            const d = this.calculateDistance(lat, lng, projLat, projLng);
-            if (d < minMeters) minMeters = d;
-        }
-        return minMeters;
-    }
-
-    async reportPaymentToGAS(amount) {
-        if (!amount || isNaN(parseFloat(amount))) return;
+        // Process with isManual=true to bypass the "1 day before" imminent check
+        const res = await this.processSingleClientSubscription(client, true, sysConfig, now);
         
-        const gasUrl = "https://script.google.com/macros/s/AKfycby8ysV1QxiL1PKABQ99mF1CFK4h9a3vdGhwfXrRt-FTodtgcViykv7-wanVuF1i7iHx/exec";
-        try {
-            console.log(`[GAS-API] Reporting payment/credit: ${amount}`);
-            // Use a short timeout to prevent blocking
-            await axios.post(gasUrl, {
-                action: "ADD_TO_SHEET2",
-                number: parseFloat(amount)
-            }, { timeout: 10000 });
-            console.log(`[GAS-API] Success reporting ${amount}`);
-        } catch (e) {
-            console.error(`[GAS-API] Failed to report ${amount}:`, e.message);
+        if (res.error) {
+            return { success: false, message: res.error, code: res.code };
         }
+        
+        return { 
+            success: true, 
+            message: `חיוב וחידוש המנוי של ${client.businessName} בוצעו בהצלחה`,
+            confirmationCode: res.confirmCode
+        };
+    }
+
+    /**
+     * Core logic for processing a single client's subscription/charge cycle.
+     * Supports both automated hourly scans and manual per-business triggers.
+     */
+    async processSingleClientSubscription(client, isManual, sysConfig, now = new Date()) {
+        const res = { charged: false, expired: false, valid: true, failure: null };
+        if (!client.subscriptionExpiry) return res;
+
+        const expiry = new Date(client.subscriptionExpiry);
+        const hoursLeft = (expiry - now) / (1000 * 60 * 60);
+        const daysLeft = hoursLeft / 24;
+        
+        // --- PRECISION BILLING SAFEGUARDS ---
+        // 1. Charge only if expiry is in <= 1 day, OR if it's a forced manual override
+        const isImminentOrExpired = daysLeft <= 1;
+        const shouldForce = isManual; 
+        
+        // 2. Globally auto-billing must be ON (unless it's a manual trigger)
+        const globalAutoBilling = sysConfig.autoBillingEnabled !== false;
+        
+        // 3. System-wide auto-renewal must be ON
+        const globalAutoRenewal = sysConfig.autoRenewalEnabled !== false;
+
+        // Perform charge only if imminent/expired OR manual, AND has token, AND billing is globally enabled (or manual bypass)
+        if ((isImminentOrExpired || shouldForce) && client.paymentMethod?.token && (globalAutoBilling || isManual)) {
+            const activeCount = await this.countUniqueActiveEmployees(client.id);
+            const subRes = await this.calculateSubscriptionAmount(client.id);
+            const amount = subRes.amount;
+
+            let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: 'סכום 0 ₪ - חודש חינם' };
+            const pdesc = `TempusGeo - מנוי ל-${activeCount} עובדים`;
+
+            if (amount >= 1) {
+                this.logMaintenance('BILLING', `🔄 Executing ${isManual ? 'MANUAL' : 'AUTOMATED'} charge for ${client.businessName} (₪${amount})`);
+
+                chargeRes = await tranzilaService.chargeToken({
+                    supplier: sysConfig.tranzilaTerminal,
+                    TranzilaPW: sysConfig.tranzilaPass,
+                    sum: amount,
+                    currency: 1,
+                    pdesc: pdesc,
+                    TranzilaTK: client.paymentMethod.token,
+                    expmonth: client.paymentMethod.expMonth,
+                    expyear: client.paymentMethod.expYear,
+                    myid: client.paymentMethod.cardHolderId || client.id,
+                    company: client.paymentMethod.businessId || client.businessName, 
+                    contact: client.paymentMethod.cardHolderName || client.businessName,
+                    mycvv: client.paymentMethod.cvv
+                });
+            }
+
+            if (chargeRes.success) {
+                client.billingFailed = false;
+                this.logMaintenance('BILLING', `✅ Payment approved for ${client.businessName} (₪${amount})`);
+                
+                this.reportPaymentToGAS(amount).catch(err => console.error(`[DataManager] GAS Report Failed:`, err.message));
+
+                if (!client.paymentHistory) client.paymentHistory = [];
+                client.paymentHistory.push({
+                    date: new Date().toLocaleDateString('he-IL'),
+                    fullDate: new Date().toISOString(),
+                    amount,
+                    currency: 'ILS',
+                    description: `${isManual ? 'חיוב והארכה ידנית' : 'חידוש מנוי אוטומטי'} - ${activeCount} עובדים`,
+                    method: isManual ? 'Manual-Admin' : 'Auto-Billing',
+                    status: 'PAID',
+                    statusDisplayName: 'שולם',
+                    reference: chargeRes.confirmationCode
+                });
+                res.charged = true;
+                res.confirmCode = chargeRes.confirmationCode;
+
+                // Renew subscription only if client/global settings allow, or if manual override
+                if ((client.autoChargeEnabled || isManual) && globalAutoRenewal) {
+                    const nextExpiry = new Date(expiry);
+                    // If far in the past, renew from TODAY instead of compounding legacy months
+                    if (expiry < now) nextExpiry.setTime(now.getTime());
+                    
+                    nextExpiry.setMonth(nextExpiry.getMonth() + 1);
+                    nextExpiry.setDate(1);
+                    nextExpiry.setHours(4, 0, 0, 0);
+
+                    client.subscriptionExpiry = nextExpiry.toISOString();
+                    client.subscriptionDate = (expiry < now ? now : expiry).toISOString();
+                    
+                    this.logMaintenance('RENEWAL', `✅ Subscription extended for ${client.businessName}. Next: ${nextExpiry.toLocaleDateString('he-IL')} 04:00`);
+                }
+
+                client.lastBilledEmployeeCount = activeCount;
+                await this.saveClients();
+            } else {
+                client.billingFailed = true;
+                this.logMaintenance('BILLING', `❌ Payment rejected for ${client.businessName}: ${chargeRes.raw || 'Bank decline'}`);
+                res.error = chargeRes.raw || 'Bank decline';
+                res.code = chargeRes.confirmationCode;
+                res.failure = { id: client.id, name: client.businessName, error: res.error };
+                
+                // Alert client in case of automated failure
+                if (!isManual) {
+                    emailService.sendPaymentFailedNotification(client.email, {
+                        businessName: client.businessName,
+                        amount: amount,
+                        error: res.error
+                    }).catch(console.error);
+                }
+            }
+        }
+
+        // --- EXPIRY ALERTS ---
+        const noticeHours = 2 * 24; // Strict 2-day warning
+        if (!client.autoChargeEnabled && hoursLeft > 0 && hoursLeft <= noticeHours && client.lastExpiryAlertDate !== client.subscriptionExpiry) {
+            res.expired = true;
+            const bizConfig = await this.getCompanyConfig(client.id);
+            const subRes = await this.calculateSubscriptionAmount(client.id);
+            
+            emailService.sendSubscriptionAlert(
+                client.email,
+                client.businessName,
+                Math.ceil(hoursLeft / 24),
+                client.subscriptionExpiry,
+                bizConfig.logoUrl,
+                subRes.amount
+            ).then(() => {
+                client.lastExpiryAlertDate = client.subscriptionExpiry;
+                this.saveClients().catch(console.error);
+            }).catch(console.error);
+            
+            this.logMaintenance('RENEWAL', `Sent expiry alert to ${client.businessName}`);
+        } else if (expiry < now) {
+            res.expired = true;
+        }
+
+        return res;
     }
 }
 
-
-const manager = new DataManager();
-module.exports = manager;
+module.exports = new DataManager();
