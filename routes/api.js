@@ -47,7 +47,8 @@ router.post('/dispatch', async (req, res) => {
             }
 
             const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month, name);
-            const wageResult = WageCalculator.calculateBreakdown(empShifts, bizConfig.settings?.salary || {}, holidayDates);
+            const workWeekType = bizConfig.settings?.constraints?.[name]?.workWeekType || '5day';
+            const wageResult = WageCalculator.calculateBreakdown(empShifts, bizConfig.settings?.salary || {}, holidayDates, workWeekType);
             const formatTime = d => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' });
             return {
                 totalHours: formatHHMM(wageResult.totalHours),
@@ -81,7 +82,8 @@ router.post('/dispatch', async (req, res) => {
                 if (Date.now() - parseInt(lastShift.end) < forceThreshold) {
                     const bizConfig = await dataManager.getCompanyConfig(cid);
                     const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month, name);
-                    const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates);
+                    const workWeekType = bizConfig.settings?.constraints?.[name]?.workWeekType || '5day';
+                    const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates, workWeekType);
                     
                     const startDate = new Date(parseInt(lastShift.start));
                     const endDate = new Date(parseInt(lastShift.end));
@@ -302,7 +304,8 @@ router.post('/dispatch', async (req, res) => {
                 });
 
                 const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, parseInt(rest.year), parseInt(rest.month), rest.name);
-                const wageResult = WageCalculator.calculateBreakdown(rawShifts, bizConfig.settings?.salary || {}, holidayDates);
+                const workWeekType = bizConfig.settings?.constraints?.[rest.name]?.workWeekType || '5day';
+                const wageResult = WageCalculator.calculateBreakdown(rawShifts, bizConfig.settings?.salary || {}, holidayDates, workWeekType);
 
                 return res.json({
                     success: true,
@@ -437,6 +440,7 @@ router.post('/dispatch', async (req, res) => {
                     // But 'getFullHistory' might span multiple months/years.
                     // It's better to build a custom set of dates for this employee across all time.
                     
+                    const workWeekType = config.settings?.constraints?.[employeeName]?.workWeekType || '5day';
                     const eligibleNames = config.settings?.constraints?.[employeeName]?.qualifyingHolidays || config.settings?.salary?.holidays?.eligible;
                     const employeeHolidayDates = [];
                     holidays.forEach(h => {
@@ -449,7 +453,7 @@ router.post('/dispatch', async (req, res) => {
                     for (const shift of shifts) {
                         if (shift.start && shift.end) {
                             try {
-                                const report = WageCalculator.calculateBreakdown([shift], salarySettings, uniqueEmpHolidayDates);
+                                const report = WageCalculator.calculateBreakdown([shift], salarySettings, uniqueEmpHolidayDates, workWeekType);
                                 shift.weightedTotal = report.weightedTotal;
                             } catch (e) {
                                 shift.weightedTotal = 0;
