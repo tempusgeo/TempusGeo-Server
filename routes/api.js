@@ -468,8 +468,11 @@ router.post('/dispatch', async (req, res) => {
                 const client = await dataManager.getClientById(companyId);
 
                 const now = new Date();
-                const expiry = client?.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
-                const isExpired = expiry < now;
+                const expiryDate = client?.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
+                const graceDate = new Date(expiryDate.getTime() + 48 * 60 * 60 * 1000); // 48 hours grace
+                
+                const isExpired = now > graceDate;
+                const inGracePeriod = now > expiryDate && now <= graceDate;
 
                 const activeEmployees = await dataManager.countUniqueActiveEmployees(companyId);
                 const expectedPayment = await dataManager.calculateSubscriptionAmount(companyId);
@@ -485,6 +488,7 @@ router.post('/dispatch', async (req, res) => {
                     paymentHistory: client?.paymentHistory || [],
                     expiryDate: client?.subscriptionExpiry,
                     isExpired: isExpired,
+                    inGracePeriod: inGracePeriod,
                     paymentMethod: client?.paymentMethod || null,
                     autoChargeEnabled: client?.autoChargeEnabled || false,
                     activeEmployees: activeEmployees,
@@ -1131,7 +1135,8 @@ router.post('/admin/data', async (req, res) => {
             allEmployees: await dataManager.getEmployees(companyId),
             paymentHistory: client.lastPayment ? [client.lastPayment] : [],
             expiryDate: client.subscriptionExpiry ? new Date(client.subscriptionExpiry).toLocaleDateString('he-IL') : 'Unknown',
-            isExpired: client.subscriptionExpiry ? new Date(client.subscriptionExpiry) < new Date() : false
+            isExpired: client.subscriptionExpiry ? new Date(new Date(client.subscriptionExpiry).getTime() + 48*60*60*1000) < new Date() : false,
+            inGracePeriod: client.subscriptionExpiry ? (new Date(client.subscriptionExpiry) < new Date() && new Date(new Date(client.subscriptionExpiry).getTime() + 48*60*60*1000) >= new Date()) : false
         });
 
     } catch (e) {
