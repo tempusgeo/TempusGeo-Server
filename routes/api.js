@@ -1795,6 +1795,18 @@ router.post('/maintenance/subscription-check', maintenanceAuth, async (req, res)
     }
 });
 
+router.post('/maintenance/charge-client', maintenanceAuth, async (req, res) => {
+    try {
+        const { clientId } = req.body;
+        if (!clientId) return res.status(400).json({ success: false, error: 'Missing clientId' });
+        
+        const result = await dataManager.chargeClientManually(clientId);
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 router.get('/maintenance/logs', maintenanceAuth, async (req, res) => {
     const category = req.query.category;
     if (category && dataManager.maintenanceLogs[category]) {
