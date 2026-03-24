@@ -116,12 +116,19 @@ router.post('/dispatch', async (req, res) => {
                 const config = await dataManager.getCompanyConfig(companyId);
                 if (!config) return res.json({ success: false, error: 'Company not found' });
                 
+                const client = await dataManager.getClientById(companyId);
                 const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
+                
                 return res.json({ 
                     success: true, 
                     config: {
                         ...config,
-                        maxShiftHours: sysConfig.maxShiftHours || 12
+                        maxShiftHours: sysConfig.maxShiftHours || 12,
+                        // Include critical subscription state
+                        paymentMethod: client?.paymentMethod || null,
+                        autoChargeEnabled: !!client?.autoChargeEnabled,
+                        subscriptionExpiry: client?.subscriptionExpiry || null,
+                        paymentHistory: client?.paymentHistory || []
                     }
                 });
             }
@@ -555,9 +562,10 @@ router.post('/dispatch', async (req, res) => {
 
                 if (tranzilaRes.success && tranzilaRes.token) {
                     // 2. Save Token in Business Config
-                    const last4 = cardNumber.slice(-4);
+                    const trimmedToken = tranzilaRes.token.trim();
+                    const last4 = cardNumber.replace(/\s/g, '').slice(-4);
                     await dataManager.saveClientPaymentMethod(companyId, {
-                        token: tranzilaRes.token,
+                        token: trimmedToken,
                         last4: last4,
                         expMonth: expMonth,
                         expYear: expYear,
@@ -1690,7 +1698,8 @@ router.post('/payment/process', async (req, res) => {
         // 5. Handle JSON response from our PHP proxy
         // PHP returns: { success, response_code, token, full_data: {...} }
         const responseCode = proxyData.response_code || (proxyData.full_data && proxyData.full_data.Response) || '';
-        const tranzilaTK = proxyData.token || (proxyData.full_data && proxyData.full_data.TranzilaTK) || null;
+        const tranzilaTKRaw = proxyData.token || (proxyData.full_data && proxyData.full_data.TranzilaTK) || null;
+        const tranzilaTK = tranzilaTKRaw ? tranzilaTKRaw.trim() : null;
         const fullData = proxyData.full_data || {};
 
         console.log('[Payment] PHP proxy response - success:', proxyData.success, 'code:', responseCode, 'token:', tranzilaTK ? 'present' : 'absent');
@@ -1700,8 +1709,12 @@ router.post('/payment/process', async (req, res) => {
         const isChargeSuccess = !isJ5 && responseCode === '000';
 
         if (isTokenSuccess || isChargeSuccess) {
+            // Extract last4 from ccno (cardNumber)
+            const last4 = (cardInfo.ccno || cardInfo.cardNumber || '').toString().replace(/\s/g, '').slice(-4);
+
             const pMethod = tranzilaTK ? {
                 token: tranzilaTK,
+                last4: last4,
                 expMonth: mm,
                 expYear: yy,
                 cardHolderId: myid,
