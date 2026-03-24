@@ -237,7 +237,7 @@ class DataManager {
             for (const companyId of folders) {
                 // Check if folder is in CACHE.clients OR is a protected internal folder
                 const existsInMaster = CACHE.clients.some(c => c.id === companyId);
-                const isInternal = companyId.startsWith('__'); // Ignore __SYSTEM__, etc.
+                const isInternal = companyId.startsWith('__') || companyId === 'NEW_SETUP'; // Ignore __SYSTEM__, NEW_SETUP, etc.
 
                 if (!existsInMaster && !isInternal) {
                     console.log(`[Orphan-Discovery] Found ghost client: ${companyId}. Attempting reconciliation...`);
@@ -732,6 +732,8 @@ class DataManager {
     }
 
     async updateCompanyConfig(companyId, newConfig) {
+        if (!companyId || companyId === 'NEW_SETUP') return; // Prevent ghost company creation
+        
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
         // Merge deep
