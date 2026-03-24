@@ -48,6 +48,12 @@ class WageCalculator {
         const weStartMins = timeToMinutes(salarySettings.weekend?.startHour || salarySettings.weekendStart || '15:00');
         const weEndMins = timeToMinutes(salarySettings.weekend?.endHour || salarySettings.weekendEnd || '20:00');
 
+        // Break Settings
+        const breakSettings = salarySettings.breaks || {};
+        const minShiftMins = timeToMinutes(breakSettings.minShift || '06:00');
+        const breakWeekdayMins = timeToMinutes(breakSettings.weekday || '00:45');
+        const breakSpecialMins = timeToMinutes(breakSettings.special || '00:30');
+
         // Overtime configuration (Fallback to default Israeli law 100% 8h, 125% 2h, 150% rest)
         const otMapObj = salarySettings.overtimeRates || {};
         const otMapArr = salarySettings.overtimeMapping || [0, 0, 0, 0, 0, 0, 0, 0, 0.25, 0.25, 0.5, 0.5]; // Support legacy
@@ -65,14 +71,13 @@ class WageCalculator {
 
             if (isNaN(shiftStart) || isNaN(shiftEnd)) return;
 
-            const diffMs = shiftEnd - shiftStart;
-            let totalShiftHours = diffMs / 3600000;
-            totalHoursAll += totalShiftHours;
+            const diffMs = endMs - startMs;
+            const totalShiftMinutes = Math.floor(diffMs / 60000);
 
             // Helper to check if a specific timestamp is "Special" (Shabbat/Holiday)
             const getIsSpecial = (timestamp) => {
                 const loc = getLocalized(timestamp);
-                const dayOfWeek = loc.dayOfWeekNum; 
+                const dayOfWeek = loc.dayOfWeekNum;
                 const minsFromMidnight = loc.hours * 60 + loc.minutes;
                 const isoDate = loc.isoDate;
 
@@ -83,42 +88,88 @@ class WageCalculator {
                 if (dayOfWeek === 6 && minsFromMidnight < weEndMins) return true; // Sat
 
                 // 2. Holiday Check
-                // We need tomorrow to detect Eve start
                 const tomorrowLoc = getLocalized(timestamp + 86400000);
                 const isTomorrowHoliday = holidayDates.includes(tomorrowLoc.isoDate);
 
                 if (!isTodayHoliday && isTomorrowHoliday) {
-                    // EVE: Today NOT holiday, Tomorrow IS. Starts at weStartMins.
                     if (minsFromMidnight >= weStartMins) return true;
                 } else if (isTodayHoliday && isTomorrowHoliday) {
-                    // MIDDLE: Both IS holiday. Full day.
                     return true;
                 } else if (isTodayHoliday && !isTomorrowHoliday) {
-                    // END: Today IS holiday, Tomorrow NOT. Ends at weEndMins.
                     if (minsFromMidnight < weEndMins) return true;
                 }
 
                 return false;
             };
 
-            // Iterate minute by minute
-            const totalMinutes = Math.floor(diffMs / 60000);
-            for (let m = 0; m < totalMinutes; m++) {
-                const currentTs = startMs + (m * 60000);
-                const isSpecialNow = getIsSpecial(currentTs);
+            // 1. Collect all minutes with their "Special" status
+            let minutes = [];
+            for (let m = 0; m < totalShiftMinutes; m++) {
+                const ts = startMs + (m * 60000);
+                minutes.push({ isSpecial: getIsSpecial(ts) });
+            }
 
-                // Which hour of the shift are we in? (1-indexed)
-                const hourIndex = Math.floor(m / 60) + 1;
+            // 2. Handle fractional last minute
+            const remainingMs = diffMs % 60000;
+            let fraction = 0;
+            let fractionIsSpecial = false;
+            if (remainingMs > 0) {
+                fraction = remainingMs / 3600000;
+                fractionIsSpecial = getIsSpecial(startMs + (totalShiftMinutes * 60000));
+            }
 
+            // 3. Apply Break Deduction if eligible
+            if (totalShiftMinutes >= minShiftMins) {
+                const startLoc = getLocalized(startMs);
+                const tomorrowTs = startMs + 86400000;
+                const isEve = holidayDates.includes(getLocalized(tomorrowTs).isoDate);
+                const isFriday = startLoc.dayOfWeekNum === 5;
+                const isSpecialStart = getIsSpecial(startMs);
+                const isSpecialDay = isFriday || isEve || isSpecialStart;
+
+                const deductCount = isSpecialDay ? breakSpecialMins : breakWeekdayMins;
+
+                if (deductCount > 0) {
+                    // Remove minutes prioritizing regular (non-special) ones
+                    let regularIndices = [];
+                    let specialIndices = [];
+                    minutes.forEach((min, idx) => {
+                        if (min.isSpecial) specialIndices.push(idx);
+                        else regularIndices.push(idx);
+                    });
+
+                    let toRemove = new Set();
+                    // First deduct from regular
+                    const regToRemove = Math.min(deductCount, regularIndices.length);
+                    for (let i = 0; i < regToRemove; i++) toRemove.add(regularIndices[i]);
+
+                    // Then from special if regular not enough
+                    const specToRemove = deductCount - regToRemove;
+                    if (specToRemove > 0) {
+                        for (let i = 0; i < Math.min(specToRemove, specialIndices.length); i++) toRemove.add(specialIndices[i]);
+                    }
+
+                    minutes = minutes.filter((_, idx) => !toRemove.has(idx));
+                    
+                    // If we still have deduction left, apply to the fractional part
+                    const finalDeductLeft = deductCount - (regToRemove + Math.min(specToRemove, specialIndices.length));
+                    if (finalDeductLeft > 0) {
+                        // This usually means the entire shift was shorter than the break (unlikely if > 6h)
+                        // but for safety, just zero the fraction
+                        fraction = 0;
+                    } else if (toRemove.size === deductCount) {
+                        // Fully deducted from minutes
+                    }
+                }
+            }
+
+            // 4. Process processed minutes to build breakdown (Overtime applies to worked time)
+            minutes.forEach((min, i) => {
+                const hourIndex = Math.floor(i / 60) + 1;
                 let ratePercent = 100;
 
-                if (isSpecialNow) {
-                    let addedRate = 0.5; // Default 150%
-                    if (weMapObj[`h${hourIndex}`] !== undefined) {
-                        addedRate = parseFloat(weMapObj[`h${hourIndex}`]);
-                    } else if (hourIndex >= 9) {
-                        addedRate = 0.75; // Default 175%
-                    }
+                if (min.isSpecial) {
+                    let addedRate = weMapObj[`h${hourIndex}`] !== undefined ? parseFloat(weMapObj[`h${hourIndex}`]) : (hourIndex >= 9 ? 0.75 : 0.5);
                     ratePercent = 100 + (addedRate * 100);
                 } else {
                     let addedRate = 0;
@@ -127,7 +178,6 @@ class WageCalculator {
                     } else if (otMapArr && otMapArr[hourIndex - 1] !== undefined) {
                         addedRate = parseFloat(otMapArr[hourIndex - 1]);
                     } else {
-                        // Default Israeli Law Overtime
                         if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
                         else if (hourIndex >= 11) addedRate = 0.5;
                     }
@@ -135,20 +185,16 @@ class WageCalculator {
                 }
 
                 if (!breakdown[ratePercent]) breakdown[ratePercent] = 0;
-                breakdown[ratePercent] += (1 / 60); // Add 1 minute as fraction of hour
-            }
+                breakdown[ratePercent] += (1 / 60);
+                totalHoursAll += (1 / 60);
+            });
 
-            // Handle remaining seconds/fractional minute if any
-            const remainingMs = diffMs % 60000;
-            if (remainingMs > 0) {
-                const currentTs = startMs + (totalMinutes * 60000);
-                const isSpecialNow = getIsSpecial(currentTs);
-                const hourIndex = Math.floor(totalMinutes / 60) + 1;
-                const fractionOfHour = remainingMs / 3600000;
-
+            // Handle the fraction if anything left
+            if (fraction > 0) {
+                const hourIndex = Math.floor(minutes.length / 60) + 1;
                 let ratePercent = 100;
-                // Same rate logic as above (DRY note: in production this would be a function)
-                if (isSpecialNow) {
+
+                if (fractionIsSpecial) {
                     let addedRate = weMapObj[`h${hourIndex}`] !== undefined ? parseFloat(weMapObj[`h${hourIndex}`]) : (hourIndex >= 9 ? 0.75 : 0.5);
                     ratePercent = 100 + (addedRate * 100);
                 } else {
@@ -164,14 +210,15 @@ class WageCalculator {
                     ratePercent = 100 + (addedRate * 100);
                 }
                 if (!breakdown[ratePercent]) breakdown[ratePercent] = 0;
-                breakdown[ratePercent] += fractionOfHour;
+                breakdown[ratePercent] += fraction;
+                totalHoursAll += fraction;
             }
         });
 
         // Format to 2 decimals
         for (const key in breakdown) {
             breakdown[key] = parseFloat(breakdown[key].toFixed(2));
-            if (breakdown[key] === 0) delete breakdown[key];
+            if (breakdown[key] <= 0) delete breakdown[key];
         }
 
         // Calculate weightedTotal for wages
