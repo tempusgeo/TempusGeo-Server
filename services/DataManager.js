@@ -2110,7 +2110,7 @@ class DataManager {
             subscriptionDate: new Date().toISOString(), // Initial registration date
             joinedAt: new Date().toISOString(),
 
-            autoChargeEnabled: !!pMethodSafe,
+            autoChargeEnabled: true, // Default to true as per requirement
             paymentMethod: pMethodSafe
         };
 
@@ -2615,7 +2615,7 @@ class DataManager {
                     }
 
                 // --- EXPIRY ALERTS ---
-                const noticeHours = (parseInt(sysConfig.subscriptionExpiryNotice) || 1) * 24;
+                const noticeHours = 2 * 24; // Hardcoded to 2 days as per requirement
                 const hoursLeft = (expiry - now) / (1000 * 60 * 60);
 
                 const shouldAlert = !client.autoChargeEnabled && 
