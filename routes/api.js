@@ -179,7 +179,7 @@ router.post('/dispatch', async (req, res) => {
             case 'getPublicPaymentConfig': {
                 // Return the system payment config (for employees to initiate subscription renewal)
                 const sysConfig = await dataManager.getSystemConfig();
-                const active = !!(sysConfig.tranzilaTerminal && sysConfig.tranzilaPass && sysConfig.tranzilaPlans && sysConfig.tranzilaPlans.length > 0);
+                const active = !!(sysConfig.tranzilaTerminal && sysConfig.tranzilaPass);
                 return res.json({
                     success: true,
                     active,
