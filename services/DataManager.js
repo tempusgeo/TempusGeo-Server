@@ -454,7 +454,7 @@ class DataManager {
                 const sysConfig = await this.getSystemConfig();
                 const chargeDay = parseInt(sysConfig.chargeDay) || 1;
                 const chargeTime = sysConfig.chargeTime || "00:00";
-                const nextCycle = this.getNextBillingDate(chargeDay, chargeTime);
+                const nextCycle = this.getNextBillingDate();
                 
                 // The month to count for is the calendar month before the next cycle
                 const targetDate = new Date(nextCycle);
@@ -494,7 +494,7 @@ class DataManager {
             const chargeDay = parseInt(sysConfig.chargeDay) || 1;
             const chargeTime = sysConfig.chargeTime || "00:00";
 
-            const nextCycle = this.getNextBillingDate(chargeDay, chargeTime);
+            const nextCycle = this.getNextBillingDate();
             const targetDate = new Date(nextCycle);
             targetDate.setMonth(targetDate.getMonth() - 1);
             const targetYear = targetDate.getFullYear();
@@ -600,131 +600,20 @@ class DataManager {
      * If today is before the charge time on the charge day, returns today at charge time.
      * Otherwise returns the charge day/time in the next month.
      */
-    getNextBillingDate(chargeDay, chargeTime) {
+    /**
+     * Always returns the 1st of the next month at 04:00 AM Israel Time.
+     * This is now the rigid system standard.
+     */
+    getNextBillingDate() {
         const now = new Date();
-        const day = parseInt(chargeDay) || 1;
-        const [h, m] = (chargeTime || '00:00').split(':').map(Number);
-
-        // Try this month
-        const thisMonth = new Date(now.getFullYear(), now.getMonth(), day, h, m, 0, 0);
-        // Add a 2-hour grace period so automatic billing processing stays in the current cycle
-        const gracePeriodEnd = new Date(thisMonth.getTime() + 2 * 60 * 60 * 1000);
-        
-        if (gracePeriodEnd > now) return thisMonth;
-
-        // Otherwise next month
-        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, day, h, m, 0, 0);
-        return nextMonth;
+        // Move to the 1st of NEXT month (or current month if it's before the 1st @ 04:00, but usually we just want next cycle)
+        const target = new Date(now.getFullYear(), now.getMonth() + 1, 1, 4, 0, 0, 0);
+        return target;
     }
 
-    async checkAndProcessAutoCharge() {
-        const sysConfig = await this.getSystemConfig();
-        const chargeDay = sysConfig.chargeDay || 1;
-        const chargeTime = sysConfig.chargeTime || "00:00"; // format HH:MM
+    // legacy checkAndProcessAutoCharge and processAutoChargeCycle removed.
+    // All automated logic is now unified in checkSubscriptions() which runs hourly.
 
-        const now = new Date();
-        if (now.getDate() !== chargeDay) return; // Not the day
-
-        const [chargeH, chargeM] = chargeTime.split(':').map(Number);
-        const currentH = now.getHours();
-        const currentM = now.getMinutes();
-
-        // Check window (e.g., within 10 minutes of chargeTime)
-        if (currentH !== chargeH || currentM < chargeM || currentM > chargeM + 10) return;
-
-        console.log(`[Auto-Charge] ⚡ Starting automatic billing cycle for day ${chargeDay}, time ${chargeTime}`);
-
-        // Prevent multiple runs in same window
-        if (this._lastChargeRun === now.toDateString()) return;
-        this._lastChargeRun = now.toDateString();
-
-        await this.processAutoChargeCycle();
-    }
-
-    async processAutoChargeCycle() {
-        const clientsToCharge = CACHE.clients.filter(c => c.autoChargeEnabled && c.paymentMethod?.token);
-        console.log(`[Auto-Charge] Found ${clientsToCharge.length} clients eligible for auto-charge.`);
-
-        for (const client of clientsToCharge) {
-            try {
-                const activeCount = await this.countUniqueActiveEmployees(client.id);
-                const subRes = await this.calculateSubscriptionAmount(client.id);
-                const amount = subRes.amount;
-
-                if (amount <= 0) {
-                    console.log(`[Auto-Charge] Skipping ${client.businessName} (Amount 0)`);
-                    continue;
-                }
-
-                console.log(`[Auto-Charge] Charging ${client.businessName}: ₪${amount} for ${activeCount} active employees.`);
-
-                const chargeRes = await tranzilaService.chargeToken({
-                    supplier: sysConfig.tranzilaTerminal,
-                    TranzilaPW: sysConfig.tranzilaPass,
-                    sum: amount,
-                    currency: 1, // ILS
-                    pdesc: `מנוי TempusGeo - ${activeCount} עובדים`,
-                    TranzilaTK: client.paymentMethod.token,
-                    expmonth: client.paymentMethod.expMonth,
-                    expyear: client.paymentMethod.expYear,
-                    myid: client.paymentMethod.cardHolderId || client.id,
-                    contact: client.paymentMethod.cardHolderName,
-                    mycvv: client.paymentMethod.cvv
-                });
-
-                if (chargeRes.success) {
-                    console.log(`[Auto-Charge] ✅ Success for ${client.businessName}. Confirmation: ${chargeRes.confirmationCode}`);
-
-                    // Update Expiry: Add 1 month, aligned to the 2nd
-                    const newExpiry = new Date();
-                    newExpiry.setMonth(newExpiry.getMonth() + 2); // To end of next month
-                    newExpiry.setDate(2);
-                    newExpiry.setHours(23, 59, 59, 999);
-
-                    client.subscriptionExpiry = newExpiry.toISOString();
-                    client.subscriptionDate = new Date().toISOString(); // Renewal date for next cycle pro-rata logic
-
-                    if (!client.paymentHistory) client.paymentHistory = [];
-                    client.paymentHistory.push({
-                        date: new Date().toLocaleDateString('he-IL'),
-                        amount,
-                        currency: 'ILS',
-                        period: 1,
-                        method: 'Auto-Charge (Token)',
-                        reference: chargeRes.confirmationCode,
-                        status: 'PAID',
-                        activeEmployees: activeCount
-                    });
-
-                    await this.saveClients();
-
-                    // Report to GAS
-                    this.reportPaymentToGAS(amount).catch(e => console.error(`[DataManager] GAS Report Failed: ${e.message}`));
-
-                    // Send Success Email
-                    emailService.sendPaymentSuccessNotification(client.email, {
-                        businessName: client.businessName,
-                        amount,
-                        newExpiry: newExpiry.toLocaleDateString('he-IL'),
-                        activeEmployees: activeCount
-                    }).catch(e => console.error(`[Auto-Charge Email FAIL] ${e.message}`));
-
-                } else {
-                    console.error(`[Auto-Charge] ❌ Failed for ${client.businessName}: ${chargeRes.raw}`);
-
-                    // Send Failure Notification + WhatsApp Fallback info
-                    emailService.sendPaymentFailedNotification(client.email, {
-                        businessName: client.businessName,
-                        amount,
-                        error: chargeRes.data?.['Error Message'] || 'Transaction Denied'
-                    }).catch(e => console.error(`[Auto-Charge Email (Fail) FAIL] ${e.message}`));
-                }
-
-            } catch (err) {
-                console.error(`[Auto-Charge] Error processing ${client.businessName}:`, err.message);
-            }
-        }
-    }
 
     async syncAllFromGAS() {
         console.log('[DataManager] Forcing full sync from GAS (Ignored local timestamp)');
@@ -2199,7 +2088,8 @@ class DataManager {
 
         // Subscription Expiry Logic: Align with next chargeDay/chargeTime
         const sysConfig = await this.getSystemConfig();
-        const trialExpiry = this.getNextBillingDate(sysConfig.chargeDay, sysConfig.chargeTime);
+        // Target is always the 1st of the NEXT month at 04:00
+        const trialExpiry = this.getNextBillingDate();
 
         let pMethodSafe = null;
         let invoiceDetails = null;
@@ -2338,10 +2228,8 @@ class DataManager {
             // or according to chargeDay from sysConfig. 
             // The user requested: "התשלום הבא יתבצע באופן יחסי - ועלייך לעדכן את ה-SubscriptionDate לזמן הנוכחי"
             // Let's set it to the 2nd of the next month.
-            const nextExpiry = new Date();
-            nextExpiry.setMonth(nextExpiry.getMonth() + 1);
-            nextExpiry.setDate(chargeDay); 
-            nextExpiry.setHours(chargeHour, chargeMin, 0, 0);
+            // Target is always the 1st of the NEXT month at 04:00
+            const nextExpiry = this.getNextBillingDate();
 
             client.subscriptionExpiry = nextExpiry.toISOString();
             client.subscriptionDate = new Date().toISOString(); // Crucial for proration in next cycle
@@ -2489,14 +2377,10 @@ class DataManager {
         const now = new Date();
         let currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
 
-        // Alignment Logic (chargeDay)
-        const chargeDay = parseInt(systemConfig.chargeDay) || 1;
-        const chargeTime = systemConfig.chargeTime || "00:00";
-
         let targetDate;
         if (currentExpiry < now) {
-            // Expired: Start from the very next billing date
-            targetDate = this.getNextBillingDate(chargeDay, chargeTime);
+            // Expired: Start from the very next billing date (1st of next month @ 04:00)
+            targetDate = this.getNextBillingDate();
         } else {
             // Active: Base on current expiry
             targetDate = new Date(currentExpiry);
@@ -2505,10 +2389,9 @@ class DataManager {
         // Add the months from the plan
         targetDate.setMonth(targetDate.getMonth() + monthsToAdd);
 
-        // Ensure it aligns with the chargeDay setting
-        targetDate.setDate(chargeDay);
-        const [h, min] = chargeTime.split(':').map(Number);
-        targetDate.setHours(h, min, 0, 0);
+        // Ensure it aligns with the 1st @ 04:00
+        targetDate.setDate(1);
+        targetDate.setHours(4, 0, 0, 0);
 
         client.subscriptionExpiry = targetDate.toISOString();
 
@@ -2616,18 +2499,7 @@ class DataManager {
         const results = { expired: 0, valid: 0, charged: 0, failures: [] };
         const sysConfig = await this.getSystemConfig();
 
-        // Execution window preference (from settings)
-        const [chargeHour, chargeMin] = (sysConfig.chargeTime || "00:00").split(':').map(Number);
-        
-        // Automated background runs should respect the configured hour
-        if (!isManual) {
-            if (now.getHours() !== chargeHour) {
-                // Not the right time for automated run, silent skip
-                return results;
-            }
-        }
-        
-        this.logMaintenance('BILLING', `${isManual ? 'Manual' : 'Automated'} per-client subscription and renewal check started.`);
+        this.logMaintenance('BILLING', `${isManual ? 'Manual' : 'Automated'} per-client subscription and renewal check started. (Hourly Execution)`);
 
         for (const client of CACHE.clients) {
             try {
@@ -2708,14 +2580,16 @@ class DataManager {
 
                             // Renew subscription only if client's auto-renewal is ON AND global is ON
                             if (client.autoChargeEnabled && globalAutoRenewal) {
+                                // Rigid target: 1st of the month after current expiry @ 04:00
                                 const nextExpiry = new Date(expiry);
                                 nextExpiry.setMonth(nextExpiry.getMonth() + 1);
-                                nextExpiry.setHours(chargeHour, chargeMin, 0, 0);
+                                nextExpiry.setDate(1);
+                                nextExpiry.setHours(4, 0, 0, 0);
 
                                 client.subscriptionExpiry = nextExpiry.toISOString();
                                 client.subscriptionDate = expiry.toISOString();
                                 
-                                this.logMaintenance('RENEWAL', `✅ Automated renewal for ${client.businessName}. New expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
+                                this.logMaintenance('RENEWAL', `✅ Automated renewal for ${client.businessName}. New expiry: ${nextExpiry.toLocaleDateString('he-IL')} 04:00`);
                             }
 
                             client.lastBilledEmployeeCount = activeCount;
