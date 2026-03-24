@@ -208,11 +208,11 @@ class DataManager {
         const client = await this.getClientById(companyId);
         if (!client) throw new Error("Client not found");
 
-        // Extract businessId (invoice details) if provided, but don't store it in paymentMethod object in clients.json
-        // instead store it in config.json as invoiceDetails
-        const { businessId, ...pMethodSafe } = paymentMethod;
-
+        // Store inclusive of businessId (for automated billing receipts)
         client.paymentMethod = pMethodSafe;
+        if (paymentMethod.businessId) {
+            client.paymentMethod.businessId = paymentMethod.businessId;
+        }
         client.autoChargeEnabled = true; // Auto-enable on card save
         await this.saveClients();
 
@@ -435,7 +435,8 @@ class DataManager {
                 expectedPayment,
                 freezeAmount,
                 autoChargeEnabled: !!client.autoChargeEnabled,
-                paymentHistory: client.paymentHistory || []
+                paymentHistory: client.paymentHistory || [],
+                paymentMethod: client.paymentMethod || null
             };
         }));
     }
@@ -2408,11 +2409,13 @@ class DataManager {
             const { businessId, ...pMethodSafe } = paymentMethod;
             client.paymentMethod = {
                 token: pMethodSafe.token,
+                last4: pMethodSafe.last4,
                 expMonth: pMethodSafe.expMonth,
                 expYear: pMethodSafe.expYear,
                 cardHolderId: pMethodSafe.cardHolderId,
                 cardHolderName: pMethodSafe.cardHolderName,
-                cvv: pMethodSafe.cvv
+                cvv: pMethodSafe.cvv,
+                businessId: businessId || pMethodSafe.businessId // Keep for automated receipts
             };
             client.autoChargeEnabled = true; // Auto-enable if card added/updated
             
@@ -2540,7 +2543,8 @@ class DataManager {
                             expmonth: client.paymentMethod.expMonth,
                             expyear: client.paymentMethod.expYear,
                             myid: client.paymentMethod.cardHolderId || client.id,
-                            contact: client.paymentMethod.cardHolderName,
+                            company: client.paymentMethod.businessId || client.businessName, // Invoice details
+                            contact: client.paymentMethod.cardHolderName || client.businessName,
                             mycvv: client.paymentMethod.cvv
                         });
                     } else {
