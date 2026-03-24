@@ -298,7 +298,8 @@ class EmailService {
             for (const [employee, shifts] of Object.entries(reportData)) {
                 try {
                     const holidayDates = await dataManager.getHolidayDatesForMonth(companyId, year, month, employee);
-                    const wageResult = WageCalculator.calculateBreakdown(shifts, salaryConfig, holidayDates);
+                    const workWeekType = bizConfig.settings?.constraints?.[employee]?.workWeekType || '5day';
+                    const wageResult = WageCalculator.calculateBreakdown(shifts, salaryConfig, holidayDates, workWeekType);
 
                     let breakdownHtml = '';
                     for (const [rate, hours] of Object.entries(wageResult.breakdown)) {
