@@ -5,7 +5,7 @@ class WageCalculator {
      * @param {Object} salarySettings - The company's salary/overtime config
      * @returns {Object} { totalHours, breakdown: { rateName: hoursCount } }
      */
-    static calculateBreakdown(shifts, salarySettings = {}, holidayDates = []) {
+    static calculateBreakdown(shifts, salarySettings = {}, holidayDates = [], workWeekType = '5day') {
         let totalHoursAll = 0;
         let breakdown = {
             100: 0
@@ -55,7 +55,10 @@ class WageCalculator {
         const breakSpecialMins = timeToMinutes(breakSettings.special || '00:30');
 
         // Overtime configuration (Fallback to default Israeli law 100% 8h, 125% 2h, 150% rest)
-        const otMapObj = salarySettings.overtimeRates || {};
+        const otMap5 = salarySettings.overtimeRates5 || salarySettings.overtimeRates || {};
+        const otMap6 = salarySettings.overtimeRates6 || {};
+        const frMap5 = salarySettings.fridayRates5 || salarySettings.fridayRates || {};
+        const frMap6 = salarySettings.fridayRates6 || {};
         const otMapArr = salarySettings.overtimeMapping || [0, 0, 0, 0, 0, 0, 0, 0, 0.25, 0.25, 0.5, 0.5]; // Support legacy
 
         // Special Days configuration (Shabbat & Holidays)
@@ -104,9 +107,12 @@ class WageCalculator {
 
             // 1. Collect all minutes with their "Special" status
             let minutes = [];
-            for (let m = 0; m < totalShiftMinutes; m++) {
-                const ts = startMs + (m * 60000);
-                minutes.push({ isSpecial: getIsSpecial(ts) });
+            for (let i = 0; i < totalShiftMinutes; i++) {
+                const currentTs = startMs + (i * 60000);
+                minutes.push({
+                    ts: currentTs,
+                    isSpecial: getIsSpecial(currentTs)
+                });
             }
 
             // 2. Handle fractional last minute
@@ -172,14 +178,44 @@ class WageCalculator {
                     let addedRate = weMapObj[`h${hourIndex}`] !== undefined ? parseFloat(weMapObj[`h${hourIndex}`]) : (hourIndex >= 9 ? 0.75 : 0.5);
                     ratePercent = 100 + (addedRate * 100);
                 } else {
+                    const loc = getLocalized(min.ts);
+                    const isFriday = loc.dayOfWeekNum === 5;
+                    const tomorrowTs = min.ts + 86400000;
+                    const isHolidayEve = holidayDates.includes(getLocalized(tomorrowTs).isoDate);
+
                     let addedRate = 0;
-                    if (otMapObj[`h${hourIndex}`] !== undefined) {
-                        addedRate = parseFloat(otMapObj[`h${hourIndex}`]);
-                    } else if (otMapArr && otMapArr[hourIndex - 1] !== undefined) {
-                        addedRate = parseFloat(otMapArr[hourIndex - 1]);
+                    const thresholdMins = (isFriday || isHolidayEve) ? 420 : ((workWeekType === '6day') ? 480 : 516);
+                    
+                    if (i < thresholdMins) {
+                        addedRate = 0;
                     } else {
-                        if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
-                        else if (hourIndex >= 11) addedRate = 0.5;
+                        const mapToUse = (isFriday || isHolidayEve) 
+                            ? (workWeekType === '6day' ? frMap6 : frMap5)
+                            : (workWeekType === '6day' ? otMap6 : otMap5);
+
+                        if (mapToUse[`h${hourIndex}`] !== undefined) {
+                            addedRate = parseFloat(mapToUse[`h${hourIndex}`]);
+                        } else if (!(isFriday || isHolidayEve) && otMapArr && otMapArr[hourIndex - 1] !== undefined) {
+                            // Only apply legacy array to weekdays
+                            addedRate = parseFloat(otMapArr[hourIndex - 1]);
+                            // Also force 0 if below threshold for legacy
+                            if (i < thresholdMins) addedRate = 0;
+                        } else {
+                            // Default logic
+                            if (isFriday || isHolidayEve) {
+                                if (hourIndex === 8 || hourIndex === 9) addedRate = 0.25;
+                                else if (hourIndex >= 10) addedRate = 0.5;
+                            } else {
+                                if (workWeekType === '6day') {
+                                    if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
+                                    else if (hourIndex >= 11) addedRate = 0.5;
+                                } else {
+                                    // 5-day default (applied after 8.6h)
+                                    if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
+                                    else if (hourIndex >= 11) addedRate = 0.5;
+                                }
+                            }
+                        }
                     }
                     ratePercent = 100 + (addedRate * 100);
                 }
@@ -198,14 +234,37 @@ class WageCalculator {
                     let addedRate = weMapObj[`h${hourIndex}`] !== undefined ? parseFloat(weMapObj[`h${hourIndex}`]) : (hourIndex >= 9 ? 0.75 : 0.5);
                     ratePercent = 100 + (addedRate * 100);
                 } else {
+                    const lastMinTs = minutes.length > 0 ? minutes[minutes.length - 1].ts : startMs;
+                    const loc = getLocalized(lastMinTs + 60000);
+                    const isFriday = loc.dayOfWeekNum === 5;
+                    const tomorrowTs = (lastMinTs + 60000) + 86400000;
+                    const isHolidayEve = holidayDates.includes(getLocalized(tomorrowTs).isoDate);
+
                     let addedRate = 0;
-                    if (otMapObj[`h${hourIndex}`] !== undefined) {
-                        addedRate = parseFloat(otMapObj[`h${hourIndex}`]);
-                    } else if (otMapArr && otMapArr[hourIndex - 1] !== undefined) {
-                        addedRate = parseFloat(otMapArr[hourIndex - 1]);
+                    const thresholdMins = (isFriday || isHolidayEve) ? 420 : ((workWeekType === '6day') ? 480 : 516);
+                    const fractionMinIdx = minutes.length;
+
+                    if (fractionMinIdx < thresholdMins) {
+                        addedRate = 0;
                     } else {
-                        if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
-                        else if (hourIndex >= 11) addedRate = 0.5;
+                        const mapToUse = (isFriday || isHolidayEve) 
+                            ? (workWeekType === '6day' ? frMap6 : frMap5)
+                            : (workWeekType === '6day' ? otMap6 : otMap5);
+
+                        if (mapToUse[`h${hourIndex}`] !== undefined) {
+                            addedRate = parseFloat(mapToUse[`h${hourIndex}`]);
+                        } else if (!(isFriday || isHolidayEve) && otMapArr && otMapArr[hourIndex - 1] !== undefined) {
+                            addedRate = parseFloat(otMapArr[hourIndex - 1]);
+                            if (fractionMinIdx < thresholdMins) addedRate = 0;
+                        } else {
+                            if (isFriday || isHolidayEve) {
+                                if (hourIndex === 8 || hourIndex === 9) addedRate = 0.25;
+                                else if (hourIndex >= 10) addedRate = 0.5;
+                            } else {
+                                if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
+                                else if (hourIndex >= 11) addedRate = 0.5;
+                            }
+                        }
                     }
                     ratePercent = 100 + (addedRate * 100);
                 }
