@@ -2507,7 +2507,8 @@ class DataManager {
 
         // Ensure it aligns with the chargeDay setting
         targetDate.setDate(chargeDay);
-        targetDate.setHours(23, 59, 59, 999);
+        const [h, min] = chargeTime.split(':').map(Number);
+        targetDate.setHours(h, min, 0, 0);
 
         client.subscriptionExpiry = targetDate.toISOString();
 
