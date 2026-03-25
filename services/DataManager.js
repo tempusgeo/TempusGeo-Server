@@ -1207,29 +1207,41 @@ class DataManager {
 
     async getStorageStats() {
         const stats = {
-            companies: CACHE.clients.length,
-            totalFiles: 0,
-            totalSize: 0,
+            total: 0,
+            items: [],
+            ram: process.memoryUsage().rss,
             dataDir: this.dataDir
         };
 
-        const getDirStats = async (dir) => {
+        const getDirStats = async (dir, relativePrefix = "") => {
             try {
                 const items = await fs.readdir(dir);
                 for (const item of items) {
                     const fullPath = path.join(dir, item);
                     const stat = await fs.stat(fullPath);
+                    const relativeName = path.join(relativePrefix, item).replace(/\\/g, '/');
+
                     if (stat.isDirectory()) {
-                        await getDirStats(fullPath);
+                        await getDirStats(fullPath, relativeName);
                     } else {
-                        stats.totalFiles++;
-                        stats.totalSize += stat.size;
+                        stats.total += stat.size;
+                        stats.items.push({
+                            name: relativeName,
+                            size: stat.size,
+                            timestamp: stat.mtimeMs || Date.now()
+                        });
                     }
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error(`[Storage-Stats] Error reading ${dir}:`, e.message);
+            }
         };
 
         await getDirStats(this.dataDir).catch(() => {});
+        
+        // Sort items by name for consistent UI
+        stats.items.sort((a, b) => a.name.localeCompare(b.name));
+        
         return stats;
     }
 
