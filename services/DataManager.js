@@ -496,8 +496,6 @@ class DataManager {
             const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 0;
             const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 0;
 
-            const chargeDay = parseInt(sysConfig.chargeDay) || 1;
-            const chargeTime = sysConfig.chargeTime || "00:00";
 
             const nextCycle = this.getNextBillingDate();
             const targetDate = new Date(nextCycle);
@@ -2277,9 +2275,6 @@ class DataManager {
             if (!client) return { success: false, error: "Business not found" };
 
             const sysConfig = await this.getSystemConfig();
-            const chargeDay = parseInt(sysConfig.chargeDay) || 1;
-            const chargeTime = sysConfig.chargeTime || "00:00";
-            const [chargeHour, chargeMin] = chargeTime.split(':').map(Number);
 
             // Calculate next expiry: 2nd of the next month (as seen in record-payment)
             // or according to chargeDay from sysConfig. 
@@ -2616,11 +2611,11 @@ class DataManager {
         const isImminentOrExpired = daysLeft <= 1;
         const shouldForce = isManual; 
         
-        // 2. Globally auto-billing must be ON (unless it's a manual trigger)
-        const globalAutoBilling = sysConfig.autoBillingEnabled !== false;
+        // 2. Globally auto-billing must be ON (tied to terminal credentials)
+        const globalAutoBilling = !!(sysConfig.tranzilaTerminal && sysConfig.tranzilaPass);
         
-        // 3. System-wide auto-renewal must be ON
-        const globalAutoRenewal = sysConfig.autoRenewalEnabled !== false;
+        // 3. System-wide auto-renewal is tied to the same credentials
+        const globalAutoRenewal = globalAutoBilling;
 
         // Perform charge only if imminent/expired OR manual, AND has token, AND billing is globally enabled (or manual bypass)
         if ((isImminentOrExpired || shouldForce) && client.paymentMethod?.token && (globalAutoBilling || isManual)) {
