@@ -15,6 +15,7 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // --- RESTORE STATIC SERVING FOR LOCAL DEVELOPMENT / PRODUCTION FALLBACK ---
 app.use(express.static(path.join(__dirname, '../CLIENT_USER')));
+app.use(express.static(path.join(__dirname, 'data')));
 app.use('/admin', express.static(path.join(__dirname, '../CLIENT_ADMIN')));
 
 // API Server Only - Frontends are hosted on Netlify
