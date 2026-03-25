@@ -1099,30 +1099,7 @@ router.post('/payment/verify', async (req, res) => {
     }
 });
 
-// --- SUPER ADMIN LOGIN ---
-router.post('/super-admin/login', async (req, res) => {
-    try {
-        const { password } = req.body;
 
-        // AUTHENTICATION STRATEGY: PASSWORD ONLY LIST
-        // Configured in Render Dashboard as comma-separated values
-        // e.g. "pass1,pass2,secret123"
-        const envPass = process.env.SUPER_ADMIN_PASS || '123456';
-        const allowedPasswords = envPass.split(',').map(p => p.trim());
-
-        // Validate
-        if (allowedPasswords.includes(password)) {
-            // Success!
-            res.json({ success: true });
-        } else {
-            res.json({ success: false, error: "Invalid credentials" });
-        }
-
-    } catch (error) {
-        console.error("Super Admin Login Error:", error);
-        res.status(500).json({ success: false, error: "Auth failed: " + error.message });
-    }
-});
 
 // --- ADMIN AUTH ---
 
