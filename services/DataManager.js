@@ -254,7 +254,7 @@ class DataManager {
                         // Construct a basic client entry from the config
                         const newClient = {
                             id: companyId,
-                            businessName: config.businessName || `עסק משוחזר ${companyId}`,
+                            businessName: config.businessName || `׳¢׳¡׳§ ׳׳©׳•׳—׳–׳¨ ${companyId}`,
                             email: config.adminEmail || "",
                             password: config.password || "1234", // Fallback if missing, though usually in config
                             subscriptionExpiry: config.subscriptionExpiry || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -264,9 +264,9 @@ class DataManager {
 
                         CACHE.clients.push(newClient);
                         foundNew = true;
-                        console.log(`[Orphan-Discovery] ✅ Successfully reconciled: ${newClient.businessName}`);
+                        console.log(`[Orphan-Discovery] ג… Successfully reconciled: ${newClient.businessName}`);
                     } catch (err) {
-                        console.error(`[Orphan-Discovery] ❌ Failed to reconcile ${companyId}:`, err.message);
+                        console.error(`[Orphan-Discovery] ג Failed to reconcile ${companyId}:`, err.message);
                     }
                 }
             }
@@ -425,7 +425,7 @@ class DataManager {
 
             return {
                 companyId: client.id,
-                businessName: client.businessName || 'עסק ללא שם',
+                businessName: client.businessName || '׳¢׳¡׳§ ׳׳׳ ׳©׳',
                 email: client.email || '',
                 phone: client.phone || '',
                 subscriptionExpiry: client.subscriptionExpiry,
@@ -753,7 +753,7 @@ class DataManager {
             } catch (e) {
                 console.error('[DataManager] Failed to sync System Config to GAS:', e.message);
                 // Critical: Throw error back to API so user knows GAS failed
-                throw new Error(`שמירה מקומית הצליחה אך הסנכרון לענן (GAS) נכשל: ${e.message}`);
+                throw new Error(`׳©׳׳™׳¨׳” ׳׳§׳•׳׳™׳× ׳”׳¦׳׳™׳—׳” ׳׳ ׳”׳¡׳ ׳›׳¨׳•׳ ׳׳¢׳ ׳ (GAS) ׳ ׳›׳©׳: ${e.message}`);
             }
         }
 
@@ -864,7 +864,7 @@ class DataManager {
         const config = await this.getCompanyConfig(companyId);
         const employees = config.employees || [];
         if (!employees.includes(employeeName)) {
-            return { state: "UNAUTHORIZED", message: "אינך מופיע ברשימת העובדים המורשים של העסק." };
+            return { state: "UNAUTHORIZED", message: "׳׳™׳ ׳ ׳׳•׳₪׳™׳¢ ׳‘׳¨׳©׳™׳׳× ׳”׳¢׳•׳‘׳“׳™׳ ׳”׳׳•׳¨׳©׳™׳ ׳©׳ ׳”׳¢׳¡׳§." };
         }
 
         // --- LAZY CHECK: Auto-Close if limit reached ---
@@ -933,7 +933,7 @@ class DataManager {
                             lastShift.end,
                             lastShift.location || "-",
                             companyConfig.businessName || companyId,
-                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${this.formatHHMM(maxHours)} שעות.`,
+                            `׳”׳׳©׳׳¨׳× ׳ ׳¡׳’׳¨׳” ׳׳•׳˜׳•׳׳˜׳™׳× ׳›׳™ ׳—׳¨׳’׳” ׳׳”׳׳’׳‘׳׳” ׳©׳ ${this.formatHHMM(maxHours)} ׳©׳¢׳•׳×.`,
                             companyConfig.logoUrl,
                             summary
                         ).catch(e => console.error(`[Lazy-Checkout Email FAIL] ${e.message}`));
@@ -994,7 +994,7 @@ class DataManager {
             return {
                 success: false,
                 error: "AUTH_NAME_NOT_FOUND",
-                message: "עובד לא נמצא ברשימת המנהל. פנה למנהל להוספה."
+                message: "׳¢׳•׳‘׳“ ׳׳ ׳ ׳׳¦׳ ׳‘׳¨׳©׳™׳׳× ׳”׳׳ ׳”׳. ׳₪׳ ׳” ׳׳׳ ׳”׳ ׳׳”׳•׳¡׳₪׳”."
             };
         }
 
@@ -1009,7 +1009,7 @@ class DataManager {
                         return {
                             success: false,
                             error: "AUTH_DEVICE_MISMATCH",
-                            message: "המכשיר אינו מאומת. לא ניתן להחתים עבור עובד אחר."
+                            message: "׳”׳׳›׳©׳™׳¨ ׳׳™׳ ׳• ׳׳׳•׳׳×. ׳׳ ׳ ׳™׳×׳ ׳׳”׳—׳×׳™׳ ׳¢׳‘׳•׳¨ ׳¢׳•׳‘׳“ ׳׳—׳¨."
                         };
                     }
                 }
@@ -1049,8 +1049,8 @@ class DataManager {
                     return {
                         success: false,
                         type: "CONSTRAINT",
-                        error: "כניסה מוקדמת מדי",
-                        limit: `מותר רק החל מ-${c.minStart}`
+                        error: "׳›׳ ׳™׳¡׳” ׳׳•׳§׳“׳׳× ׳׳“׳™",
+                        limit: `׳׳•׳×׳¨ ׳¨׳§ ׳”׳—׳ ׳-${c.minStart}`
                     };
                 }
                 
@@ -1059,8 +1059,8 @@ class DataManager {
                     return {
                         success: false,
                         type: "CONSTRAINT",
-                        error: "כניסה מאוחרת מדי",
-                        limit: `ניתן להיכנס רק עד-${c.maxStart}`
+                        error: "׳›׳ ׳™׳¡׳” ׳׳׳•׳—׳¨׳× ׳׳“׳™",
+                        limit: `׳ ׳™׳×׳ ׳׳”׳™׳›׳ ׳¡ ׳¨׳§ ׳¢׳“-${c.maxStart}`
                     };
                 }
             }
@@ -1085,14 +1085,14 @@ class DataManager {
             const maxDist = userConstraint.maxDistance ? parseFloat(userConstraint.maxDistance) : 0;
 
             if (isHybrid) {
-                if (currentShift) currentShift.distance = "עבודה היברידית (בטווח המורשה)";
+                if (currentShift) currentShift.distance = "׳¢׳‘׳•׳“׳” ׳”׳™׳‘׳¨׳™׳“׳™׳× (׳‘׳˜׳•׳•׳— ׳”׳׳•׳¨׳©׳”)";
             } else if (location && typeof location === 'object' && location.lat && location.lng) {
                 const distMeters = this.calculateDistanceToPolygon(location.lat, location.lng, companyConfig.polygon);
                 let distanceStr = "";
-                if (distMeters === 0) distanceStr = "בתוך המשרד";
-                else if (maxDist > 0 && distMeters <= maxDist) distanceStr = `בטווח המורשה (${Math.round(distMeters)} מ' מהמשרד)`;
-                else if (distMeters < 1000) distanceStr = `${Math.round(distMeters)} מטרים מהמשרד`;
-                else distanceStr = `${(distMeters / 1000).toFixed(1)} ק"מ מהמשרד`;
+                if (distMeters === 0) distanceStr = "׳‘׳×׳•׳ ׳”׳׳©׳¨׳“";
+                else if (maxDist > 0 && distMeters <= maxDist) distanceStr = `׳‘׳˜׳•׳•׳— ׳”׳׳•׳¨׳©׳” (${Math.round(distMeters)} ׳' ׳׳”׳׳©׳¨׳“)`;
+                else if (distMeters < 1000) distanceStr = `${Math.round(distMeters)} ׳׳˜׳¨׳™׳ ׳׳”׳׳©׳¨׳“`;
+                else distanceStr = `${(distMeters / 1000).toFixed(1)} ׳§"׳ ׳׳”׳׳©׳¨׳“`;
 
                 if (currentShift) currentShift.distance = distanceStr;
             }
@@ -1636,8 +1636,8 @@ class DataManager {
 
     async adminForceAction(companyId, { name, forceType }) {
         // forceType: 'checkIn' | 'checkOut'
-        const label = forceType === 'checkIn' ? 'הכנסה כפויה על ידי מנהל' : 'הוצאה כפויה על ידי מנהל';
-        await this.logShift(companyId, name, forceType === 'checkIn' ? 'IN' : 'OUT', Date.now(), label, 'פעולה יזומה על ידי מנהל');
+        const label = forceType === 'checkIn' ? '׳”׳›׳ ׳¡׳” ׳›׳₪׳•׳™׳” ׳¢׳ ׳™׳“׳™ ׳׳ ׳”׳' : '׳”׳•׳¦׳׳” ׳›׳₪׳•׳™׳” ׳¢׳ ׳™׳“׳™ ׳׳ ׳”׳';
+        await this.logShift(companyId, name, forceType === 'checkIn' ? 'IN' : 'OUT', Date.now(), label, '׳₪׳¢׳•׳׳” ׳™׳–׳•׳׳” ׳¢׳ ׳™׳“׳™ ׳׳ ׳”׳');
     }
 
     // --- EMPLOYEE MANAGEMENT ---
@@ -1701,7 +1701,7 @@ class DataManager {
         for (const shift of userShifts) {
             const shiftDate = shift.start ? new Date(shift.start) : new Date(shift.date); // Fallback to date if start missing
             if (shiftDate >= subscriptionDate) {
-                throw new Error("לא ניתן למחוק את העובד משום שהחתים משמרת במחזור החיוב הנוכחי. תוכל למחוק אותו רק לאחר תאריך חידוש התוקף, בתנאי שלא יחתים משמרות נוספות.");
+                throw new Error("׳׳ ׳ ׳™׳×׳ ׳׳׳—׳•׳§ ׳׳× ׳”׳¢׳•׳‘׳“ ׳׳©׳•׳ ׳©׳”׳—׳×׳™׳ ׳׳©׳׳¨׳× ׳‘׳׳—׳–׳•׳¨ ׳”׳—׳™׳•׳‘ ׳”׳ ׳•׳›׳—׳™. ׳×׳•׳›׳ ׳׳׳—׳•׳§ ׳׳•׳×׳• ׳¨׳§ ׳׳׳—׳¨ ׳×׳׳¨׳™׳ ׳—׳™׳“׳•׳© ׳”׳×׳•׳§׳£, ׳‘׳×׳ ׳׳™ ׳©׳׳ ׳™׳—׳×׳™׳ ׳׳©׳׳¨׳•׳× ׳ ׳•׳¡׳₪׳•׳×.");
             }
         }
 
@@ -2283,7 +2283,7 @@ class DataManager {
 
             // Calculate next expiry: 2nd of the next month (as seen in record-payment)
             // or according to chargeDay from sysConfig. 
-            // The user requested: "התשלום הבא יתבצע באופן יחסי - ועלייך לעדכן את ה-SubscriptionDate לזמן הנוכחי"
+            // The user requested: "׳”׳×׳©׳׳•׳ ׳”׳‘׳ ׳™׳×׳‘׳¦׳¢ ׳‘׳׳•׳₪׳ ׳™׳—׳¡׳™ - ׳•׳¢׳׳™׳™׳ ׳׳¢׳“׳›׳ ׳׳× ׳”-SubscriptionDate ׳׳–׳׳ ׳”׳ ׳•׳›׳—׳™"
             // Let's set it to the 2nd of the next month.
             // Target is always the 1st of the NEXT month at 04:00
             const nextExpiry = this.getNextBillingDate();
@@ -2301,9 +2301,9 @@ class DataManager {
                 currency: 'ILS',
                 period: 1,
                 method: 'Manual Renewal',
-                description: 'חידוש מנוי ידני (ללא חוב)',
+                description: '׳—׳™׳“׳•׳© ׳׳ ׳•׳™ ׳™׳“׳ ׳™ (׳׳׳ ׳—׳•׳‘)',
                 status: 'PAID',
-                statusDisplayName: 'חודש',
+                statusDisplayName: '׳—׳•׳“׳©',
                 reference: 'MANUAL-RENEW'
             });
 
@@ -2380,7 +2380,7 @@ class DataManager {
                                             shift.end,
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
-                                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${this.formatHHMM(maxHours)} שעות.`,
+                                            `׳”׳׳©׳׳¨׳× ׳ ׳¡׳’׳¨׳” ׳׳•׳˜׳•׳׳˜׳™׳× ׳›׳™ ׳—׳¨׳’׳” ׳׳”׳׳’׳‘׳׳” ׳©׳ ${this.formatHHMM(maxHours)} ׳©׳¢׳•׳×.`,
                                             companyConfig.logoUrl,
                                             summary
                                         ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
@@ -2399,7 +2399,7 @@ class DataManager {
                                             now.getTime(),
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
-                                            `העובד נמצא במשמרת פעילה מעל ${this.formatHHMM(maxHours)} שעות (נוכחי: ${this.formatHHMM(durationHours)}).`,
+                                            `׳”׳¢׳•׳‘׳“ ׳ ׳׳¦׳ ׳‘׳׳©׳׳¨׳× ׳₪׳¢׳™׳׳” ׳׳¢׳ ${this.formatHHMM(maxHours)} ׳©׳¢׳•׳× (׳ ׳•׳›׳—׳™: ${this.formatHHMM(durationHours)}).`,
                                             companyConfig.logoUrl
                                         ).catch(e => console.error(`[Max Alert Email FAIL] ${e.message}`));
                                     }
@@ -2541,10 +2541,10 @@ class DataManager {
                     bizConfig.logoUrl
                 );
 
-                this.logMaintenance('REPORTS', `✅ Sent report to ${client.businessName} (${bizConfig.adminEmail})`);
+                this.logMaintenance('REPORTS', `ג… Sent report to ${client.businessName} (${bizConfig.adminEmail})`);
                 sent++;
             } catch (e) {
-                this.logMaintenance('ERROR', `❌ Failed report for ${client.businessName}: ${e.message}`);
+                this.logMaintenance('ERROR', `ג Failed report for ${client.businessName}: ${e.message}`);
                 errors++;
             }
         }
@@ -2594,7 +2594,7 @@ class DataManager {
         
         return { 
             success: true, 
-            message: `חיוב וחידוש המנוי של ${client.businessName} בוצעו בהצלחה`,
+            message: `׳—׳™׳•׳‘ ׳•׳—׳™׳“׳•׳© ׳”׳׳ ׳•׳™ ׳©׳ ${client.businessName} ׳‘׳•׳¦׳¢׳• ׳‘׳”׳¦׳׳—׳”`,
             confirmationCode: res.confirmCode
         };
     }
@@ -2628,11 +2628,11 @@ class DataManager {
             const subRes = await this.calculateSubscriptionAmount(client.id);
             const amount = subRes.amount;
 
-            let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: 'סכום 0 ₪ - חודש חינם' };
-            const pdesc = `TempusGeo - מנוי ל-${activeCount} עובדים`;
+            let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: '׳¡׳›׳•׳ 0 ג‚× - ׳—׳•׳“׳© ׳—׳™׳ ׳' };
+            const pdesc = `TempusGeo - ׳׳ ׳•׳™ ׳-${activeCount} ׳¢׳•׳‘׳“׳™׳`;
 
             if (amount >= 1) {
-                this.logMaintenance('BILLING', `🔄 Executing ${isManual ? 'MANUAL' : 'AUTOMATED'} charge for ${client.businessName} (₪${amount})`);
+                this.logMaintenance('BILLING', `נ”„ Executing ${isManual ? 'MANUAL' : 'AUTOMATED'} charge for ${client.businessName} (ג‚×${amount})`);
 
                 chargeRes = await tranzilaService.chargeToken({
                     supplier: sysConfig.tranzilaTerminal,
@@ -2652,7 +2652,7 @@ class DataManager {
 
             if (chargeRes.success) {
                 client.billingFailed = false;
-                this.logMaintenance('BILLING', `✅ Payment approved for ${client.businessName} (₪${amount})`);
+                this.logMaintenance('BILLING', `ג… Payment approved for ${client.businessName} (ג‚×${amount})`);
                 
                 this.reportPaymentToGAS(amount).catch(err => console.error(`[DataManager] GAS Report Failed:`, err.message));
 
@@ -2662,10 +2662,10 @@ class DataManager {
                     fullDate: new Date().toISOString(),
                     amount,
                     currency: 'ILS',
-                    description: `${isManual ? 'חיוב והארכה ידנית' : 'חידוש מנוי אוטומטי'} - ${activeCount} עובדים`,
+                    description: `${isManual ? '׳—׳™׳•׳‘ ׳•׳”׳׳¨׳›׳” ׳™׳“׳ ׳™׳×' : '׳—׳™׳“׳•׳© ׳׳ ׳•׳™ ׳׳•׳˜׳•׳׳˜׳™'} - ${activeCount} ׳¢׳•׳‘׳“׳™׳`,
                     method: isManual ? 'Manual-Admin' : 'Auto-Billing',
                     status: 'PAID',
-                    statusDisplayName: 'שולם',
+                    statusDisplayName: '׳©׳•׳׳',
                     reference: chargeRes.confirmationCode
                 });
                 res.charged = true;
@@ -2684,14 +2684,14 @@ class DataManager {
                     client.subscriptionExpiry = nextExpiry.toISOString();
                     client.subscriptionDate = (expiry < now ? now : expiry).toISOString();
                     
-                    this.logMaintenance('RENEWAL', `✅ Subscription extended for ${client.businessName}. Next: ${nextExpiry.toLocaleDateString('he-IL')} 04:00`);
+                    this.logMaintenance('RENEWAL', `ג… Subscription extended for ${client.businessName}. Next: ${nextExpiry.toLocaleDateString('he-IL')} 04:00`);
                 }
 
                 client.lastBilledEmployeeCount = activeCount;
                 await this.saveClients();
             } else {
                 client.billingFailed = true;
-                this.logMaintenance('BILLING', `❌ Payment rejected for ${client.businessName}: ${chargeRes.raw || 'Bank decline'}`);
+                this.logMaintenance('BILLING', `ג Payment rejected for ${client.businessName}: ${chargeRes.raw || 'Bank decline'}`);
                 res.error = chargeRes.raw || 'Bank decline';
                 res.code = chargeRes.confirmationCode;
                 res.failure = { id: client.id, name: client.businessName, error: res.error };
@@ -2732,6 +2732,21 @@ class DataManager {
         }
 
         return res;
+    }
+    async getFileContent(fileName) {
+        if (!fileName.endsWith('.json')) {
+            throw new Error('Only JSON files can be read through this interface.');
+        }
+
+        const safeName = path.basename(fileName);
+        const filePath = path.join(this.dataDir, safeName);
+
+        try {
+            const data = await fs.readFile(filePath, 'utf8');
+            return JSON.parse(data);
+        } catch (e) {
+            throw new Error('File not found or unreadable: ' + fileName);
+        }
     }
 }
 
