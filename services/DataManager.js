@@ -181,7 +181,11 @@ class DataManager {
 
                 this.performAutoCheckout().catch(e => console.error(`[Startup Auto-Checkout] Failed:`, e.message));
                 this.checkSubscriptions().catch(e => console.error(`[Startup Sub-Check] Failed:`, e.message));
-                this.runGlobalArchiveCycle().catch(e => console.error(`[Startup Clean] Failed:`, e.message));
+                
+                // Global Archive Cycle replacement:
+                for (const client of CACHE.clients) {
+                    this.archiveAndCleanup(client.id).catch(e => console.error(`[Startup Clean] Failed for ${client.id}:`, e.message));
+                }
             }, 10000); // 10s after boot
 
         } catch (e) {
@@ -1193,13 +1197,42 @@ class DataManager {
     async getAvailableHolidays(companyId) {
         try {
             const bizConfig = await this.getCompanyConfig(companyId);
-            const details = bizConfig.settings?.salary?.holidays?.details || [];
+            const details = bizConfig?.settings?.salary?.holidays?.details || [];
             return details;
         } catch (e) {
             console.error(`[DataManager] getAvailableHolidays error:`, e.message);
             return [];
         }
     }
+
+    async getStorageStats() {
+        const stats = {
+            companies: CACHE.clients.length,
+            totalFiles: 0,
+            totalSize: 0,
+            dataDir: this.dataDir
+        };
+
+        const getDirStats = async (dir) => {
+            try {
+                const items = await fs.readdir(dir);
+                for (const item of items) {
+                    const fullPath = path.join(dir, item);
+                    const stat = await fs.stat(fullPath);
+                    if (stat.isDirectory()) {
+                        await getDirStats(fullPath);
+                    } else {
+                        stats.totalFiles++;
+                        stats.totalSize += stat.size;
+                    }
+                }
+            } catch (e) {}
+        };
+
+        await getDirStats(this.dataDir).catch(() => {});
+        return stats;
+    }
+
 
     async refreshHolidays(companyId) {
         // Disabled: relying on local config instead of GAS lookup
@@ -1885,6 +1918,14 @@ class DataManager {
 
             // Generic Restore
             if (backup.files && Array.isArray(backup.files)) {
+                // DATA PROTECTION: Do not restore if local has data but backup is empty
+                const clientsFile = backup.files.find(f => f.path === 'clients.json');
+                const hasLocalData = CACHE.clients && CACHE.clients.length > 0;
+                if (hasLocalData && clientsFile && Array.isArray(clientsFile.content) && clientsFile.content.length === 0) {
+                    console.warn("[Restore] Skipping restore: Backup has empty clients.json but local has data.");
+                    return false;
+                }
+                
                 console.log(`[Restore] Found ${backup.files.length} files to restore.`);
 
                 // Sort files to ensure clients.json or config files are written first if needed, 
