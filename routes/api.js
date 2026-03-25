@@ -758,6 +758,19 @@ router.post('/super-admin/storage', async (req, res) => {
     }
 });
 
+router.post('/super-admin/storage/read', async (req, res) => {
+    try {
+        const { password, fileName } = req.body;
+        if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
+        if (!fileName) return res.status(400).json({ success: false, error: "Missing fileName" });
+
+        const content = await dataManager.getFileContent(fileName);
+        res.json({ success: true, content });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 router.post('/super-admin/sync', async (req, res) => {
     try {
         const { password } = req.body;
