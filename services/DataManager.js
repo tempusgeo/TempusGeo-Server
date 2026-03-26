@@ -52,13 +52,30 @@ class DataManager {
         if (this.maintenanceLogs[category].length > 100) this.maintenanceLogs[category].pop(); // Keep last 100 as per user request
         
         // Also keep a global "all" log for compatibility/backup if needed, but let's stick to categories
-        // To keep the existing behavior of 'logs' endpoint without breaking, we can have a 'GENERAL' or just return them all combined
         if (!this.maintenanceLogs.ALL) this.maintenanceLogs.ALL = [];
         this.maintenanceLogs.ALL.unshift(entry);
         if (this.maintenanceLogs.ALL.length > 500) this.maintenanceLogs.ALL.pop();
 
         // Log to console as well
         console.log(`[Maintenance][${category}] ${message}`, details ? details : '');
+    }
+
+    parseExpiryDate(expiry) {
+        if (!expiry) return new Date(0);
+        if (expiry instanceof Date) return expiry;
+        if (expiry === "Unlimited") return new Date(8640000000000000); // Far future
+
+        if (typeof expiry === 'string' && (expiry.includes('/') || expiry.includes('.') || expiry.includes('-'))) {
+            const parts = expiry.split(/[./-]/);
+            if (parts.length === 3) {
+                if (parts[0].length === 4) { // YYYY-MM-DD
+                    return new Date(expiry);
+                } else { // DD.MM.YYYY or DD/MM/YYYY
+                    return new Date(parts[2], parts[1] - 1, parts[0]);
+                }
+            }
+        }
+        return new Date(expiry);
     }
 
     async updateLastWriteTime() {
@@ -206,6 +223,12 @@ class DataManager {
     async saveClients() {
         await fs.writeFile(this.clientsFile, JSON.stringify(CACHE.clients, null, 2));
         await this.updateLastWriteTime();
+
+        // Sync clients.json to GAS for persistence across Render restarts
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
+            syncManager.enqueue('CLIENTS', CACHE.clients, { companyId: '__SYSTEM__', gasUrl, password: '' });
+        }
     }
 
     async saveClientPaymentMethod(companyId, paymentMethod) {
@@ -333,7 +356,7 @@ class DataManager {
         const client = await this.getClientById(companyId);
         if (client) {
             const now = new Date();
-            const expiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
+            const expiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
 
             config.subscriptionExpired = expiry < now;
             config.expiryDate = expiry.toLocaleDateString('he-IL');
@@ -398,7 +421,7 @@ class DataManager {
 
         // 3. Enrich with status
         return Promise.all(mergedList.map(async (client) => {
-            const expiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : new Date(0);
+            const expiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
             const daysRemaining = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
             const isExpired = expiry < now;
 
@@ -2432,7 +2455,7 @@ class DataManager {
 
         const monthsToAdd = plan.months || 1;
         const now = new Date();
-        let currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
+        let currentExpiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
 
         let targetDate;
         if (currentExpiry < now) {
@@ -2440,7 +2463,7 @@ class DataManager {
             targetDate = this.getNextBillingDate();
         } else {
             // Active: Base on current expiry
-            targetDate = new Date(currentExpiry);
+            targetDate = this.parseExpiryDate(currentExpiry);
         }
 
         // Add the months from the plan
@@ -2594,7 +2617,7 @@ class DataManager {
         
         return { 
             success: true, 
-            message: `׳—׳™׳•׳‘ ׳•׳—׳™׳“׳•׳© ׳”׳׳ ׳•׳™ ׳©׳ ${client.businessName} ׳‘׳•׳¦׳¢׳• ׳‘׳”׳¦׳׳—׳”`,
+            message: `חיוב וחידוש המנוי של ${client.businessName} בוצעו בהצלחה`,
             confirmationCode: res.confirmCode
         };
     }
@@ -2607,7 +2630,7 @@ class DataManager {
         const res = { charged: false, expired: false, valid: true, failure: null };
         if (!client.subscriptionExpiry) return res;
 
-        const expiry = new Date(client.subscriptionExpiry);
+        const expiry = this.parseExpiryDate(client.subscriptionExpiry);
         const hoursLeft = (expiry - now) / (1000 * 60 * 60);
         const daysLeft = hoursLeft / 24;
         
@@ -2628,11 +2651,19 @@ class DataManager {
             const subRes = await this.calculateSubscriptionAmount(client.id);
             const amount = subRes.amount;
 
-            let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: '׳¡׳›׳•׳ 0 ג‚× - ׳—׳•׳“׳© ׳—׳™׳ ׳' };
-            const pdesc = `TempusGeo - ׳׳ ׳•׳™ ׳-${activeCount} ׳¢׳•׳‘׳“׳™׳`;
+            let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: 'סכום 0 ₪ - חודש חינם' };
+            
+            // Get App Name for product description
+            const appName = sysConfig.appName || 'TempusGeo';
+            const pdesc = `${appName} - מנוי ל-${activeCount} עובדים`;
 
             if (amount >= 1) {
-                this.logMaintenance('BILLING', `נ”„ Executing ${isManual ? 'MANUAL' : 'AUTOMATED'} charge for ${client.businessName} (ג‚×${amount})`);
+                this.logMaintenance('BILLING', `🔄 Executing ${isManual ? 'MANUAL' : 'AUTOMATED'} charge for ${client.businessName} (₪${amount})`);
+
+                // Ensure Expiry Format (MMYY)
+                const mm = String(client.paymentMethod.expMonth || client.paymentMethod.expmonth || '00').padStart(2, '0');
+                const yyFull = String(client.paymentMethod.expYear || client.paymentMethod.expyear || '00');
+                const yy = yyFull.length === 4 ? yyFull.slice(-2) : yyFull.padStart(2, '0');
 
                 chargeRes = await tranzilaService.chargeToken({
                     supplier: sysConfig.tranzilaTerminal,
@@ -2641,18 +2672,18 @@ class DataManager {
                     currency: 1,
                     pdesc: pdesc,
                     TranzilaTK: client.paymentMethod.token,
-                    expmonth: client.paymentMethod.expMonth || client.paymentMethod.expmonth,
-                    expyear: client.paymentMethod.expYear || client.paymentMethod.expyear,
-                    myid: client.paymentMethod.cardHolderId || client.id,
-                    company: client.paymentMethod.businessId || client.businessName, 
-                    contact: client.paymentMethod.cardHolderName || client.businessName,
+                    expmonth: mm,
+                    expyear: yy,
+                    myid: client.paymentMethod.cardHolderId || '', 
+                    company: client.invoiceDetails || client.businessName, 
+                    contact: '', 
                     mycvv: client.paymentMethod.cvv
                 });
             }
 
             if (chargeRes.success) {
                 client.billingFailed = false;
-                this.logMaintenance('BILLING', `ג… Payment approved for ${client.businessName} (ג‚×${amount})`);
+                this.logMaintenance('BILLING', `✅ Payment approved for ${client.businessName} (₪${amount})`);
                 
                 this.reportPaymentToGAS(amount).catch(err => console.error(`[DataManager] GAS Report Failed:`, err.message));
 
@@ -2662,18 +2693,17 @@ class DataManager {
                     fullDate: new Date().toISOString(),
                     amount,
                     currency: 'ILS',
-                    description: `${isManual ? '׳—׳™׳•׳‘ ׳•׳”׳׳¨׳›׳” ׳™׳“׳ ׳™׳×' : '׳—׳™׳“׳•׳© ׳׳ ׳•׳™ ׳׳•׳˜׳•׳׳˜׳™'} - ${activeCount} ׳¢׳•׳‘׳“׳™׳`,
+                    description: `${isManual ? 'חיוב והארכה ידנית' : 'חידוש מנוי אוטומטי'} - ${activeCount} עובדים`,
                     method: isManual ? 'Manual-Admin' : 'Auto-Billing',
                     status: 'PAID',
-                    statusDisplayName: '׳©׳•׳׳',
+                    statusDisplayName: 'שולם',
                     reference: chargeRes.confirmationCode
                 });
                 res.charged = true;
                 res.confirmCode = chargeRes.confirmationCode;
 
-                // Renew subscription only if client/global settings allow, or if manual override
                 if ((client.autoChargeEnabled || isManual) && globalAutoRenewal) {
-                    const nextExpiry = new Date(expiry);
+                    const nextExpiry = this.parseExpiryDate(expiry);
                     // If far in the past, renew from TODAY instead of compounding legacy months
                     if (expiry < now) nextExpiry.setTime(now.getTime());
                     
@@ -2684,14 +2714,14 @@ class DataManager {
                     client.subscriptionExpiry = nextExpiry.toISOString();
                     client.subscriptionDate = (expiry < now ? now : expiry).toISOString();
                     
-                    this.logMaintenance('RENEWAL', `ג… Subscription extended for ${client.businessName}. Next: ${nextExpiry.toLocaleDateString('he-IL')} 04:00`);
+                    this.logMaintenance('RENEWAL', `✅ Subscription extended for ${client.businessName}. Next: ${nextExpiry.toLocaleDateString('he-IL')} 04:00`);
                 }
 
                 client.lastBilledEmployeeCount = activeCount;
                 await this.saveClients();
             } else {
                 client.billingFailed = true;
-                this.logMaintenance('BILLING', `ג Payment rejected for ${client.businessName}: ${chargeRes.raw || 'Bank decline'}`);
+                this.logMaintenance('BILLING', `❌ Payment rejected for ${client.businessName}: ${chargeRes.raw || 'Bank decline'}`);
                 res.error = chargeRes.raw || 'Bank decline';
                 res.code = chargeRes.confirmationCode;
                 res.failure = { id: client.id, name: client.businessName, error: res.error };
