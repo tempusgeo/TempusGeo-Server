@@ -9,12 +9,24 @@ class TranzilaService {
 
         // Add Terminal Credentials (Server Side Only)
         // In production, use environment variables!
+        // 1a. Unify Expiry Date (Tranzila expects expdate in MMYY)
+        const mm = String(params.expmonth || '').padStart(2, '0');
+        const yy = String(params.expyear || '').slice(-2);
+        const expdate = mm + yy;
+
+        // Add Terminal Credentials (Server Side Only)
+        // In production, use environment variables!
         const payload = {
             ...params,
             supplier: params.supplier || config.TRANZILA_TERMINAL_NAME,
-            tranmode: "A", // Verification Only (J5) or M (Charge)
+            tranmode: params.tranmode || "A", // Verification Only (J5) or M/A (Charge)
+            expdate: expdate,
             TranzilaPW: params.TranzilaPW || config.TRANZILA_TERMINAL_PASS
         };
+        
+        // Remove individual fields after unifying
+        delete payload.expmonth;
+        delete payload.expyear;
 
         try {
             console.log("Sending request to Tranzila...");
@@ -62,12 +74,22 @@ class TranzilaService {
     async chargeToken(params) {
         // params: { sum, currency, TranzilaToken, expmonth, expyear, myid, ... }
         
+        // 1a. Unify Expiry Date (Tranzila expects expdate in MMYY)
+        const mm = String(params.expmonth || '').padStart(2, '0');
+        const yy = String(params.expyear || '').slice(-2);
+        const expdate = mm + yy;
+
         const payload = {
             ...params,
             supplier: params.supplier || config.TRANZILA_TERMINAL_NAME,
-            tranmode: "M", // M = Charge
+            tranmode: params.tranmode || "A", // A = Automatic/Charge (matches working transactions), M = Manual
+            expdate: expdate,
             TranzilaPW: params.TranzilaPW || config.TRANZILA_TERMINAL_PASS
         };
+
+        // Remove individual fields
+        delete payload.expmonth;
+        delete payload.expyear;
 
         try {
             console.log(`[Tranzila] Charging token for amount: ${params.sum}`);
