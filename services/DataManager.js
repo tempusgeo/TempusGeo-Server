@@ -353,17 +353,18 @@ class DataManager {
 
         const config = { ...CACHE.companies[companyId].config };
 
-        // DYNAMICALLY INJECT SUBSCRIPTION STATUS AND BUSINESS NAME
-        // This overrides any stale data in the config file
         const client = await this.getClientById(companyId);
         if (client) {
             const now = new Date();
             const expiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
 
-            config.subscriptionExpired = expiry < now;
+            // GRACE PERIOD LOGIC: Hard block only after 48 hours
+            const hoursSinceExpiry = (now - expiry) / (1000 * 60 * 60);
+            
+            config.subscriptionExpired = hoursSinceExpiry > 48;
+            config.inGracePeriod = hoursSinceExpiry > 0 && hoursSinceExpiry <= 48;
             config.expiryDate = expiry.toLocaleDateString('he-IL');
 
-            // Fix: Always use the master businessName from clients.json if available
             if (client.businessName) {
                 config.businessName = client.businessName;
             }
@@ -510,6 +511,23 @@ class DataManager {
         }
     }
 
+    async isUsageOnlyWithinGrace(companyId, year, month, expiryDate) {
+        const shifts = await this.getShifts(companyId, year, month);
+        const employeeNames = Object.keys(shifts);
+        if (employeeNames.length === 0) return true;
+
+        const graceEnd = new Date(expiryDate).getTime() + (48 * 60 * 60 * 1000);
+        
+        for (const name of employeeNames) {
+            const empShifts = shifts[name] || [];
+            for (const s of empShifts) {
+                const startTime = s.start ? new Date(s.start).getTime() : new Date(s.date || 0).getTime();
+                if (startTime > graceEnd) return false;
+            }
+        }
+        return true;
+    }
+
     async calculateSubscriptionAmount(companyId, forcedEmployeeCount = null) {
         try {
             const client = await this.getClientById(companyId);
@@ -528,6 +546,22 @@ class DataManager {
             
             const LastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
             const employeeCount = forcedEmployeeCount !== null ? forcedEmployeeCount : await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
+
+            // DEBT FORGIVENESS LOGIC:
+            // If renewing LATE (different month than target), and usage was ONLY in the 48h grace period, forgive debt.
+            if (employeeCount > 0 && forcedEmployeeCount === null) {
+                const now = new Date();
+                const expiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
+                const isLateRenewal = (now.getFullYear() > targetYear || now.getMonth() > (targetMonth));
+
+                if (isLateRenewal && (now - expiry) > (48 * 60 * 60 * 1000)) {
+                    const onlyGrace = await this.isUsageOnlyWithinGrace(companyId, targetYear, targetMonth + 1, expiry);
+                    if (onlyGrace) {
+                        this.logMaintenance('BILLING', `[Debt-Forgiveness] ${companyId} used only grace period in ${targetYear}-${targetMonth+1}. Forgiving debt.`);
+                        return { amount: 0, breakdown: { employeeCount, note: "Grace usage only - forgiven (late renewal)" } };
+                    }
+                }
+            }
 
             const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
 
@@ -2744,32 +2778,77 @@ class DataManager {
             }
         }
 
-        // --- EXPIRY ALERTS ---
-        const noticeHours = 2 * 24; // Strict 2-day warning
-        if (!client.autoChargeEnabled && hoursLeft > 0 && hoursLeft <= noticeHours && client.lastExpiryAlertDate !== client.subscriptionExpiry) {
-            res.expired = true;
-            const bizConfig = await this.getCompanyConfig(client.id);
-            const subRes = await this.calculateSubscriptionAmount(client.id);
-            
-            emailService.sendSubscriptionAlert(
-                client.email,
-                client.businessName,
-                Math.ceil(hoursLeft / 24),
-                client.subscriptionExpiry,
-                bizConfig.logoUrl,
-                subRes.amount
-            ).then(() => {
-                client.lastExpiryAlertDate = client.subscriptionExpiry;
-                this.saveClients().catch(console.error);
-            }).catch(console.error);
-            
-            this.logMaintenance('RENEWAL', `Sent expiry alert to ${client.businessName}`);
-        } else if (expiry < now) {
-            res.expired = true;
+        // --- EXPIRY ALERTS & REMINDERS (48h, 24h, 0h) ---
+        if (!client.autoChargeEnabled) {
+            let reminderLevel = null;
+            if (hoursLeft <= 0) reminderLevel = 0;
+            else if (hoursLeft <= 24) reminderLevel = 24;
+            else if (hoursLeft <= 48) reminderLevel = 48;
+
+            const reminderKey = `${client.subscriptionExpiry}_${reminderLevel}`;
+            if (reminderLevel !== null && client.lastReminderLevel !== reminderKey) {
+                try {
+                    const bizConfig = await this.getCompanyConfig(client.id);
+                    const subRes = await this.calculateSubscriptionAmount(client.id);
+                    
+                    if (reminderLevel === 0) {
+                        await emailService.sendGracePeriodAlert(client.email, client.businessName, client.subscriptionExpiry, bizConfig.logoUrl, subRes.amount);
+                    } else {
+                        await emailService.sendSubscriptionAlert(client.email, client.businessName, hoursLeft, client.subscriptionExpiry, bizConfig.logoUrl, subRes.amount);
+                    }
+                    
+                    client.lastReminderLevel = reminderKey;
+                    await this.saveClients();
+                    this.logMaintenance('RENEWAL', `Sent ${reminderLevel}h expiry alert to ${client.businessName}`);
+                } catch (e) {
+                    console.error(`[DataManager] Failed to send ${reminderLevel}h reminder to ${client.id}:`, e.message);
+                }
+            }
         }
+
+        // Return status for API/UI
+        if (hoursLeft <= -48) res.expired = true; // Hard block after 48h
+        else if (hoursLeft <= 0) res.expired = false; // Only soft expiry/grace
 
         return res;
     }
+    async reportPaymentToGAS(amount) {
+        const sysConfig = await this.getSystemConfig();
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        if (!gasUrl) return;
+
+        try {
+            await axios.post(gasUrl, {
+                action: 'ADD_TO_SHEET2',
+                number: amount,
+                timestamp: new Date().toISOString()
+            }, { timeout: 10000 });
+        } catch (e) {
+            console.error('[DataManager] GAS Payment Report Error:', e.message);
+        }
+    }
+
+    async getGASLogs(category = 'EMAILS') {
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        if (!gasUrl) return { success: false, error: 'GAS URL not configured' };
+
+        try {
+            const response = await axios.post(gasUrl, {
+                action: 'GET_LOGS',
+                category: category,
+                limit: 100
+            }, { timeout: 15000 });
+
+            if (response.data && response.data.success) {
+                return { success: true, logs: response.data.logs || [] };
+            }
+            return { success: false, error: response.data?.error || 'Failed to fetch logs from GAS' };
+        } catch (e) {
+            console.error('[DataManager] getGASLogs Error:', e.message);
+            return { success: false, error: e.message };
+        }
+    }
+
     async getFileContent(fileName) {
         if (!fileName.endsWith('.json')) {
             throw new Error('Only JSON files can be read through this interface.');
