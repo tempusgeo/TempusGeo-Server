@@ -213,15 +213,13 @@ class DataManager {
         if (!client) throw new Error("Client not found");
 
         // Store inclusive of businessId (for automated billing receipts)
-        client.paymentMethod = pMethodSafe;
-        if (paymentMethod.businessId) {
-            client.paymentMethod.businessId = paymentMethod.businessId;
-        }
+        client.paymentMethod = paymentMethod;
+        
         client.autoChargeEnabled = true; // Auto-enable on card save
         await this.saveClients();
 
-        if (businessId) {
-            await this.updateCompanyConfig(companyId, { invoiceDetails: businessId });
+        if (paymentMethod.businessId) {
+            await this.updateCompanyConfig(companyId, { invoiceDetails: paymentMethod.businessId });
         }
     }
 
