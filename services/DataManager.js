@@ -621,6 +621,13 @@ class DataManager {
         return await this.smartRestoreFromGAS(0);
     }
 
+    async updateAutoCharge(companyId, enabled) {
+        const client = await this.getClientById(companyId);
+        if (!client) throw new Error("Client not found");
+        client.autoChargeEnabled = !!enabled;
+        await this.saveClients();
+    }
+
     async updateCompanyConfig(companyId, newConfig) {
         if (!companyId || companyId === 'NEW_SETUP') return; // Prevent ghost company creation
         
@@ -630,7 +637,7 @@ class DataManager {
         const current = CACHE.companies[companyId].config;
 
         // Specific logic for salary/constraints/adminEmail
-        // We just merge everything passed in 'newConfig'
+        // merge everything passed in 'newConfig'
         const updated = { ...current, ...newConfig };
 
         // RAM Update
@@ -1432,7 +1439,7 @@ class DataManager {
 
     async adminSaveShift(companyId, { year, month, name, originalStart, newStart, newEnd }) {
         const shifts = await this.getShifts(companyId, parseInt(year), parseInt(month));
-        if (!shifts[name]) return;
+        if (!shifts[name]) shifts[name] = []; // Initialize if missing
 
         // Make sure to parse numeric strings (Epoch) correctly, as new Date("17727...") becomes Invalid Date.
         const safeGetTime = (t) => {
@@ -2459,8 +2466,8 @@ class DataManager {
             client.paymentMethod = {
                 token: pMethodSafe.token,
                 last4: pMethodSafe.last4,
-                expMonth: pMethodSafe.expMonth,
-                expYear: pMethodSafe.expYear,
+                expMonth: pMethodSafe.expMonth || pMethodSafe.expmonth,
+                expYear: pMethodSafe.expYear || pMethodSafe.expyear,
                 cardHolderId: pMethodSafe.cardHolderId,
                 cardHolderName: pMethodSafe.cardHolderName,
                 cvv: pMethodSafe.cvv,
@@ -2634,8 +2641,8 @@ class DataManager {
                     currency: 1,
                     pdesc: pdesc,
                     TranzilaTK: client.paymentMethod.token,
-                    expmonth: client.paymentMethod.expMonth,
-                    expyear: client.paymentMethod.expYear,
+                    expmonth: client.paymentMethod.expMonth || client.paymentMethod.expmonth,
+                    expyear: client.paymentMethod.expYear || client.paymentMethod.expyear,
                     myid: client.paymentMethod.cardHolderId || client.id,
                     company: client.paymentMethod.businessId || client.businessName, 
                     contact: client.paymentMethod.cardHolderName || client.businessName,
