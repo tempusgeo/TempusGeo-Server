@@ -91,15 +91,15 @@ class EmailService {
     }
 
     async processEmail(item) {
+        let sentMethod = null;
+        let finalName = item.name;
+        if (!finalName || finalName === config.APP_NAME || finalName === "TempusGeo") {
+            finalName = this.systemAppName || config.APP_NAME;
+        }
+
         // PRIORITY 1: JetServer SMTP Proxy
         if (this.jetserverUrl && this.jetserverUrl.startsWith('http')) {
             try {
-                // Ensure we get dynamic name if not provided or is default
-                let finalName = item.name;
-                if (!finalName || finalName === config.APP_NAME || finalName === "TempusGeo") {
-                    finalName = this.systemAppName || config.APP_NAME;
-                }
-
                 const response = await axios.post(this.jetserverUrl, {
                     secret: this.jetserverSecret,
                     to: item.to,
@@ -511,13 +511,17 @@ class EmailService {
         return this.sendEmail(to, `עדכון שימוש וחיוב - ${businessName}`, this.getStyledTemplate(title, content, '', logoUrl, businessName));
     }
 
-    async sendSubscriptionAlert(to, businessName, daysLeft, expiryDate, logoUrl = null, amount = null) {
+    async sendSubscriptionAlert(to, businessName, hoursLeft, expiryDate, logoUrl = null, amount = null) {
+        const daysLeft = Math.ceil(hoursLeft / 24);
         let title = `המנוי מסתיים בעוד ${daysLeft} ימים`;
         let color = '#f59e0b';
 
-        if (daysLeft <= 0) {
-            title = `המנוי הסתיים!`;
-            color = '#f43f5e';
+        if (hoursLeft <= 24) {
+            title = `המנוי מסתיים בעוד פחות מ-24 שעות!`;
+            color = '#f97316';
+        } else if (hoursLeft <= 48) {
+            title = `המנוי מסתיים בעוד פחות מ-48 שעות!`;
+            color = '#f59e0b';
         }
 
         const formattedDate = new Date(expiryDate).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' });
@@ -539,14 +543,44 @@ class EmailService {
             </div>
             ` : ''}
 
-            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">אנא דאג לחדש את המנוי בהקדם להמשך פעילות רציפה.</p>
+            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">אנא דאג לחדש את המנוי בהקדם להמשך פעילות רציפה ומניעת חסימה.</p>
 
             <div style="text-align: center; margin-top: 30px;">
                 <a href="${config.APP_URL || '#'}" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 14px 35px; border-radius: 12px; font-weight: 800; font-size: 16px;">חידוש מנוי עכשיו</a>
             </div>
         `;
 
-        return this.sendEmail(to, `התראת מנוי - ${businessName}`, this.getStyledTemplate('סטטוס מנוי', content, '', logoUrl, businessName));
+        return this.sendEmail(to, `התראה: ${title} - ${businessName}`, this.getStyledTemplate('סטטוס מנוי', content, '', logoUrl, businessName));
+    }
+
+    async sendGracePeriodAlert(to, businessName, expiryDate, logoUrl = null, amount = null) {
+        const title = `המנוי פג - תקופת חסד של 48 שעות`;
+        const color = '#f43f5e';
+        const formattedDate = new Date(expiryDate).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' });
+
+        const content = `
+            <div style="text-align: center; margin-bottom: 20px;">
+                 <div style="display: inline-block; padding: 10px 20px; background-color: ${color}15; color: ${color}; border: 1px solid ${color}30; border-radius: 50px; font-weight: 800; font-size: 16px;">
+                    ${title}
+                 </div>
+            </div>
+
+            <p style="text-align: right; color: #ffffff; font-size: 15px; margin-bottom: 15px;">שלום <strong>${businessName}</strong>,</p>
+            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">תוקף המנוי שלך פג בתאריך: <strong style="color: #ffffff;">${formattedDate}</strong>.</p>
+            
+            <div style="background: rgba(244, 63, 94, 0.1); border-right: 4px solid #f43f5e; padding: 20px; margin: 20px 0; border-radius: 12px;">
+                <p style="margin: 0; color: #ffffff; font-weight: 700; text-align: right;">לרשותך 48 שעות של תקופת חסד לפני חסימה מלאה של המערכת.</p>
+                <p style="margin: 10px 0 0 0; color: #94a3b8; font-size: 13px; text-align: right;">שימוש במערכת במהלך תקופת החסד ייספר כפעילות במחזור החיוב הנוכחי.</p>
+            </div>
+
+            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">אנא הסדר את התשלום כעת כדי למנוע השבתה של האפליקציה עבורך ועבור עובדיך.</p>
+
+            <div style="text-align: center; margin-top: 30px;">
+                <a href="${config.APP_URL || '#'}" style="display: inline-block; background: #f43f5e; color: #ffffff; text-decoration: none; padding: 14px 40px; border-radius: 12px; font-weight: 800; font-size: 16px; box-shadow: 0 4px 15px rgba(244, 63, 94, 0.3);">לתשלום וחידוש המנוי</a>
+            </div>
+        `;
+
+        return this.sendEmail(to, `חשוב: המנוי פג - נותרו 48 שעות לחסימה - ${businessName}`, this.getStyledTemplate('התראת תפוגה', content, '', logoUrl, businessName));
     }
 
     async sendPaymentSuccessNotification(to, data) {
