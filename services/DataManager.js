@@ -781,7 +781,7 @@ class DataManager {
             } catch (e) {
                 console.error('[DataManager] Failed to sync System Config to GAS:', e.message);
                 // Critical: Throw error back to API so user knows GAS failed
-                throw new Error(`׳©׳׳™׳¨׳” ׳׳§׳•׳׳™׳× ׳”׳¦׳׳™׳—׳” ׳׳ ׳”׳¡׳ ׳›׳¨׳•׳ ׳׳¢׳ ׳ (GAS) ׳ ׳›׳©׳: ${e.message}`);
+                throw new Error(`שמירה מקומית הצליחה אך הסנכרון לענן (GAS) נכשל: ${e.message}`);
             }
         }
 
@@ -892,7 +892,7 @@ class DataManager {
         const config = await this.getCompanyConfig(companyId);
         const employees = config.employees || [];
         if (!employees.includes(employeeName)) {
-            return { state: "UNAUTHORIZED", message: "הסיסמה שהזנת אינה נכונה. אנא וודא שהסיסמה תקינה ונסה שוב." };
+            return { state: "UNAUTHORIZED", message: "שם העובד שהזנת אינו רשום במערכת. אנא פנה למנהל להוספה." };
         }
 
         // --- LAZY CHECK: Auto-Close if limit reached ---
@@ -961,7 +961,7 @@ class DataManager {
                             lastShift.end,
                             lastShift.location || "-",
                             companyConfig.businessName || companyId,
-                            `׳”׳׳©׳׳¨׳× ׳ ׳¡׳’׳¨׳” ׳׳•׳˜׳•׳׳˜׳™׳× ׳›׳™ ׳—׳¨׳’׳” ׳׳”׳׳’׳‘׳׳” ׳©׳ ${this.formatHHMM(maxHours)} ׳©׳¢׳•׳×.`,
+                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${this.formatHHMM(maxHours)} שעות.`,
                             companyConfig.logoUrl,
                             summary
                         ).catch(e => console.error(`[Lazy-Checkout Email FAIL] ${e.message}`));
