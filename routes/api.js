@@ -15,6 +15,12 @@ const archiver = require('archiver');
 // ================================================================
 router.post('/dispatch', async (req, res) => {
     const { action, companyId, password, ...rest } = req.body || {};
+    
+    // Strict guard for ghost/temporary IDs on non-setup actions
+    const setupActions = ['initTranzilaPayment', 'checkPaymentStatus', 'saveCardToken'];
+    if (companyId === 'NEW_SETUP' && !setupActions.includes(action)) {
+        return res.json({ success: true, data: {}, messages: [] });
+    }
     console.log(`[Dispatch] action=${action} companyId=${companyId}`);
 
     try {
@@ -607,22 +613,24 @@ router.post('/dispatch', async (req, res) => {
                 const tranzilaRes = await tranzilaService.processPaymentProxy(payload);
 
                 if (tranzilaRes.success && tranzilaRes.token) {
-                    // 2. Save Token and Metadata in Business Config
+                    // 2. Normalize and Save Token and Metadata
                     const trimmedToken = tranzilaRes.token.trim();
                     const last4 = cardNumber.replace(/\s/g, '').slice(-4);
                     
-                    await dataManager.saveClientPaymentMethod(companyId, {
+                    const paymentMethodData = dataManager.normalizePaymentMethod({
                         token: trimmedToken,
                         last4: last4,
                         expMonth: expMonth,
                         expYear: expYear,
                         cardHolderName: cardName,
-                        cardHolderId: cardId,
+                        cardId: cardId, // Will be normalized to cardHolderId
                         cvv: cvv,
-                        businessId: businessId // This is used as invoiceDetails
+                        businessId: businessId // Often used for invoiceDetails
                     });
 
-                    // Update invoiceDetails in company config as well
+                    await dataManager.saveClientPaymentMethod(companyId, paymentMethodData);
+
+                    // Also ensure company config is updated for the invoice display
                     if (businessId) {
                         await dataManager.updateCompanyConfig(companyId, { invoiceDetails: businessId });
                     }
