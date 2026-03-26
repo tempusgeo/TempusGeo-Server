@@ -11,9 +11,9 @@ class TranzilaService {
         // In production, use environment variables!
         const payload = {
             ...params,
-            supplier: params.supplier || process.env.TRANZILA_TERMINAL_NAME,
+            supplier: params.supplier || config.TRANZILA_TERMINAL_NAME,
             tranmode: "A", // Verification Only (J5) or M (Charge)
-            TranzilaPW: params.TranzilaPW || process.env.TRANZILA_TERMINAL_PASS
+            TranzilaPW: params.TranzilaPW || config.TRANZILA_TERMINAL_PASS
         };
 
         try {
@@ -64,9 +64,9 @@ class TranzilaService {
         
         const payload = {
             ...params,
-            supplier: params.supplier || process.env.TRANZILA_TERMINAL_NAME,
+            supplier: params.supplier || config.TRANZILA_TERMINAL_NAME,
             tranmode: "M", // M = Charge
-            TranzilaPW: params.TranzilaPW || process.env.TRANZILA_TERMINAL_PASS
+            TranzilaPW: params.TranzilaPW || config.TRANZILA_TERMINAL_PASS
         };
 
         try {
