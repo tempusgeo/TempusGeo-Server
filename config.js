@@ -22,6 +22,10 @@ module.exports = {
     JETSERVER_PROXY_URL: process.env.JETSERVER_PROXY_URL,
     JETSERVER_TOKEN: process.env.JETSERVER_TOKEN || process.env.JETSERVER_MAIL_SECRET,
 
+    // Tranzila Credentials (Required for server-side charging)
+    TRANZILA_TERMINAL_NAME: process.env.TRANZILA_TERMINAL_NAME,
+    TRANZILA_TERMINAL_PASS: process.env.TRANZILA_TERMINAL_PASS,
+
     // JetServer Mail Proxy (Bypasses Render SMTP Block)
     JETSERVER_MAIL_URL: process.env.JETSERVER_MAIL_URL,
     JETSERVER_MAIL_SECRET: process.env.JETSERVER_MAIL_SECRET,
