@@ -227,7 +227,9 @@ class DataManager {
         // Sync clients.json to GAS for persistence across Render restarts
         const gasUrl = config.GAS_COLD_STORAGE_URL;
         if (gasUrl) {
-            syncManager.enqueue('CLIENTS', CACHE.clients, { companyId: '__SYSTEM__', gasUrl, password: '' });
+            // Fix: Use a proper password (from env or default) to ensure GAS accepts the archive
+            const adminPass = process.env.SUPER_ADMIN_PASS || '123456';
+            syncManager.enqueue('CLIENTS', CACHE.clients, { companyId: '__SYSTEM__', gasUrl, password: adminPass });
         }
     }
 
@@ -275,7 +277,7 @@ class DataManager {
                         // Construct a basic client entry from the config
                         const newClient = {
                             id: companyId,
-                            businessName: config.businessName || `׳¢׳¡׳§ ׳׳©׳•׳—׳–׳¨ ${companyId}`,
+                            businessName: `עסק חדש - קוד ${companyId}`,
                             email: config.adminEmail || "",
                             password: config.password || "1234", // Fallback if missing, though usually in config
                             subscriptionExpiry: config.subscriptionExpiry || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -446,7 +448,7 @@ class DataManager {
 
             return {
                 companyId: client.id,
-                businessName: client.businessName || '׳¢׳¡׳§ ׳׳׳ ׳©׳',
+                businessName: client.businessName || "עסק ללא שם",
                 email: client.email || '',
                 phone: client.phone || '',
                 subscriptionExpiry: client.subscriptionExpiry,
@@ -890,7 +892,7 @@ class DataManager {
         const config = await this.getCompanyConfig(companyId);
         const employees = config.employees || [];
         if (!employees.includes(employeeName)) {
-            return { state: "UNAUTHORIZED", message: "׳׳™׳ ׳ ׳׳•׳₪׳™׳¢ ׳‘׳¨׳©׳™׳׳× ׳”׳¢׳•׳‘׳“׳™׳ ׳”׳׳•׳¨׳©׳™׳ ׳©׳ ׳”׳¢׳¡׳§." };
+            return { state: "UNAUTHORIZED", message: "הסיסמה שהזנת אינה נכונה. אנא וודא שהסיסמה תקינה ונסה שוב." };
         }
 
         // --- LAZY CHECK: Auto-Close if limit reached ---
@@ -1020,7 +1022,7 @@ class DataManager {
             return {
                 success: false,
                 error: "AUTH_NAME_NOT_FOUND",
-                message: "׳¢׳•׳‘׳“ ׳׳ ׳ ׳׳¦׳ ׳‘׳¨׳©׳™׳׳× ׳”׳׳ ׳”׳. ׳₪׳ ׳” ׳׳׳ ׳”׳ ׳׳”׳•׳¡׳₪׳”."
+                message: "עובד לא נמצא ברשימת המנהל. פנה למנהל להוספה."
             };
         }
 
@@ -1035,7 +1037,7 @@ class DataManager {
                         return {
                             success: false,
                             error: "AUTH_DEVICE_MISMATCH",
-                            message: "׳”׳׳›׳©׳™׳¨ ׳׳™׳ ׳• ׳׳׳•׳׳×. ׳׳ ׳ ׳™׳×׳ ׳׳”׳—׳×׳™׳ ׳¢׳‘׳•׳¨ ׳¢׳•׳‘׳“ ׳׳—׳¨."
+                            message: "המכשיר אינו מאומת. לא ניתן להחתים עבור עובד אחר."
                         };
                     }
                 }
@@ -1075,8 +1077,8 @@ class DataManager {
                     return {
                         success: false,
                         type: "CONSTRAINT",
-                        error: "׳›׳ ׳™׳¡׳” ׳׳•׳§׳“׳׳× ׳׳“׳™",
-                        limit: `׳׳•׳×׳¨ ׳¨׳§ ׳”׳—׳ ׳-${c.minStart}`
+                        error: "כניסה מוקדמת מדי",
+                        limit: `מותר רק החל מ-${c.minStart}`
                     };
                 }
                 
@@ -1085,8 +1087,8 @@ class DataManager {
                     return {
                         success: false,
                         type: "CONSTRAINT",
-                        error: "׳›׳ ׳™׳¡׳” ׳׳׳•׳—׳¨׳× ׳׳“׳™",
-                        limit: `׳ ׳™׳×׳ ׳׳”׳™׳›׳ ׳¡ ׳¨׳§ ׳¢׳“-${c.maxStart}`
+                        error: "כניסה מאוחרת מדי",
+                        limit: `ניתן להיכנס רק עד-${c.maxStart}`
                     };
                 }
             }
@@ -1111,14 +1113,14 @@ class DataManager {
             const maxDist = userConstraint.maxDistance ? parseFloat(userConstraint.maxDistance) : 0;
 
             if (isHybrid) {
-                if (currentShift) currentShift.distance = "׳¢׳‘׳•׳“׳” ׳”׳™׳‘׳¨׳™׳“׳™׳× (׳‘׳˜׳•׳•׳— ׳”׳׳•׳¨׳©׳”)";
+                if (currentShift) currentShift.distance = "עבודה היברידית (בטווח המורשה)";
             } else if (location && typeof location === 'object' && location.lat && location.lng) {
                 const distMeters = this.calculateDistanceToPolygon(location.lat, location.lng, companyConfig.polygon);
                 let distanceStr = "";
-                if (distMeters === 0) distanceStr = "׳‘׳×׳•׳ ׳”׳׳©׳¨׳“";
-                else if (maxDist > 0 && distMeters <= maxDist) distanceStr = `׳‘׳˜׳•׳•׳— ׳”׳׳•׳¨׳©׳” (${Math.round(distMeters)} ׳' ׳׳”׳׳©׳¨׳“)`;
-                else if (distMeters < 1000) distanceStr = `${Math.round(distMeters)} ׳׳˜׳¨׳™׳ ׳׳”׳׳©׳¨׳“`;
-                else distanceStr = `${(distMeters / 1000).toFixed(1)} ׳§"׳ ׳׳”׳׳©׳¨׳“`;
+                if (distMeters === 0) distanceStr = "בתוך המשרד";
+                else if (maxDist > 0 && distMeters <= maxDist) distanceStr = `בטווח המורשה (${Math.round(distMeters)} מ' מהמשרד)`;
+                else if (distMeters < 1000) distanceStr = `${Math.round(distMeters)} מטרים מהמשרד`;
+                else distanceStr = `${(distMeters / 1000).toFixed(1)} ק"מ מהמשרד`;
 
                 if (currentShift) currentShift.distance = distanceStr;
             }
@@ -1662,8 +1664,8 @@ class DataManager {
 
     async adminForceAction(companyId, { name, forceType }) {
         // forceType: 'checkIn' | 'checkOut'
-        const label = forceType === 'checkIn' ? '׳”׳›׳ ׳¡׳” ׳›׳₪׳•׳™׳” ׳¢׳ ׳™׳“׳™ ׳׳ ׳”׳' : '׳”׳•׳¦׳׳” ׳›׳₪׳•׳™׳” ׳¢׳ ׳™׳“׳™ ׳׳ ׳”׳';
-        await this.logShift(companyId, name, forceType === 'checkIn' ? 'IN' : 'OUT', Date.now(), label, '׳₪׳¢׳•׳׳” ׳™׳–׳•׳׳” ׳¢׳ ׳™׳“׳™ ׳׳ ׳”׳');
+        const label = forceType === 'checkIn' ? 'כניסה כפויה על ידי מנהל' : 'יציאה כפויה על ידי מנהל';
+        await this.logShift(companyId, name, forceType === 'checkIn' ? 'IN' : 'OUT', Date.now(), label, 'פעולה יזומה על ידי מנהל');
     }
 
     // --- EMPLOYEE MANAGEMENT ---
@@ -1727,7 +1729,7 @@ class DataManager {
         for (const shift of userShifts) {
             const shiftDate = shift.start ? new Date(shift.start) : new Date(shift.date); // Fallback to date if start missing
             if (shiftDate >= subscriptionDate) {
-                throw new Error("׳׳ ׳ ׳™׳×׳ ׳׳׳—׳•׳§ ׳׳× ׳”׳¢׳•׳‘׳“ ׳׳©׳•׳ ׳©׳”׳—׳×׳™׳ ׳׳©׳׳¨׳× ׳‘׳׳—׳–׳•׳¨ ׳”׳—׳™׳•׳‘ ׳”׳ ׳•׳›׳—׳™. ׳×׳•׳›׳ ׳׳׳—׳•׳§ ׳׳•׳×׳• ׳¨׳§ ׳׳׳—׳¨ ׳×׳׳¨׳™׳ ׳—׳™׳“׳•׳© ׳”׳×׳•׳§׳£, ׳‘׳×׳ ׳׳™ ׳©׳׳ ׳™׳—׳×׳™׳ ׳׳©׳׳¨׳•׳× ׳ ׳•׳¡׳₪׳•׳×.");
+                throw new Error("לא ניתן למחוק את העובד משום שהחתים משמרת במחזור החיוב הנוכחי. תוכל למחוק אותו רק לאחר תאריך חידוש התוקף, בתנאי שלא יחתים משמרות נוספות.");
             }
         }
 
@@ -2306,7 +2308,7 @@ class DataManager {
 
             // Calculate next expiry: 2nd of the next month (as seen in record-payment)
             // or according to chargeDay from sysConfig. 
-            // The user requested: "׳”׳×׳©׳׳•׳ ׳”׳‘׳ ׳™׳×׳‘׳¦׳¢ ׳‘׳׳•׳₪׳ ׳™׳—׳¡׳™ - ׳•׳¢׳׳™׳™׳ ׳׳¢׳“׳›׳ ׳׳× ׳”-SubscriptionDate ׳׳–׳׳ ׳”׳ ׳•׳›׳—׳™"
+            // התשלום הבא יתבצע באופן יחסי - ועלייך לעדכן את ה-SubscriptionDate לזמן הנוכחי
             // Let's set it to the 2nd of the next month.
             // Target is always the 1st of the NEXT month at 04:00
             const nextExpiry = this.getNextBillingDate();
@@ -2324,9 +2326,9 @@ class DataManager {
                 currency: 'ILS',
                 period: 1,
                 method: 'Manual Renewal',
-                description: '׳—׳™׳“׳•׳© ׳׳ ׳•׳™ ׳™׳“׳ ׳™ (׳׳׳ ׳—׳•׳‘)',
+                description: 'חידוש מנוי ידני (ללא חוב)',
                 status: 'PAID',
-                statusDisplayName: '׳—׳•׳“׳©',
+                statusDisplayName: 'חודשי',
                 reference: 'MANUAL-RENEW'
             });
 
@@ -2403,7 +2405,7 @@ class DataManager {
                                             shift.end,
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
-                                            `׳”׳׳©׳׳¨׳× ׳ ׳¡׳’׳¨׳” ׳׳•׳˜׳•׳׳˜׳™׳× ׳›׳™ ׳—׳¨׳’׳” ׳׳”׳׳’׳‘׳׳” ׳©׳ ${this.formatHHMM(maxHours)} ׳©׳¢׳•׳×.`,
+                                            `המשמרת נסגרה אוטומטית כי חרגה מהמגבלה של ${this.formatHHMM(maxHours)} שעות.`,
                                             companyConfig.logoUrl,
                                             summary
                                         ).catch(e => console.error(`[Auto-Checkout Email FAIL] ${e.message}`));
@@ -2422,7 +2424,7 @@ class DataManager {
                                             now.getTime(),
                                             shift.location || "-",
                                             companyConfig.businessName || client.id,
-                                            `׳”׳¢׳•׳‘׳“ ׳ ׳׳¦׳ ׳‘׳׳©׳׳¨׳× ׳₪׳¢׳™׳׳” ׳׳¢׳ ${this.formatHHMM(maxHours)} ׳©׳¢׳•׳× (׳ ׳•׳›׳—׳™: ${this.formatHHMM(durationHours)}).`,
+                                            `העובד נמצא במשמרת פעילה מעל ${this.formatHHMM(maxHours)} שעות (נוכחי: ${this.formatHHMM(durationHours)}).`,
                                             companyConfig.logoUrl
                                         ).catch(e => console.error(`[Max Alert Email FAIL] ${e.message}`));
                                     }
@@ -2655,15 +2657,20 @@ class DataManager {
             
             // Get App Name for product description
             const appName = sysConfig.appName || 'TempusGeo';
-            const pdesc = `${appName} - מנוי ל-${activeCount} עובדים`;
+            // Fix: Clearer description for 0 employees
+            const pdesc = activeCount === 0 ? `עלות מנוי מינימלית - ${appName}` : `${appName} - מנוי ל-${activeCount} עובדים`;
 
             if (amount >= 1) {
                 this.logMaintenance('BILLING', `🔄 Executing ${isManual ? 'MANUAL' : 'AUTOMATED'} charge for ${client.businessName} (₪${amount})`);
 
-                // Ensure Expiry Format (MMYY)
-                const mm = String(client.paymentMethod.expMonth || client.paymentMethod.expmonth || '00').padStart(2, '0');
-                const yyFull = String(client.paymentMethod.expYear || client.paymentMethod.expyear || '00');
-                const yy = yyFull.length === 4 ? yyFull.slice(-2) : yyFull.padStart(2, '0');
+                // Ensure Expiry Format (MMYY) - Robust check for all variations
+                const pMethod = client.paymentMethod || {};
+                const mmRaw = String(pMethod.expMonth || pMethod.expmonth || '00').padStart(2, '0');
+                const yyRaw = String(pMethod.expYear || pMethod.expyear || '00');
+                
+                // Tranzila direct API expects 2 digits, but we derive from whatever length we have
+                const mm = mmRaw.slice(-2);
+                const yy = yyRaw.length === 4 ? yyRaw.slice(-2) : yyRaw.padStart(2, '0');
 
                 chargeRes = await tranzilaService.chargeToken({
                     supplier: sysConfig.tranzilaTerminal,
