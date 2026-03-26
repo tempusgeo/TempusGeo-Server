@@ -1844,9 +1844,21 @@ router.post('/maintenance/charge-client', maintenanceAuth, async (req, res) => {
 
 router.get('/maintenance/logs', maintenanceAuth, async (req, res) => {
     const category = req.query.category;
+    
+    // Special handling for cloud-based logs (EMAILS)
+    if (category === 'EMAILS') {
+        const gasRes = await dataManager.getGASLogs('EMAILS');
+        if (gasRes.success) {
+            return res.json({ success: true, logs: gasRes.logs });
+        }
+        return res.json({ success: false, error: gasRes.error, logs: [] });
+    }
+
     if (category && dataManager.maintenanceLogs[category]) {
         return res.json({ success: true, logs: dataManager.maintenanceLogs[category] });
     }
+    
+    // Default to ALL local logs
     res.json({ success: true, logs: dataManager.maintenanceLogs.ALL || [] });
 });
 
