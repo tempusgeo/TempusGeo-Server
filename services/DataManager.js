@@ -2730,6 +2730,7 @@ class DataManager {
 
         // Perform charge only if imminent/expired OR manual, AND has token, AND billing is globally enabled (or manual bypass)
         if ((isImminentOrExpired || shouldForce) && client.paymentMethod?.token && (globalAutoBilling || isManual)) {
+            const bizConfig = await this.getCompanyConfig(client.id);
             const activeCount = await this.countUniqueActiveEmployees(client.id);
             const subRes = await this.calculateSubscriptionAmount(client.id);
             const amount = subRes.amount;
@@ -2746,12 +2747,12 @@ class DataManager {
 
                 // Ensure Expiry Format (MMYY) - Robust check for all variations
                 const pMethod = this.normalizePaymentMethod(client.paymentMethod || {});
-                const mmRaw = String(pMethod.expMonth || '01').padStart(2, '0');
-                const yyRaw = String(pMethod.expYear || '2026');
+                const mmRaw = String(pMethod.expMonth || pMethod.expmonth || '01').padStart(2, '0');
+                const yyRaw = String(pMethod.expYear || pMethod.expyear || '2026');
                 
-                // Tranzila direct API expects 2 digits
+                // Use last 2 digits for Tranzila
                 const mm = mmRaw.slice(-2);
-                const yy = yyRaw.length === 4 ? yyRaw.slice(-2) : yyRaw.padStart(2, '0');
+                const yy = yyRaw.slice(-2);
 
                 // Priority for Invoice Name: bizConfig (from settings) > client.invoiceDetails (from card save) > businessName
                 const invoiceName = bizConfig.invoiceDetails || client.invoiceDetails || client.businessName;
