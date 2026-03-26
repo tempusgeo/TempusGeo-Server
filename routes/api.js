@@ -129,7 +129,7 @@ router.post('/dispatch', async (req, res) => {
                         // Include critical subscription state
                         paymentMethod: client?.paymentMethod || null,
                         autoChargeEnabled: !!client?.autoChargeEnabled,
-                        subscriptionExpiry: client?.subscriptionExpiry || null,
+                        expiryDate: client?.subscriptionExpiry || null,
                         paymentHistory: client?.paymentHistory || []
                     }
                 });
@@ -139,9 +139,36 @@ router.post('/dispatch', async (req, res) => {
                 const result = await authService.adminLogin(companyId, password);
                 if (result.success) {
                     // Also include daysRemaining for admin panel subscription banner
-                    const expiry = new Date(result.expiryDate);
-                    const daysRemaining = Math.ceil((expiry - new Date()) / (1000 * 60 * 60 * 24));
-                    result.daysRemaining = daysRemaining;
+                    const config = result.config; // Use the config returned by authService
+                    if (config) {
+                        const expiry = config.expiryDate || config.subscriptionExpiry;
+                        if (expiry && expiry !== "Unlimited") {
+                            const now = new Date();
+                            now.setHours(0, 0, 0, 0);
+
+                            let end;
+                            if (typeof expiry === 'string' && expiry.includes('/')) {
+                                const parts = expiry.split('/');
+                                // Assuming DD/MM/YYYY format for string with '/'
+                                end = new Date(parts[2], parts[1] - 1, parts[0]);
+                            } else {
+                                end = new Date(expiry);
+                            }
+
+                            if (!isNaN(end.getTime())) {
+                                const diffTime = end - now;
+                                const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                result.daysRemaining = days;
+
+                                if (days <= 7) {
+                                    let msg = `שימו לב: המנוי מסתיים בעוד ${days} ימים`;
+                                    if (days === 0) msg = "שימו לב: המנוי מסתיים היום!";
+                                    if (days < 0) msg = "המנוי הסתיים!";
+                                    result.subscriptionMessage = msg; // Add message to result
+                                }
+                            }
+                        }
+                    }
 
                     // Enrich response with additional data the admin panel expects
                     try {
@@ -521,8 +548,14 @@ router.post('/dispatch', async (req, res) => {
                 return res.json({ success: true });
             }
 
+            case 'updateCompanyConfig':
             case 'updateBusinessConfig': {
-                await dataManager.updateCompanyConfig(companyId, rest);
+                await dataManager.updateCompanyConfig(companyId, rest.config || rest);
+                return res.json({ success: true });
+            }
+
+            case 'updateAutoCharge': {
+                await dataManager.updateAutoCharge(companyId, rest.enabled);
                 return res.json({ success: true });
             }
 
@@ -585,14 +618,6 @@ router.post('/dispatch', async (req, res) => {
                 }
             }
 
-            case 'updateAutoCharge': {
-                const client = await dataManager.getClientById(companyId);
-                if (!client) return res.json({ success: false, error: "Client not found" });
-                
-                client.autoChargeEnabled = rest.enabled;
-                await dataManager.saveClients();
-                return res.json({ success: true });
-            }
 
             case 'processTranzilaTransaction': {
                 // Forward to internal payment processor
@@ -815,7 +840,8 @@ router.post('/super-admin/record-payment', async (req, res) => {
                 // Expired: Start from the 2nd of the next month
                 targetDate = new Date();
                 targetDate.setMonth(targetDate.getMonth() + 1);
-                targetDate.setDate(2);
+                targetDate.setDate(1);
+                targetDate.setHours(4, 0, 0, 0);
             } else {
                 // Active: Just use current expiry as base
                 targetDate = new Date(currentExpiry);
