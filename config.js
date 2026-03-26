@@ -18,6 +18,7 @@ module.exports = {
     GAS_COLD_STORAGE_URL: process.env.GAS_COLD_STORAGE_URL || "https://script.google.com/macros/s/AKfycbzNUL7jYvogl7_gwDSHVWSvEPWrdHF1-gfA4wBD5wN7koTNs5Mcn2r_b1FHwuvimYNncA/exec", // Set this to your GAS Web App URL
 
     // JetServer Payment Proxy
+    JETSERVER_PAYMENT_URL: process.env.JETSERVER_PROXY_URL || process.env.JETSERVER_PAYMENT_URL,
     JETSERVER_PROXY_URL: process.env.JETSERVER_PROXY_URL,
     JETSERVER_TOKEN: process.env.JETSERVER_TOKEN || process.env.JETSERVER_MAIL_SECRET,
 
