@@ -147,10 +147,17 @@ router.post('/dispatch', async (req, res) => {
                             now.setHours(0, 0, 0, 0);
 
                             let end;
-                            if (typeof expiry === 'string' && expiry.includes('/')) {
-                                const parts = expiry.split('/');
-                                // Assuming DD/MM/YYYY format for string with '/'
-                                end = new Date(parts[2], parts[1] - 1, parts[0]);
+                            if (typeof expiry === 'string' && (expiry.includes('/') || expiry.includes('.') || expiry.includes('-'))) {
+                                const parts = expiry.split(/[./-]/);
+                                if (parts.length === 3) {
+                                    if (parts[0].length === 4) { // YYYY-MM-DD
+                                        end = new Date(expiry);
+                                    } else { // DD/MM/YYYY or DD.MM.YYYY
+                                        end = new Date(parts[2], parts[1] - 1, parts[0]);
+                                    }
+                                } else {
+                                    end = new Date(expiry);
+                                }
                             } else {
                                 end = new Date(expiry);
                             }
@@ -579,7 +586,8 @@ router.post('/dispatch', async (req, res) => {
             case 'saveCardToken': {
                 const { cardName, cardId, cardNumber, expMonth, expYear, cvv, businessId } = rest.paymentDetails;
                 
-                // 1. Get Token from Tranzila (J5)
+                // --- Tranzila Tokenization (J5) ---
+                // We need to ensure we send standard fields to Tranzila
                 const payload = {
                     action: 'create_token',
                     companyId: companyId,
@@ -587,20 +595,22 @@ router.post('/dispatch', async (req, res) => {
                     TranzilaPW: (await dataManager.getSystemConfig()).tranzilaPass,
                     sum: '0.00',
                     ccno: cardNumber.replace(/\D/g, ''),
-                    expmonth: expMonth,
-                    expyear: expYear,
+                    expmonth: String(expMonth).padStart(2, '0'),
+                    expyear: String(expYear).length === 4 ? String(expYear).slice(-2) : String(expYear).padStart(2, '0'),
                     mycvv: cvv,
-                    myid: cardId,
-                    contact: cardName,
+                    myid: cardId, // Card Holder ID
+                    contact: '', // Remove contact to avoid cluttering Tranzila CRM
+                    company: businessId || '', // Invoice Details / Business Name
                     pdesc: `Token Registration - ${companyId}`
                 };
 
                 const tranzilaRes = await tranzilaService.processPaymentProxy(payload);
 
                 if (tranzilaRes.success && tranzilaRes.token) {
-                    // 2. Save Token in Business Config
+                    // 2. Save Token and Metadata in Business Config
                     const trimmedToken = tranzilaRes.token.trim();
                     const last4 = cardNumber.replace(/\s/g, '').slice(-4);
+                    
                     await dataManager.saveClientPaymentMethod(companyId, {
                         token: trimmedToken,
                         last4: last4,
@@ -609,8 +619,13 @@ router.post('/dispatch', async (req, res) => {
                         cardHolderName: cardName,
                         cardHolderId: cardId,
                         cvv: cvv,
-                        businessId: businessId
+                        businessId: businessId // This is used as invoiceDetails
                     });
+
+                    // Update invoiceDetails in company config as well
+                    if (businessId) {
+                        await dataManager.updateCompanyConfig(companyId, { invoiceDetails: businessId });
+                    }
 
                     return res.json({ success: true, last4 });
                 } else {
