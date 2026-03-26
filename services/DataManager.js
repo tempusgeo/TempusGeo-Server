@@ -250,6 +250,8 @@ class DataManager {
     }
 
     async saveClientPaymentMethod(companyId, paymentMethod) {
+        if (!companyId || companyId === 'NEW_SETUP') return; // Strict guard
+        
         const client = await this.getClientById(companyId);
         if (!client) throw new Error("Client not found");
 
@@ -283,15 +285,17 @@ class DataManager {
         // Ensure token is trimmed of any newlines or whitespace
         const rawToken = (pm.token || pm.TranzilaTK || pm.TranzilaToken || '').toString().trim();
         
+        // Tranzila provides card holder ID under 'myid' or 'cardId'
+        // and Company/Business ID under 'company' or 'businessId'
         return {
             token: rawToken,
             last4: (pm.last4 || (pm.cardNumber ? pm.cardNumber.slice(-4) : '') || '').toString().trim(),
             expMonth: (pm.expMonth || pm.expmonth || pm.expirationMonth || (pm.expiry ? pm.expiry.split('/')[0] : '01')).toString().padStart(2, '0'),
-            expYear: (pm.expYear || pm.expyear || pm.expirationYear || (pm.expiry ? pm.expiry.split('/')[1] : '26')).toString(),
+            expYear: (pm.expYear || pm.expyear || pm.expirationYear || (pm.expiry ? pm.expiry.split('/')[1] : '2026')).toString().trim(),
             cardHolderName: (pm.cardHolderName || pm.cardName || pm.contact || '').toString().trim(),
-            cardHolderId: (pm.cardHolderId || pm.cardId || pm.myid || '').toString().trim(),
+            cardHolderId: (pm.cardHolderId || pm.cardId || pm.myid || pm.id || '').toString().trim(),
             cvv: (pm.cvv || pm.mycvv || '').toString().trim(),
-            businessId: (pm.businessId || pm.company || '').toString().trim()
+            businessId: (pm.businessId || pm.company || pm.id || '').toString().trim()
         };
     }
 
@@ -430,32 +434,18 @@ class DataManager {
         let gasClientsMap = new Map(); // Store clients from GAS backup
 
         // 1. Fetch Cloud Data manifest (clients + presence)
+        // Optimization: Do NOT call heavy 'restore' on every page load.
+        // The list is already synced on startup.
+        /*
         if (gasUrl) {
             try {
-                // Requesting 'restore' but hopefully summary/manifest if supported
-                const response = await axios.get(`${gasUrl}?path=restore`, { timeout: 20000 });
-                if (response.data && response.data.success && response.data.data && Array.isArray(response.data.data.files)) {
-                    const files = response.data.data.files;
-
-                    // Look for clients.json content in the backup
-                    const clientsFile = files.find(f => f.path === 'clients.json');
-                    if (clientsFile && Array.isArray(clientsFile.content)) {
-                        clientsFile.content.forEach(c => {
-                            gasClientsMap.set(c.id, c);
-                            gasCompanies.add(c.id);
-                        });
-                    }
-
-                    // Also check for company folders presence in case clients.json is stale
-                    files.forEach(f => {
-                        const match = f.path.match(/^companies\/([^\/]+)\//);
-                        if (match) gasCompanies.add(match[1]);
-                    });
-                }
+                // Requesting 'restore' is extremely heavy (all files). 
+                // We will rely on local CACHE and only pull full sync via manual button.
             } catch (e) {
                 console.error('[DataManager] Failed to merge GAS clients:', e.message);
             }
         }
+        */
 
         // 2. Merge local CACHE.clients with GAS clients (GAS is source of truth for "All Businesses")
         const mergedClientsMap = new Map();
@@ -2017,7 +2007,9 @@ class DataManager {
             const response = await axios.get(`${gasUrl}?path=restore`, { timeout: 45000 });
 
             if (!response.data || !response.data.success) {
-                console.error(`[Restore] GAS error: ${response.data?.error || 'Unknown error'}`);
+                const gasErr = response.data?.error || 'Unknown GAS error';
+                console.error(`[Restore] GAS rejected request: ${gasErr}`);
+                this.logMaintenance('ERROR', `Cloud sync failed: ${gasErr}`);
                 return false;
             }
 
@@ -2104,8 +2096,10 @@ class DataManager {
             return true;
 
         } catch (e) {
-            console.error(`[Restore] Critical Failure: ${e.message}`);
-            if (e.response) console.error(`[Restore] Server Response:`, e.response.data);
+            const errMsg = e.response?.data?.error || e.message;
+            console.error(`[Restore] Critical Failure: ${errMsg}`);
+            this.logMaintenance('ERROR', `Fatal sync failure: ${errMsg}`);
+            if (e.response) console.error(`[Restore] Server Response Object:`, JSON.stringify(e.response.data).slice(0, 500));
             return false;
         }
     }
