@@ -106,6 +106,22 @@ class DataManager {
             try {
                 const data = await fs.readFile(this.clientsFile, 'utf8');
                 CACHE.clients = JSON.parse(data);
+                
+                // DATA REPAIR & NORMALIZATION (One-time and proactive)
+                let repairedCount = 0;
+                CACHE.clients.forEach(client => {
+                    if (client.paymentMethod) {
+                        const original = JSON.stringify(client.paymentMethod);
+                        client.paymentMethod = this.normalizePaymentMethod(client.paymentMethod);
+                        if (JSON.stringify(client.paymentMethod) !== original) repairedCount++;
+                    }
+                });
+                
+                if (repairedCount > 0) {
+                    console.log(`[Init] Self-Healing: Repaired/Normalized ${repairedCount} client payment methods.`);
+                    await this.saveClients(); // Persist fixes
+                }
+
                 console.log(`Loaded ${CACHE.clients.length} clients from disk.`);
             } catch (e) {
                 console.log("No clients.json found. Creating new empty DB (temporarily).");
@@ -237,15 +253,46 @@ class DataManager {
         const client = await this.getClientById(companyId);
         if (!client) throw new Error("Client not found");
 
+        // Normalize payment method to ensure field consistency
+        const normalized = this.normalizePaymentMethod(paymentMethod);
+        console.log(`[DataManager] Saving Normalized Payment for ${companyId}:`, JSON.stringify(normalized));
+
         // Store inclusive of businessId (for automated billing receipts)
-        client.paymentMethod = paymentMethod;
-        
+        client.paymentMethod = normalized;
         client.autoChargeEnabled = true; // Auto-enable on card save
+        
+        // Also ensure invoiceDetails is on the client object for quick access in auto-tasks
+        if (normalized.businessId) {
+            client.invoiceDetails = normalized.businessId;
+        }
+
         await this.saveClients();
 
-        if (paymentMethod.businessId) {
-            await this.updateCompanyConfig(companyId, { invoiceDetails: paymentMethod.businessId });
+        if (normalized.businessId) {
+            await this.updateCompanyConfig(companyId, { invoiceDetails: normalized.businessId });
         }
+    }
+
+    /**
+     * Ensures payment method has consistent keys (expMonth, expYear, cardHolderId)
+     * regardless of technical sources (Admin, User, Tokenization Proxy).
+     */
+    normalizePaymentMethod(pm) {
+        if (!pm) return { token: '', last4: '', expMonth: '01', expYear: '2026', cardHolderName: '', cardHolderId: '', cvv: '', businessId: '' };
+        
+        // Ensure token is trimmed of any newlines or whitespace
+        const rawToken = (pm.token || pm.TranzilaTK || pm.TranzilaToken || '').toString().trim();
+        
+        return {
+            token: rawToken,
+            last4: (pm.last4 || (pm.cardNumber ? pm.cardNumber.slice(-4) : '') || '').toString().trim(),
+            expMonth: (pm.expMonth || pm.expmonth || pm.expirationMonth || (pm.expiry ? pm.expiry.split('/')[0] : '01')).toString().padStart(2, '0'),
+            expYear: (pm.expYear || pm.expyear || pm.expirationYear || (pm.expiry ? pm.expiry.split('/')[1] : '26')).toString(),
+            cardHolderName: (pm.cardHolderName || pm.cardName || pm.contact || '').toString().trim(),
+            cardHolderId: (pm.cardHolderId || pm.cardId || pm.myid || '').toString().trim(),
+            cvv: (pm.cvv || pm.mycvv || '').toString().trim(),
+            businessId: (pm.businessId || pm.company || '').toString().trim()
+        };
     }
 
     /**
@@ -308,6 +355,7 @@ class DataManager {
     // --- COMPANY DATA ---
 
     async loadCompany(companyId) {
+        if (!companyId || companyId === 'NEW_SETUP') return; // Strict guard against ghost folders
         if (CACHE.companies[companyId]) return; // Already loaded
 
         const companyDir = path.join(this.dataDir, 'companies', companyId);
@@ -343,8 +391,10 @@ class DataManager {
             holidaysLastFetch: 0
         };
 
-        // Background Refresh
-        this.refreshMetadata(companyId).catch(() => { });
+        // Background Refresh - ONLY if not internal/temporary ID
+        if (companyId !== 'NEW_SETUP' && !companyId.startsWith('__')) {
+            this.refreshMetadata(companyId).catch(() => { });
+        }
     }
 
 
@@ -470,6 +520,7 @@ class DataManager {
     }
 
     async countUniqueActiveEmployees(companyId, year = null, month = null) {
+        if (!companyId || companyId === 'NEW_SETUP') return 0;
         try {
             const now = new Date();
             const activeSet = new Set();
@@ -825,9 +876,7 @@ class DataManager {
     // --- SHIFTS & ATTENDANCE ---
 
     async getShifts(companyId, year, month) {
-        // key format: '2024-01'
-        // Actually, let's stick to the "Year" folder structure to match GAS.
-
+        if (!companyId || companyId === 'NEW_SETUP') return [];
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
         const cacheKey = `${year}-${month}`; // e.g., 2024-1 (January)
@@ -1030,6 +1079,7 @@ class DataManager {
     }
 
     async getEmployees(companyId) {
+        if (!companyId || companyId === 'NEW_SETUP') return []; 
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
         const config = CACHE.companies[companyId].config;
@@ -1196,6 +1246,7 @@ class DataManager {
 
     // --- DASHBOARD ---
     async getDashboard(companyId, year = null, month = null) {
+        if (!companyId || companyId === 'NEW_SETUP') return {};
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
         const now = new Date();
@@ -1405,6 +1456,7 @@ class DataManager {
     }
 
     async refreshMetadata(companyId) {
+        if (!companyId || companyId === 'NEW_SETUP') return; // Guard against GAS requests
         const bizConfig = await this.getCompanyConfig(companyId);
         const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
         if (!gasUrl) return;
@@ -1943,6 +1995,7 @@ class DataManager {
     }
 
     async getShiftsHybrid(companyId, year, month) {
+        if (!companyId || companyId === 'NEW_SETUP') return [];
         // Smart routing: hot vs cold
         if (this.isHotMonth(year, month)) {
             return await this.getShifts(companyId, year, month);
@@ -2213,9 +2266,9 @@ class DataManager {
         let pMethodSafe = null;
         let invoiceDetails = null;
         if (data.paymentMethod) {
-            const { invoiceDetails: invDet, ...rest } = data.paymentMethod;
-            pMethodSafe = Object.keys(rest).length ? rest : null;
-            invoiceDetails = invDet;
+            // Normalize the payment method immediately upon business creation
+            pMethodSafe = this.normalizePaymentMethod(data.paymentMethod);
+            invoiceDetails = pMethodSafe.businessId || pMethodSafe.company;
         }
 
         const client = {
@@ -2698,13 +2751,16 @@ class DataManager {
                 this.logMaintenance('BILLING', `🔄 Executing ${isManual ? 'MANUAL' : 'AUTOMATED'} charge for ${client.businessName} (₪${amount})`);
 
                 // Ensure Expiry Format (MMYY) - Robust check for all variations
-                const pMethod = client.paymentMethod || {};
-                const mmRaw = String(pMethod.expMonth || pMethod.expmonth || '00').padStart(2, '0');
-                const yyRaw = String(pMethod.expYear || pMethod.expyear || '00');
+                const pMethod = this.normalizePaymentMethod(client.paymentMethod || {});
+                const mmRaw = String(pMethod.expMonth || '01').padStart(2, '0');
+                const yyRaw = String(pMethod.expYear || '2026');
                 
-                // Tranzila direct API expects 2 digits, but we derive from whatever length we have
+                // Tranzila direct API expects 2 digits
                 const mm = mmRaw.slice(-2);
                 const yy = yyRaw.length === 4 ? yyRaw.slice(-2) : yyRaw.padStart(2, '0');
+
+                // Priority for Invoice Name: bizConfig (from settings) > client.invoiceDetails (from card save) > businessName
+                const invoiceName = bizConfig.invoiceDetails || client.invoiceDetails || client.businessName;
 
                 chargeRes = await tranzilaService.chargeToken({
                     supplier: sysConfig.tranzilaTerminal,
@@ -2712,13 +2768,13 @@ class DataManager {
                     sum: amount,
                     currency: 1,
                     pdesc: pdesc,
-                    TranzilaTK: client.paymentMethod.token,
+                    TranzilaTK: pMethod.token,
                     expmonth: mm,
                     expyear: yy,
-                    myid: client.paymentMethod.cardHolderId || '', 
-                    company: client.invoiceDetails || client.businessName, 
+                    myid: pMethod.cardHolderId || '', 
+                    company: invoiceName, 
                     contact: '', 
-                    mycvv: client.paymentMethod.cvv
+                    mycvv: pMethod.cvv
                 });
             }
 
