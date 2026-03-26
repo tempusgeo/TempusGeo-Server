@@ -106,6 +106,14 @@ class SyncManager {
                 postData.data = JSON.stringify(payload);
                 break;
 
+            case 'CLIENTS':
+                postData.action = 'archive';
+                postData.companyId = '__SYSTEM__';
+                postData.year = 'clients';
+                postData.month = 'json';
+                postData.data = JSON.stringify(payload);
+                break;
+
             default:
                 throw new Error(`Unknown sync type: ${type}`);
         }
