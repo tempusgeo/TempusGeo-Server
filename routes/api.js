@@ -987,8 +987,11 @@ router.post('/super-admin/delete-payment', async (req, res) => {
         client.paymentHistory.splice(paymentIndex, 1);
         client.subscriptionExpiry = prevExpiry;
 
-        // --- Step 4: Recalculate expected payment for UI ---
-        await dataManager.saveClients();
+        // --- Step 4: Save locally AND sync immediately to GAS (synchronous) ---
+        // CRITICAL: Must be synchronous sync so GAS gets updated data before any potential
+        // Render restart. If we only do background enqueue, a server restart could
+        // trigger smartRestoreFromGAS which would pull old GAS data and restore the deleted payment.
+        await dataManager.saveClientsAndSyncToGAS();
 
         // Report credit to GAS (negative amount = refund)
         if (isAutoPayment && lastPayment.amount > 0) {
@@ -2018,9 +2021,9 @@ router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res
         // ======= STEP 2: REFUND =======
         const refundPayload = {
             supplier: sysConfig.tranzilaTerminal,
-            TranzilaPW: sysConfig.tranzilaRefundPass,
+            CreditPass: sysConfig.tranzilaRefundPass,
             tranmode: `C${tranzilaIndex}`,
-            sum: '0'
+            sum: '1'
         };
 
         addLog('REFUND', 'REQUEST', refundPayload);
