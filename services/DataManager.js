@@ -629,42 +629,45 @@ class DataManager {
             }
 
             // Use the expiry date (when they last paid until) as the start of the coverage calculation
-            const coverageStart = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : (client.subscriptionDate ? new Date(client.subscriptionDate) : new Date());
+            const coverageStart = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : (client.subscriptionDate && client.subscriptionDate !== client.subscriptionExpiry ? new Date(client.subscriptionDate) : new Date());
 
-            let SubscriptionDaysInLastMonth = 0;
-            if (coverageStart.getFullYear() === targetYear && coverageStart.getMonth() === targetMonth) {
-                SubscriptionDaysInLastMonth = Math.max(0, LastMonthDays - coverageStart.getDate() + 1);
-            } else if (coverageStart < new Date(targetYear, targetMonth, 1)) {
-                SubscriptionDaysInLastMonth = LastMonthDays;
-            } else {
-                SubscriptionDaysInLastMonth = 0; // Fully covered for this period
-            }
+            // We are buying coverage from 'coverageStart' up to the 1st of the following month.
+            const nextFirst = new Date(coverageStart);
+            nextFirst.setMonth(nextFirst.getMonth() + 1);
+            nextFirst.setDate(1);
+            nextFirst.setHours(4, 0, 0, 0);
 
-            if (SubscriptionDaysInLastMonth <= 0 || LastMonthDays === 0) {
+            // Calculate exact days to buy
+            const daysToBuy = Math.round((nextFirst - coverageStart) / (1000 * 60 * 60 * 24));
+            const daysInMonthOfCoverage = new Date(coverageStart.getFullYear(), coverageStart.getMonth() + 1, 0).getDate();
+
+            // The price is based on the active employees in the PREVIOUS calendar month relative to coverageStart
+            const countYear = coverageStart.getMonth() === 0 ? coverageStart.getFullYear() - 1 : coverageStart.getFullYear();
+            const countMonth = coverageStart.getMonth() === 0 ? 12 : coverageStart.getMonth(); // 1-indexed for countUniqueActiveEmployees
+            
+            const billedEmployeeCount = forcedEmployeeCount !== null ? forcedEmployeeCount : await this.countUniqueActiveEmployees(companyId, countYear, countMonth);
+
+            if (daysToBuy <= 0 || daysInMonthOfCoverage === 0) {
                 return { 
                     amount: 0, 
-                    breakdown: { 
-                        employeeCount, pricePerEmp, minPrice, LastMonthDays, SubscriptionDaysInLastMonth, 
-                        subscriptionDate: coverageStart.toISOString().split('T')[0],
-                        periodGoal: `${targetYear}-${(targetMonth + 1).toString().padStart(2, '0')}`
-                    }
+                    breakdown: { employeeCount: billedEmployeeCount, pricePerEmp, minPrice, daysToBuy, daysInMonthOfCoverage, note: "Zero days to buy" }
                 };
             }
 
-            const formulaBase = Math.max(minPrice, employeeCount * pricePerEmp);
-            const amount = Math.floor(formulaBase * (SubscriptionDaysInLastMonth / LastMonthDays));
+            const formulaBase = Math.max(minPrice, billedEmployeeCount * pricePerEmp);
+            const amount = Math.floor(formulaBase * (daysToBuy / daysInMonthOfCoverage));
 
             return {
                 amount,
                 breakdown: {
-                    employeeCount,
+                    employeeCount: billedEmployeeCount,
                     pricePerEmp,
                     minPrice,
                     formulaBase,
-                    LastMonthDays,
-                    SubscriptionDaysInLastMonth,
+                    daysInMonthOfCoverage,
+                    daysToBuy,
                     subscriptionDate: coverageStart.toISOString().split('T')[0],
-                    periodGoal: `${targetYear}-${(targetMonth + 1).toString().padStart(2, '0')}`
+                    periodGoal: `${coverageStart.getFullYear()}-${(coverageStart.getMonth() + 1).toString().padStart(2, '0')}`
                 }
             };
         } catch (e) {
