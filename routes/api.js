@@ -750,6 +750,7 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 adminWhatsapp: config.adminWhatsapp || '',
                 tranzilaTerminal: config.tranzilaTerminal || '',
                 tranzilaPass: config.tranzilaPass || '',
+                tranzilaRefundPass: config.tranzilaRefundPass || '',
                 minMonthlyPrice: config.minMonthlyPrice || 0,
                 pricePerEmployee: config.pricePerEmployee || 0,
                 maxShiftHours: config.maxShiftHours || 12,
@@ -920,12 +921,82 @@ router.post('/super-admin/record-payment', async (req, res) => {
 
 router.post('/super-admin/delete-payment', async (req, res) => {
     try {
-        const { password, targetCompanyId, paymentIndex, doTranzilaRefund } = req.body;
+        const { password, targetCompanyId, paymentType, tranzilaIndex, confirmRefund } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
-        if (!targetCompanyId || paymentIndex === undefined) return res.status(400).json({ success: false, error: "Missing parameters" });
+        if (!targetCompanyId) return res.status(400).json({ success: false, error: "Missing targetCompanyId" });
 
-        const result = await dataManager.deletePaymentRecord(targetCompanyId, paymentIndex, doTranzilaRefund);
-        res.json(result);
+        const client = await dataManager.getClientById(targetCompanyId);
+        if (!client) return res.status(404).json({ success: false, error: "Business not found" });
+
+        // --- Get the LAST payment (only last can be deleted) ---
+        const history = client.paymentHistory || [];
+        if (history.length === 0) return res.json({ success: false, error: "אין היסטוריית תשלומים" });
+
+        // Sort to find last chronologically
+        const sorted = history.map((p, i) => ({ ...p, i })).sort((a, b) => new Date(b.fullDate || b.date) - new Date(a.fullDate || a.date));
+        const lastPayment = sorted[0];
+        const paymentIndex = lastPayment.i;
+
+        // --- Step 1: Tranzila Refund (if auto and confirmRefund) ---
+        let refundResult = null;
+        const isAutoPayment = paymentType === 'auto' || (!lastPayment.reference?.startsWith('MANUAL') && !lastPayment.reference?.startsWith('FREE') && !lastPayment.reference?.startsWith('PLAN') && lastPayment.reference && lastPayment.reference.length > 3);
+
+        if (isAutoPayment && confirmRefund && tranzilaIndex) {
+            const sysConfig = await dataManager.getSystemConfig();
+            refundResult = await tranzilaService.refundTransaction({
+                supplier: sysConfig.tranzilaTerminal,
+                refundPass: sysConfig.tranzilaRefundPass,
+                tranzilaIndex
+            });
+
+            if (!refundResult.success) {
+                // Log but don't block – admin can decide to force-delete
+                console.warn(`[SuperAdmin] Tranzila refund attempt failed: ${refundResult.raw || refundResult.error}`);
+            }
+        }
+
+        // --- Step 2: Revert subscription to previous renewal date ---
+        // Before the last payment, what was the expiry?
+        const prevPayment = sorted[1]; // second-to-last payment (chronologically)
+        let prevExpiry = null;
+
+        if (prevPayment && prevPayment.fullDate) {
+            // Calculate expiry as it was after the previous payment (1 month after its date)
+            const prevDate = new Date(prevPayment.fullDate);
+            prevDate.setMonth(prevDate.getMonth() + (parseInt(prevPayment.period) || 1));
+            prevDate.setDate(1);
+            prevDate.setHours(4, 0, 0, 0);
+            prevExpiry = prevDate.toISOString();
+        } else {
+            // No previous payment – revert by subtracting the deleted payment's period
+            const currentExpiry = new Date(client.subscriptionExpiry || new Date());
+            currentExpiry.setMonth(currentExpiry.getMonth() - (parseInt(lastPayment.period) || 1));
+            prevExpiry = currentExpiry.toISOString();
+        }
+
+        // --- Step 3: Remove the payment record ---
+        client.paymentHistory.splice(paymentIndex, 1);
+        client.subscriptionExpiry = prevExpiry;
+
+        // --- Step 4: Recalculate expected payment for UI ---
+        await dataManager.saveClients();
+
+        // Report credit to GAS (negative amount = refund)
+        if (isAutoPayment && lastPayment.amount > 0) {
+            dataManager.reportPaymentToGAS(-lastPayment.amount).catch(e => console.error(`[API] GAS Refund Report Failed: ${e.message}`));
+        }
+
+        // Recalculate expected payment after update
+        const newExpectedPayment = await dataManager.calculateSubscriptionAmount(targetCompanyId);
+
+        res.json({
+            success: true,
+            message: refundResult?.success ? 'הזיכוי נשלח לטרנזילה והרשומה נמחקה' : 'רשומת התשלום נמחקה והמנוי עודכן',
+            newExpiry: new Date(prevExpiry).toLocaleDateString('he-IL'),
+            newExpectedPayment: newExpectedPayment?.amount || 0,
+            refundSent: !!(refundResult?.success),
+            refundResponseCode: refundResult?.responseCode
+        });
     } catch (e) {
         console.error('[SuperAdmin] delete-payment error:', e.message);
         res.status(500).json({ success: false, error: e.message });
@@ -1863,6 +1934,119 @@ router.post('/maintenance/charge-client', maintenanceAuth, async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+
+/**
+ * DEBUG: Charge 1 ILS + immediate refund. Returns full raw log of both operations.
+ * This is a safe test that leaves no financial trace.
+ */
+router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res) => {
+    const log = [];
+    const addLog = (step, type, data) => {
+        log.push({ step, type, timestamp: new Date().toISOString(), data });
+    };
+
+    try {
+        const { clientId } = req.body;
+        if (!clientId) return res.status(400).json({ success: false, error: 'Missing clientId' });
+
+        const client = dataManager.getClientById(clientId);
+        if (!client) return res.status(404).json({ success: false, error: 'Business not found', log });
+
+        const pm = client.paymentMethod;
+        if (!pm || !pm.token) {
+            return res.json({ success: false, error: 'אין טוקן כרטיס אשראי שמור לעסק זה', log });
+        }
+
+        const sysConfig = await dataManager.getSystemConfig();
+
+        // ======= STEP 1: CHARGE =======
+        const chargePayload = {
+            supplier: sysConfig.tranzilaTerminal,
+            TranzilaToken: pm.token,
+            TranzilaPW: sysConfig.tranzilaPass,
+            sum: '1',
+            currency: '1',
+            tranmode: 'F',
+            myid: pm.cardHolderId || '',
+            email: client.email || '',
+            expdate: (() => {
+                const mm = String(pm.expmonth || '01').padStart(2, '0');
+                const yy = String(pm.expyear || '30').slice(-2);
+                return mm + yy;
+            })()
+        };
+
+        addLog('CHARGE', 'REQUEST', chargePayload);
+
+        const chargeResult = await tranzilaService.chargeToken(chargePayload);
+
+        addLog('CHARGE', 'RESPONSE', {
+            success: chargeResult.success,
+            responseCode: chargeResult.data?.Response,
+            confirmationCode: chargeResult.data?.ConfirmationCode,
+            tranzilaIndex: chargeResult.data?.index,
+            text: chargeResult.data?.text,
+            raw: chargeResult.raw
+        });
+
+        if (!chargeResult.success) {
+            return res.json({
+                success: false,
+                chargeSuccess: false,
+                error: `חיוב נכשל – Response: ${chargeResult.data?.Response || 'N/A'}`,
+                log
+            });
+        }
+
+        const tranzilaIndex = chargeResult.data?.index;
+        if (!tranzilaIndex) {
+            return res.json({
+                success: false,
+                chargeSuccess: true,
+                error: 'חיוב הצליח אך לא התקבל index לביטול – לא ניתן לבצע זיכוי',
+                log
+            });
+        }
+
+        // ======= STEP 2: REFUND =======
+        const refundPayload = {
+            supplier: sysConfig.tranzilaTerminal,
+            TranzilaPW: sysConfig.tranzilaRefundPass,
+            tranmode: `C${tranzilaIndex}`,
+            sum: '0'
+        };
+
+        addLog('REFUND', 'REQUEST', refundPayload);
+
+        const refundResult = await tranzilaService.refundTransaction({
+            supplier: sysConfig.tranzilaTerminal,
+            refundPass: sysConfig.tranzilaRefundPass,
+            tranzilaIndex
+        });
+
+        addLog('REFUND', 'RESPONSE', {
+            success: refundResult.success,
+            responseCode: refundResult.responseCode,
+            raw: refundResult.raw
+        });
+
+        return res.json({
+            success: refundResult.success,
+            chargeSuccess: true,
+            refundSuccess: refundResult.success,
+            chargeConfirmationCode: chargeResult.data?.ConfirmationCode,
+            tranzilaIndex,
+            refundResponseCode: refundResult.responseCode,
+            log
+        });
+
+    } catch (e) {
+        addLog('ERROR', 'EXCEPTION', { message: e.message, stack: e.stack?.split('\n').slice(0, 4) });
+        console.error('[DebugChargeRefund] Error:', e.message);
+        res.status(500).json({ success: false, error: e.message, log });
+    }
+});
+
 
 router.get('/maintenance/logs', maintenanceAuth, async (req, res) => {
     const category = req.query.category;
