@@ -1968,12 +1968,8 @@ router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res
             currency: '1',
             tranmode: 'F',
             myid: pm.cardHolderId || '',
-            email: client.email || '',
-            expdate: (() => {
-                const mm = String(pm.expMonth || pm.expmonth || '01').padStart(2, '0');
-                const yy = String(pm.expYear || pm.expyear || '30').slice(-2);
-                return mm + yy;
-            })()
+            expmonth: String(pm.expMonth || pm.expmonth || '01').padStart(2, '0'),
+            expyear: String(pm.expYear || pm.expyear || '30').slice(-2)
         };
 
         addLog('CHARGE', 'REQUEST', chargePayload);
