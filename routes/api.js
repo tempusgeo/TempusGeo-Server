@@ -918,6 +918,20 @@ router.post('/super-admin/record-payment', async (req, res) => {
     }
 });
 
+router.post('/super-admin/delete-payment', async (req, res) => {
+    try {
+        const { password, targetCompanyId, paymentIndex } = req.body;
+        if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
+        if (!targetCompanyId || paymentIndex === undefined) return res.status(400).json({ success: false, error: "Missing parameters" });
+
+        const result = await dataManager.deletePaymentRecord(targetCompanyId, paymentIndex);
+        res.json(result);
+    } catch (e) {
+        console.error('[SuperAdmin] delete-payment error:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // --- PUBLIC CONFIG (Employee App) ---
 
 router.get('/config', async (req, res) => {
@@ -1840,10 +1854,10 @@ router.post('/maintenance/subscription-check', maintenanceAuth, async (req, res)
 
 router.post('/maintenance/charge-client', maintenanceAuth, async (req, res) => {
     try {
-        const { clientId } = req.body;
+        const { clientId, isTest } = req.body;
         if (!clientId) return res.status(400).json({ success: false, error: 'Missing clientId' });
         
-        const result = await dataManager.chargeClientManually(clientId);
+        const result = await dataManager.chargeClientManually(clientId, !!isTest);
         res.json(result);
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
