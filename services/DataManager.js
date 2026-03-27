@@ -2684,15 +2684,15 @@ class DataManager {
     /**
      * Triggers a real charge and renewal for a specific client (Manual Action).
      */
-    async chargeClientManually(clientId) {
+    async chargeClientManually(clientId, isTest = false) {
         const client = CACHE.clients.find(c => c.id === clientId);
         if (!client) throw new Error(`Business ID ${clientId} not found`);
-
+ 
         const sysConfig = await this.getSystemConfig();
         const now = new Date();
-
+ 
         // Process with isManual=true to bypass the "1 day before" imminent check
-        const res = await this.processSingleClientSubscription(client, true, sysConfig, now);
+        const res = await this.processSingleClientSubscription(client, true, sysConfig, now, isTest);
         
         if (res.error) {
             return { success: false, message: res.error, code: res.code };
@@ -2700,7 +2700,7 @@ class DataManager {
         
         return { 
             success: true, 
-            message: `חיוב וחידוש המנוי של ${client.businessName} בוצעו בהצלחה`,
+            message: isTest ? "חיוב בדיקה (1 ש\"ח) בוצע בהצלחה" : `חיוב וחידוש המנוי של ${client.businessName} בוצעו בהצלחה`,
             confirmationCode: res.confirmCode
         };
     }
@@ -2709,7 +2709,7 @@ class DataManager {
      * Core logic for processing a single client's subscription/charge cycle.
      * Supports both automated hourly scans and manual per-business triggers.
      */
-    async processSingleClientSubscription(client, isManual, sysConfig, now = new Date()) {
+    async processSingleClientSubscription(client, isManual, sysConfig, now = new Date(), isTest = false) {
         const res = { charged: false, expired: false, valid: true, failure: null };
         if (!client.subscriptionExpiry) return res;
 
@@ -2733,7 +2733,7 @@ class DataManager {
             const bizConfig = await this.getCompanyConfig(client.id);
             const activeCount = await this.countUniqueActiveEmployees(client.id);
             const subRes = await this.calculateSubscriptionAmount(client.id);
-            const amount = subRes.amount;
+            const amount = isTest ? 1 : subRes.amount;
 
             let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: 'סכום 0 ₪ - חודש חינם' };
             
@@ -2743,7 +2743,7 @@ class DataManager {
             const pdesc = activeCount === 0 ? `עלות מנוי מינימלית - ${appName}` : `${appName} - מנוי ל-${activeCount} עובדים`;
 
             if (amount >= 1) {
-                this.logMaintenance('BILLING', `🔄 Executing ${isManual ? 'MANUAL' : 'AUTOMATED'} charge for ${client.businessName} (₪${amount})`);
+                this.logMaintenance('BILLING', `🔄 Executing ${isTest ? 'TEST (1 ILS)' : (isManual ? 'MANUAL' : 'AUTOMATED')} charge for ${client.businessName} (₪${amount})`);
 
                 // Ensure Expiry Format (MMYY) - Robust check for all variations
                 const pMethod = this.normalizePaymentMethod(client.paymentMethod || {});
@@ -2795,7 +2795,7 @@ class DataManager {
                 res.charged = true;
                 res.confirmCode = chargeRes.confirmationCode;
 
-                if ((client.autoChargeEnabled || isManual) && globalAutoRenewal) {
+                if (!isTest && (client.autoChargeEnabled || isManual) && globalAutoRenewal) {
                     const nextExpiry = this.parseExpiryDate(expiry);
                     // If far in the past, renew from TODAY instead of compounding legacy months
                     if (expiry < now) nextExpiry.setTime(now.getTime());
@@ -2899,6 +2899,26 @@ class DataManager {
             console.error('[DataManager] getGASLogs Error:', e.message);
             return { success: false, error: e.message };
         }
+    }
+
+    async deletePaymentRecord(companyId, index) {
+        const client = await this.getClientById(companyId);
+        if (!client) throw new Error("Client not found");
+        
+        if (!client.paymentHistory || !client.paymentHistory[index]) throw new Error("Payment not found");
+        
+        const payment = client.paymentHistory[index];
+        // If it was a standard payment that extended the subscription, shorten it back
+        if (payment.status === 'PAID' && (payment.period > 0 || !payment.period)) {
+            const months = parseInt(payment.period || 1);
+            const expiry = this.parseExpiryDate(client.subscriptionExpiry);
+            expiry.setMonth(expiry.getMonth() - months);
+            client.subscriptionExpiry = expiry.toISOString();
+        }
+        
+        client.paymentHistory.splice(index, 1);
+        await this.saveClients();
+        return { success: true, message: "התשלום נמחק והתוקף עודכן" };
     }
 
     async getFileContent(fileName) {
