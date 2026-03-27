@@ -759,7 +759,15 @@ router.post('/super-admin/settings/get', async (req, res) => {
 
                 supportEnabled: config.supportEnabled || false,
                 appName: config.appName || '',
-                appLogoUrl: config.appLogoUrl || ''
+                appLogoUrl: config.appLogoUrl || '',
+
+                // Automation & Reports Settings
+                shiftCheckFrequency: config.shiftCheckFrequency || 0.5,
+                monthlyReportDay: config.monthlyReportDay || 1,
+                monthlyReportHour: config.monthlyReportHour || '08:00',
+                autoBillingEnabled: config.autoBillingEnabled !== undefined ? config.autoBillingEnabled : true,
+                autoRenewalEnabled: config.autoRenewalEnabled !== undefined ? config.autoRenewalEnabled : true,
+                subscriptionExpiryNotice: config.subscriptionExpiryNotice || 2
             }
         });
     } catch (e) {
