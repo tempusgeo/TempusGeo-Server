@@ -2022,7 +2022,8 @@ router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res
         const refundPayload = {
             supplier: sysConfig.tranzilaTerminal,
             CreditPass: sysConfig.tranzilaRefundPass,
-            tranmode: `C${tranzilaIndex}`,
+            tranmode: 'C',
+            authnr: tranzilaIndex,
             sum: '1'
         };
 
