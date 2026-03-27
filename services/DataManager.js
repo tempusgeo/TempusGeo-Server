@@ -249,6 +249,30 @@ class DataManager {
         }
     }
 
+    /**
+     * Like saveClients(), but waits for GAS sync to COMPLETE before returning.
+     * Use this for critical operations (e.g. payment deletion) where stale GAS data
+     * could be restored by smartRestoreFromGAS on the next Render restart.
+     */
+    async saveClientsAndSyncToGAS() {
+        await fs.writeFile(this.clientsFile, JSON.stringify(CACHE.clients, null, 2));
+        const timestamp = await this.updateLastWriteTime();
+
+        const gasUrl = config.GAS_COLD_STORAGE_URL;
+        if (gasUrl) {
+            const adminPass = process.env.SUPER_ADMIN_PASS || '123456';
+            try {
+                // syncNow waits for GAS to acknowledge – this ensures GAS has the latest data
+                await syncManager.syncNow('CLIENTS', CACHE.clients, { companyId: '__SYSTEM__', gasUrl, password: adminPass });
+                console.log(`[DataManager] Clients synced to GAS synchronously (timestamp: ${timestamp}).`);
+            } catch (e) {
+                console.error('[DataManager] Critical: Synchronous GAS sync failed after client data change:', e.message);
+                // Don't throw – local save already succeeded. Log the failure.
+            }
+        }
+    }
+
+
     async saveClientPaymentMethod(companyId, paymentMethod) {
         if (!companyId || companyId === 'NEW_SETUP') return; // Strict guard
         
@@ -2056,8 +2080,39 @@ class DataManager {
                         const dirPath = path.dirname(fullPath);
                         await fs.mkdir(dirPath, { recursive: true });
 
-                        // If content is already an object, stringify it. If it's a string, write directly.
-                        const contentToWrite = typeof file.content === 'object' ? JSON.stringify(file.content, null, 2) : file.content;
+                        let contentToWrite;
+                        
+                        // CRITICAL FIX: Sanitize system_config.json if it was corrupted with business data
+                        if (file.path === 'system_config.json') {
+                            const rawContent = typeof file.content === 'object' ? file.content : JSON.parse(file.content || '{}');
+                            
+                            // Check if this looks like client/business data instead of system config
+                            // (system_config should NOT have 'id', 'email', 'password', 'paymentHistory', 'businessName')
+                            const hasBusinessFields = rawContent.id || rawContent.email || rawContent.businessName || 
+                                                      rawContent.paymentHistory || rawContent.paymentMethod;
+                            if (hasBusinessFields) {
+                                console.error(`[Restore] CORRUPTION DETECTED: system_config.json contains business data! Skipping restore of this file.`);
+                                console.error(`[Restore] Bad system_config keys: ${Object.keys(rawContent).slice(0, 10).join(', ')}`);
+                                continue; // Skip writing this corrupted file
+                            }
+                            
+                            // Apply whitelist filter
+                            const allowedKeys = [
+                                'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass', 'tranzilaRefundPass',
+                                'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
+                                'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
+                                'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
+                                'autoBillingEnabled', 'autoRenewalEnabled'
+                            ];
+                            const sanitized = {};
+                            allowedKeys.forEach(k => { if (rawContent[k] !== undefined) sanitized[k] = rawContent[k]; });
+                            contentToWrite = JSON.stringify(sanitized, null, 2);
+                            this._systemConfig = sanitized; // Update in-memory cache too
+                        } else {
+                            // If content is already an object, stringify it. If it's a string, write directly.
+                            contentToWrite = typeof file.content === 'object' ? JSON.stringify(file.content, null, 2) : file.content;
+                        }
+                        
                         await fs.writeFile(fullPath, contentToWrite);
                         // console.log(`[Restore] Restored: ${file.path}`);
                     } catch (e) {
