@@ -126,7 +126,8 @@ class TranzilaService {
         const payload = {
             supplier,
             CreditPass: refundPass,
-            tranmode: `C${tranzilaIndex}`,
+            tranmode: 'C',
+            authnr: tranzilaIndex,
             sum: sum 
         };
 
