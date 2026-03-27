@@ -1966,7 +1966,7 @@ router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res
             TranzilaPW: sysConfig.tranzilaPass,
             sum: '1',
             currency: '1',
-            tranmode: 'F',
+            tranmode: 'A',
             myid: pm.cardHolderId || '',
             company: client.businessName || '',
             mycvv: pm.cvv || '',
