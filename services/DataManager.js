@@ -807,7 +807,7 @@ class DataManager {
         // --- CLEAN TRASH / GARBAGE COLLECTION ---
         // Explicit whitelist of allowed system configuration keys
         const allowedKeys = [
-            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
+            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass', 'tranzilaRefundPass',
             'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
             'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
             'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
