@@ -604,15 +604,16 @@ class DataManager {
                 }
             }
 
-            const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
+            // Use the expiry date (when they last paid until) as the start of the coverage calculation
+            const coverageStart = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : (client.subscriptionDate ? new Date(client.subscriptionDate) : new Date());
 
             let SubscriptionDaysInLastMonth = 0;
-            if (subscriptionDate.getFullYear() === targetYear && subscriptionDate.getMonth() === targetMonth) {
-                SubscriptionDaysInLastMonth = Math.max(0, LastMonthDays - subscriptionDate.getDate());
-            } else if (subscriptionDate < new Date(targetYear, targetMonth, 1)) {
+            if (coverageStart.getFullYear() === targetYear && coverageStart.getMonth() === targetMonth) {
+                SubscriptionDaysInLastMonth = Math.max(0, LastMonthDays - coverageStart.getDate() + 1);
+            } else if (coverageStart < new Date(targetYear, targetMonth, 1)) {
                 SubscriptionDaysInLastMonth = LastMonthDays;
             } else {
-                SubscriptionDaysInLastMonth = 0;
+                SubscriptionDaysInLastMonth = 0; // Fully covered for this period
             }
 
             if (SubscriptionDaysInLastMonth <= 0 || LastMonthDays === 0) {
@@ -620,7 +621,7 @@ class DataManager {
                     amount: 0, 
                     breakdown: { 
                         employeeCount, pricePerEmp, minPrice, LastMonthDays, SubscriptionDaysInLastMonth, 
-                        subscriptionDate: subscriptionDate.toISOString().split('T')[0],
+                        subscriptionDate: coverageStart.toISOString().split('T')[0],
                         periodGoal: `${targetYear}-${(targetMonth + 1).toString().padStart(2, '0')}`
                     }
                 };
@@ -638,7 +639,7 @@ class DataManager {
                     formulaBase,
                     LastMonthDays,
                     SubscriptionDaysInLastMonth,
-                    subscriptionDate: subscriptionDate.toISOString().split('T')[0],
+                    subscriptionDate: coverageStart.toISOString().split('T')[0],
                     periodGoal: `${targetYear}-${(targetMonth + 1).toString().padStart(2, '0')}`
                 }
             };
