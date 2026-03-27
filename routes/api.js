@@ -920,11 +920,11 @@ router.post('/super-admin/record-payment', async (req, res) => {
 
 router.post('/super-admin/delete-payment', async (req, res) => {
     try {
-        const { password, targetCompanyId, paymentIndex } = req.body;
+        const { password, targetCompanyId, paymentIndex, doTranzilaRefund } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
         if (!targetCompanyId || paymentIndex === undefined) return res.status(400).json({ success: false, error: "Missing parameters" });
 
-        const result = await dataManager.deletePaymentRecord(targetCompanyId, paymentIndex);
+        const result = await dataManager.deletePaymentRecord(targetCompanyId, paymentIndex, doTranzilaRefund);
         res.json(result);
     } catch (e) {
         console.error('[SuperAdmin] delete-payment error:', e.message);
