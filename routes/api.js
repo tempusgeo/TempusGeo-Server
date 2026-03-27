@@ -954,7 +954,8 @@ router.post('/super-admin/delete-payment', async (req, res) => {
             refundResult = await tranzilaService.refundTransaction({
                 supplier: sysConfig.tranzilaTerminal,
                 refundPass: sysConfig.tranzilaRefundPass,
-                tranzilaIndex
+                tranzilaIndex,
+                sum: lastPayment.amount
             });
 
             if (!refundResult.success) {
@@ -2027,7 +2028,8 @@ router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res
         const refundResult = await tranzilaService.refundTransaction({
             supplier: sysConfig.tranzilaTerminal,
             refundPass: sysConfig.tranzilaRefundPass,
-            tranzilaIndex
+            tranzilaIndex,
+            sum: '1'
         });
 
         addLog('REFUND', 'RESPONSE', {
