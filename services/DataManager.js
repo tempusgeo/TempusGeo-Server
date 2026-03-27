@@ -2768,6 +2768,7 @@ class DataManager {
                     expyear: yy,
                     myid: pMethod.cardHolderId || '', 
                     company: invoiceName, 
+                    email: client.email,
                     contact: '', 
                     mycvv: pMethod.cvv
                 });
