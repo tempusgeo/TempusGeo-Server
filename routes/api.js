@@ -1970,8 +1970,8 @@ router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res
             myid: pm.cardHolderId || '',
             email: client.email || '',
             expdate: (() => {
-                const mm = String(pm.expmonth || '01').padStart(2, '0');
-                const yy = String(pm.expyear || '30').slice(-2);
+                const mm = String(pm.expMonth || pm.expmonth || '01').padStart(2, '0');
+                const yy = String(pm.expYear || pm.expyear || '30').slice(-2);
                 return mm + yy;
             })()
         };
