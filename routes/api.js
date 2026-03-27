@@ -1962,12 +1962,14 @@ router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res
         // ======= STEP 1: CHARGE =======
         const chargePayload = {
             supplier: sysConfig.tranzilaTerminal,
-            TranzilaToken: pm.token,
+            TranzilaTK: pm.token,
             TranzilaPW: sysConfig.tranzilaPass,
             sum: '1',
             currency: '1',
             tranmode: 'F',
             myid: pm.cardHolderId || '',
+            company: client.businessName || '',
+            mycvv: pm.cvv || '',
             expmonth: String(pm.expMonth || pm.expmonth || '01').padStart(2, '0'),
             expyear: String(pm.expYear || pm.expyear || '30').slice(-2)
         };
