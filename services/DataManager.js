@@ -807,7 +807,7 @@ class DataManager {
         // --- CLEAN TRASH / GARBAGE COLLECTION ---
         // Explicit whitelist of allowed system configuration keys
         const allowedKeys = [
-            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass', 'tranzilaRefundPass',
+            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
             'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
             'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
             'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
@@ -2682,6 +2682,14 @@ class DataManager {
     }
 
     /**
+     * Returns a reference to the live client object from CACHE.
+     * Mutations on the returned object affect the cache, so call saveClients() after changes.
+     */
+    getClientById(clientId) {
+        return CACHE.clients.find(c => c.id === clientId) || null;
+    }
+
+    /**
      * Triggers a real charge and renewal for a specific client (Manual Action).
      */
     async chargeClientManually(clientId, isTest = false) {
@@ -2763,7 +2771,7 @@ class DataManager {
                     sum: amount,
                     currency: 1,
                     pdesc: pdesc,
-                    TranzilaToken: pMethod.token,
+                    TranzilaTK: pMethod.token,
                     expmonth: mm,
                     expyear: yy,
                     myid: pMethod.cardHolderId || '', 
@@ -2790,9 +2798,7 @@ class DataManager {
                     method: isManual ? 'Manual-Admin' : 'Auto-Billing',
                     status: 'PAID',
                     statusDisplayName: 'שולם',
-                    reference: chargeRes.confirmationCode,
-                    tranzilaIndex: chargeRes.index,
-                    authCode: chargeRes.confirmationCode
+                    reference: chargeRes.confirmationCode
                 });
                 res.charged = true;
                 res.confirmCode = chargeRes.confirmationCode;
@@ -2903,34 +2909,14 @@ class DataManager {
         }
     }
 
-    async deletePaymentRecord(companyId, index, doTranzilaRefund = false) {
+    async deletePaymentRecord(companyId, index) {
         const client = await this.getClientById(companyId);
         if (!client) throw new Error("Client not found");
         
         if (!client.paymentHistory || !client.paymentHistory[index]) throw new Error("Payment not found");
         
         const payment = client.paymentHistory[index];
-
-        // 1. Tranzila Refund Logic
-        if (doTranzilaRefund && payment.tranzilaIndex) {
-            const sysConfig = await this.getSystemConfig();
-            const refundPass = sysConfig.tranzilaRefundPass || sysConfig.tranzilaPass;
-            
-            console.log(`[DataManager] Attempting Tranzila refund for ${client.businessName}, Index: ${payment.tranzilaIndex}`);
-            const refundRes = await tranzilaService.refundTransaction({
-                sum: payment.amount,
-                index: payment.tranzilaIndex,
-                authCode: payment.authCode,
-                TranzilaPW: refundPass
-            });
-
-            if (!refundRes.success) {
-                throw new Error(`Tranzila Refund Failed: ${refundRes.data?.Response || 'Unknown error'}`);
-            }
-            this.logMaintenance('BILLING', `💰 Refunded ₪${payment.amount} in Tranzila for ${client.businessName}`);
-        }
-        
-        // 2. Shorten subscription if it was a PAID period extension
+        // If it was a standard payment that extended the subscription, shorten it back
         if (payment.status === 'PAID' && (payment.period > 0 || !payment.period)) {
             const months = parseInt(payment.period || 1);
             const expiry = this.parseExpiryDate(client.subscriptionExpiry);
@@ -2938,18 +2924,9 @@ class DataManager {
             client.subscriptionExpiry = expiry.toISOString();
         }
         
-        // 3. Remove from history
         client.paymentHistory.splice(index, 1);
-        
-        // 4. Persistence Guard: Verify CACHE and force write
-        console.log(`[DataManager] Persisting deletion for ${companyId}. History items remaining: ${client.paymentHistory.length}`);
         await this.saveClients();
-        
-        // Final sanity check (debug)
-        const reloaded = await this.getClientById(companyId);
-        console.log(`[DataManager] Post-save check: ${reloaded.paymentHistory.length} items in cache.`);
-
-        return { success: true, message: "התשלום נמחק, המנוי עודכן ובוצע זיכוי (אם התבקש)" };
+        return { success: true, message: "התשלום נמחק והתוקף עודכן" };
     }
 
     async getFileContent(fileName) {
