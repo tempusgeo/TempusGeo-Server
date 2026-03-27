@@ -82,7 +82,7 @@ class TranzilaService {
         const payload = {
             ...params,
             supplier: params.supplier || config.TRANZILA_TERMINAL_NAME,
-            tranmode: params.tranmode || "F", // F = Force charge with token (A caused "Not Authorized")
+            tranmode: params.tranmode || "A", // A = Normal auth with token. F (Force) blocked by acquirer.
             expdate: expdate,
             TranzilaPW: params.TranzilaPW || config.TRANZILA_TERMINAL_PASS
         };
