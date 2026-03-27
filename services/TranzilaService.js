@@ -118,16 +118,16 @@ class TranzilaService {
      * Refund/cancel a Tranzila transaction using tranmode=C{index}
      * Requires refundPass (tranzilaRefundPass) - different from the charge password.
      */
-    async refundTransaction({ supplier, refundPass, tranzilaIndex }) {
-        if (!supplier || !refundPass || !tranzilaIndex) {
-            return { success: false, error: 'Missing required refund parameters (supplier, refundPass, tranzilaIndex)' };
+    async refundTransaction({ supplier, refundPass, tranzilaIndex, sum }) {
+        if (!supplier || !refundPass || !tranzilaIndex || !sum) {
+            return { success: false, error: 'Missing required refund parameters (supplier, refundPass, tranzilaIndex, sum)' };
         }
 
         const payload = {
             supplier,
             TranzilaPW: refundPass,
             tranmode: `C${tranzilaIndex}`,
-            sum: '0' // sum is ignored for cancellations, index identifies the transaction
+            sum: sum 
         };
 
         try {
