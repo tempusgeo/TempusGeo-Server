@@ -631,11 +631,8 @@ class DataManager {
             // Use the expiry date (when they last paid until) as the start of the coverage calculation
             const coverageStart = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : (client.subscriptionDate && client.subscriptionDate !== client.subscriptionExpiry ? new Date(client.subscriptionDate) : new Date());
 
-            // We are buying coverage from 'coverageStart' up to the 1st of the following month.
-            const nextFirst = new Date(coverageStart);
-            nextFirst.setMonth(nextFirst.getMonth() + 1);
-            nextFirst.setDate(1);
-            nextFirst.setHours(4, 0, 0, 0);
+            // We are buying coverage from 'coverageStart' up to the next system-wide billing date.
+            const nextFirst = this.getNextBillingDate();
 
             // Calculate exact days to buy
             const daysToBuy = Math.round((nextFirst - coverageStart) / (1000 * 60 * 60 * 24));
@@ -655,10 +652,16 @@ class DataManager {
             }
 
             const formulaBase = Math.max(minPrice, billedEmployeeCount * pricePerEmp);
-            const amount = Math.floor(formulaBase * (daysToBuy / daysInMonthOfCoverage));
+            
+            const now = new Date();
+            const daysAccrued = Math.max(0, Math.round((now - coverageStart) / (1000 * 60 * 60 * 24)));
+            
+            const accruedUsage = Math.floor(formulaBase * (daysAccrued / daysInMonthOfCoverage));
+            const totalAmount = Math.floor(formulaBase * (daysToBuy / daysInMonthOfCoverage));
 
             return {
-                amount,
+                amount: totalAmount,
+                accruedUsage,
                 breakdown: {
                     employeeCount: billedEmployeeCount,
                     pricePerEmp,
@@ -666,6 +669,8 @@ class DataManager {
                     formulaBase,
                     daysInMonthOfCoverage,
                     daysToBuy,
+                    daysAccrued,
+                    accruedUsage,
                     subscriptionDate: coverageStart.toISOString().split('T')[0],
                     periodGoal: `${coverageStart.getFullYear()}-${(coverageStart.getMonth() + 1).toString().padStart(2, '0')}`
                 }
@@ -814,11 +819,12 @@ class DataManager {
             const parsed = JSON.parse(data);
 
             const allowedKeys = [
-                'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass', 'tranzilaRefundPass',
+                'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
                 'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
                 'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
                 'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
-                'autoBillingEnabled', 'autoRenewalEnabled'
+                'autoBillingEnabled', 'autoRenewalEnabled', 'freeTrialDays',
+                'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess'
             ];
             const cleaned = {};
             allowedKeys.forEach(k => { if (parsed[k] !== undefined) cleaned[k] = parsed[k]; });
@@ -835,11 +841,12 @@ class DataManager {
         // --- CLEAN TRASH / GARBAGE COLLECTION ---
         // Explicit whitelist of allowed system configuration keys
         const allowedKeys = [
-            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass', 'tranzilaRefundPass',
+            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
             'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
             'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
             'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
-            'autoBillingEnabled', 'autoRenewalEnabled'
+            'autoBillingEnabled', 'autoRenewalEnabled', 'freeTrialDays',
+            'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess'
         ];
 
         // 1. Filter existing config to keep only allowed keys (Cleaning Trash)
@@ -2311,10 +2318,11 @@ class DataManager {
         // Clean data
         const safePassword = data.password ? data.password.toString() : '';
 
-        // Subscription Expiry Logic: Align with next chargeDay/chargeTime
         const sysConfig = await this.getSystemConfig();
-        // Target is always the 1st of the NEXT month at 04:00
-        const trialExpiry = this.getNextBillingDate();
+        const freeTrialDays = parseInt(sysConfig.freeTrialDays) || 0;
+        const trialExpiry = new Date();
+        trialExpiry.setDate(trialExpiry.getDate() + freeTrialDays);
+        trialExpiry.setHours(4, 0, 0, 0);
 
         let pMethodSafe = null;
         let invoiceDetails = null;
