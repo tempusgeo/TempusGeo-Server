@@ -21,7 +21,7 @@ const HOT_STORAGE_MONTHS = 2; // Keep current + last month
 
 class DataManager {
     constructor() {
-        this.dataDir = config.DATA_DIR;
+        this.dataDir = path.isAbsolute(config.DATA_DIR) ? config.DATA_DIR : path.resolve(__dirname, '..', config.DATA_DIR);
         this.clientsFile = path.join(this.dataDir, 'clients.json');
         this.metadataFile = path.join(this.dataDir, 'metadata.json');
         this.maintenanceLogs = {
@@ -702,7 +702,12 @@ class DataManager {
 
     async syncAllFromGAS() {
         console.log('[DataManager] Forcing full sync from GAS (Ignored local timestamp)');
-        return await this.smartRestoreFromGAS(0);
+        const success = await this.smartRestoreFromGAS(0);
+        if (success) {
+            // Re-heal after sync just in case
+            this.selfHealSalaries();
+        }
+        return success;
     }
 
     async updateAutoCharge(companyId, enabled) {
