@@ -213,17 +213,14 @@ router.post('/dispatch', async (req, res) => {
                 if (!isValidSuperAdminPassword(password)) return res.json({ success: false, error: 'Unauthorized' });
                 const { targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail } = rest;
                 
-                // Reuse the same logic as the dedicated endpoint (proxying to it or duplicating)
-                // For now, let's duplicate the call logic or just refactor the endpoint to a service.
-                // Since this is a quick fix, I'll redirect internally if possible, but the dispatcher is already an async scope.
-                
-                // Actually, I'll just implement it here or call the handler.
-                // But for now, I'll add the case and I'll update the Super-Admin panel to use this or the dedicated one.
-                // The user's request was specifically to add it to api.js.
-                
-                // Let's implement the core logic here by reusing the record-payment logic.
-                const result = await handleRecordPayment({ targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail });
-                return res.json(result);
+                try {
+                    const result = await handleRecordPayment({ 
+                        targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail 
+                    });
+                    return res.json(result);
+                } catch (err) {
+                    return res.json({ success: false, error: err.message });
+                }
             }
 
             case 'forgotAdminPassword': {
@@ -545,7 +542,6 @@ router.post('/dispatch', async (req, res) => {
 
                 const activeEmployees = await dataManager.countUniqueActiveEmployees(companyId);
                 const expectedPayment = await dataManager.calculateSubscriptionAmount(companyId);
-                const freezeAmount = await dataManager.calculateFreezeAmount(companyId);
 
                 return res.json({
                     success: true,
@@ -562,7 +558,7 @@ router.post('/dispatch', async (req, res) => {
                     autoChargeEnabled: client?.autoChargeEnabled || false,
                     activeEmployees: activeEmployees,
                     expectedPayment: expectedPayment?.amount || 0,
-                    freezeAmount: freezeAmount?.amount || 0
+                    breakdown: expectedPayment?.breakdown || {}
                 });
             }
 
@@ -919,7 +915,7 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
         targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 1, 4, 0, 0, 0);
         
         description = addMonths > 0 ? `חידוש מנוי ל-${addMonths} חודשים` : "עדכון מנוי";
-        statusDisplayName = amount < 0 ? "החזר" : "שולם";
+        statusDisplayName = "שולם";
     }
 
     client.subscriptionExpiry = targetDate.toISOString();
