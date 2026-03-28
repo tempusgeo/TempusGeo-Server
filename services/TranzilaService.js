@@ -114,46 +114,6 @@ class TranzilaService {
         }
     }
 
-    /**
-     * Refund/cancel a Tranzila transaction using tranmode=C{index}
-     * Requires refundPass (tranzilaRefundPass) - different from the charge password.
-     */
-    async refundTransaction({ supplier, refundPass, tranzilaIndex, sum }) {
-        if (!supplier || !refundPass || !tranzilaIndex || !sum) {
-            return { success: false, error: 'Missing required refund parameters (supplier, refundPass, tranzilaIndex, sum)' };
-        }
-
-        const payload = {
-            supplier,
-            CreditPass: refundPass,
-            tranmode: 'C',
-            authnr: tranzilaIndex,
-            sum: sum 
-        };
-
-        try {
-            console.log(`[Tranzila] Refunding transaction index: ${tranzilaIndex}`);
-            const response = await axios.post(config.TRANZILA.API_URL, new URLSearchParams(payload).toString(), {
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-            });
-
-            const responseBody = response.data;
-            const parsed = new URLSearchParams(responseBody);
-            const responseCode = parsed.get('Response');
-
-            console.log(`[Tranzila] Refund response: ${responseCode} | raw: ${responseBody.slice(0, 200)}`);
-
-            return {
-                success: responseCode === '000',
-                responseCode,
-                raw: responseBody,
-                data: Object.fromEntries(parsed)
-            };
-        } catch (e) {
-            console.error('[Tranzila] Refund Error:', e.message);
-            return { success: false, error: e.message };
-        }
-    }
 }
 
 module.exports = new TranzilaService();
