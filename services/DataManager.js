@@ -146,7 +146,10 @@ class DataManager {
             // 5. Cleanup: If __SYSTEM__ somehow slipped into clients, remove it
             CACHE.clients = CACHE.clients.filter(c => c.id !== '__SYSTEM__');
 
-            // 5. Load All Companies into RAM (Warmup)
+            // 6. Proactive Self-Healing: Salary Ranges
+            this.selfHealSalaries();
+
+            // 7. Load All Companies into RAM (Warmup)
             for (const client of CACHE.clients) {
                 await this.loadCompany(client.id);
             }
@@ -2958,6 +2961,31 @@ class DataManager {
         } catch (e) {
             throw new Error('File not found or unreadable: ' + fileName);
         }
+    }
+    
+    selfHealSalaries() {
+        if (!CACHE.clients) return;
+        const defaults = {
+            overtime5: [{ start: '00:00', end: '08:36', addRate: 0 }, { start: '08:36', end: '10:36', addRate: 0.25 }, { start: '10:36', end: '24:00', addRate: 0.5 }],
+            overtime6: [{ start: '00:00', end: '08:00', addRate: 0 }, { start: '08:00', end: '10:00', addRate: 0.25 }, { start: '10:00', end: '24:00', addRate: 0.5 }],
+            friday: [{ start: '00:00', end: '07:00', addRate: 0 }, { start: '07:00', end: '09:00', addRate: 0.25 }, { start: '09:00', end: '24:00', addRate: 0.5 }],
+            weekend: [{ start: '00:00', end: '24:00', addRate: 0.5 }]
+        };
+
+        CACHE.clients.forEach(client => {
+            if (!client.salary) client.salary = {};
+            const sal = client.salary;
+            
+            if (!sal.overtimeRanges5 || !Array.isArray(sal.overtimeRanges5)) sal.overtimeRanges5 = JSON.parse(JSON.stringify(defaults.overtime5));
+            if (!sal.overtimeRanges6 || !Array.isArray(sal.overtimeRanges6)) sal.overtimeRanges6 = JSON.parse(JSON.stringify(defaults.overtime6));
+            if (!sal.fridayRanges5 || !Array.isArray(sal.fridayRanges5)) sal.fridayRanges5 = JSON.parse(JSON.stringify(defaults.friday));
+            if (!sal.fridayRanges6 || !Array.isArray(sal.fridayRanges6)) sal.fridayRanges6 = JSON.parse(JSON.stringify(defaults.friday));
+            if (!sal.weekendRanges || !Array.isArray(sal.weekendRanges)) sal.weekendRanges = JSON.parse(JSON.stringify(defaults.weekend));
+            
+            if (!sal.breaks) sal.breaks = { minShift: '06:00', weekday: '00:45', special: '00:30' };
+            if (!sal.weekend) sal.weekend = { startHour: '15:00', endHour: '20:00' };
+        });
+        console.log(`[Self-Heal] Checked salaries for ${CACHE.clients.length} clients.`);
     }
 }
 
