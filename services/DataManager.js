@@ -598,7 +598,7 @@ class DataManager {
     async calculateSubscriptionAmount(companyId, forcedEmployeeCount = null) {
         try {
             const client = await this.getClientById(companyId);
-            if (!client) return { amount: 0, shortfall: 0, upcoming: 0, breakdown: {} };
+            if (!client) return { amount: 0, breakdown: {} };
 
             const sysConfig = await this.getSystemConfig();
             const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 0;
@@ -610,70 +610,52 @@ class DataManager {
             const targetYear = targetDate.getFullYear();
             const targetMonth = targetDate.getMonth();
             
+            const LastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
             const employeeCount = forcedEmployeeCount !== null ? forcedEmployeeCount : await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
 
-            // DEBT FORGIVENESS LOGIC:
-            if (employeeCount > 0 && forcedEmployeeCount === null) {
-                const now = new Date();
-                const expiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
-                const isLateRenewal = (now.getFullYear() > targetYear || now.getMonth() > (targetMonth));
+            const subscriptionDate = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : (client.subscriptionDate ? new Date(client.subscriptionDate) : new Date());
 
-                if (isLateRenewal && (now - expiry) > (48 * 60 * 60 * 1000)) {
-                    const onlyGrace = await this.isUsageOnlyWithinGrace(companyId, targetYear, targetMonth + 1, expiry);
-                    if (onlyGrace) {
-                        return { amount: 0, shortfall: 0, upcoming: 0, breakdown: { employeeCount, note: "Grace usage only - forgiven" } };
-                    }
-                }
-            }
-
-            const coverageStart = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : (client.subscriptionDate && client.subscriptionDate !== client.subscriptionExpiry ? new Date(client.subscriptionDate) : new Date());
-            const nextFirst = this.getNextBillingDate();
-
-            const daysToBuy = Math.round((nextFirst - coverageStart) / (1000 * 60 * 60 * 24));
-            const daysInMonthOfCoverage = new Date(coverageStart.getFullYear(), coverageStart.getMonth() + 1, 0).getDate();
-
-            const countYear = coverageStart.getMonth() === 0 ? coverageStart.getFullYear() - 1 : coverageStart.getFullYear();
-            const countMonth = coverageStart.getMonth() === 0 ? 12 : coverageStart.getMonth();
-            const billedEmployeeCount = forcedEmployeeCount !== null ? forcedEmployeeCount : await this.countUniqueActiveEmployees(companyId, countYear, countMonth);
-
-            if (daysToBuy <= 0 || daysInMonthOfCoverage === 0) {
-                return { amount: 0, shortfall: 0, upcoming: 0, breakdown: { employeeCount: billedEmployeeCount, daysToBuy } };
-            }
-
-            const formulaBase = Math.max(minPrice, billedEmployeeCount * pricePerEmp);
+            let SubscriptionDaysInLastMonth = 0;
             const now = new Date();
             
-            // Shortfall: from coverageStart until Today (capped at 0)
-            const daysInPast = Math.max(0, Math.round((now - coverageStart) / (1000 * 60 * 60 * 24)));
-            const shortfall = Math.floor(formulaBase * (daysInPast / daysInMonthOfCoverage));
-            
-            // Upcoming: from Today until nextFirst
-            const daysFuture = Math.max(0, daysToBuy - daysInPast);
-            const upcoming = Math.floor(formulaBase * (daysFuture / daysInMonthOfCoverage));
-            
-            const totalAmount = shortfall + upcoming;
+            // If expiry is in the past, we calculate from expiry to nextCycle
+            // If expiry is in the future, we calculate 0 (already paid)
+            if (subscriptionDate < nextCycle) {
+                const diffTime = Math.max(0, nextCycle - subscriptionDate);
+                SubscriptionDaysInLastMonth = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            }
+
+            if (SubscriptionDaysInLastMonth <= 0 || LastMonthDays === 0) {
+                return { 
+                    amount: 0, 
+                    breakdown: { 
+                        employeeCount, pricePerEmp, minPrice, LastMonthDays, SubscriptionDaysInLastMonth, 
+                        subscriptionDate: subscriptionDate.toISOString().split('T')[0],
+                        nextCycle: nextCycle.toISOString().split('T')[0]
+                    }
+                };
+            }
+
+            const formulaBase = Math.max(minPrice, employeeCount * pricePerEmp);
+            // Prorate based on a standard 30-day month for simplicity or actual days in month
+            const amount = Math.floor(formulaBase * (SubscriptionDaysInLastMonth / LastMonthDays));
 
             return {
-                amount: totalAmount,
-                shortfall,
-                upcoming,
+                amount,
                 breakdown: {
-                    employeeCount: billedEmployeeCount,
+                    employeeCount,
                     pricePerEmp,
                     minPrice,
                     formulaBase,
-                    daysInMonthOfCoverage,
-                    daysToBuy,
-                    daysInPast,
-                    daysFuture,
-                    shortfall,
-                    upcoming,
-                    subscriptionDate: coverageStart.toISOString().split('T')[0]
+                    LastMonthDays,
+                    SubscriptionDaysInLastMonth,
+                    subscriptionDate: subscriptionDate.toISOString().split('T')[0],
+                    nextCycle: nextCycle.toISOString().split('T')[0]
                 }
             };
         } catch (e) {
             console.error('[Billing] calculateSubscriptionAmount error:', e.message);
-            return { amount: 0, shortfall: 0, upcoming: 0, breakdown: { error: e.message } };
+            return { amount: 0, breakdown: { error: e.message } };
         }
     }
 
