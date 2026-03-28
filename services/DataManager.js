@@ -309,11 +309,12 @@ class DataManager {
         // Ensure token is trimmed of any newlines or whitespace
         const rawToken = (pm.token || pm.TranzilaTK || pm.TranzilaToken || '').toString().trim();
         
-        // Tranzila provides card holder ID under 'myid' or 'cardId'
-        // and Company/Business ID under 'company' or 'businessId'
+        let last4 = (pm.last4 || (pm.cardNumber ? pm.cardNumber.slice(-4) : '') || '').toString().trim();
+        if (last4) last4 = last4.slice(-4).padStart(4, '0');
+
         return {
             token: rawToken,
-            last4: (pm.last4 || (pm.cardNumber ? pm.cardNumber.slice(-4) : '') || '').toString().trim(),
+            last4: last4,
             expMonth: (pm.expMonth || pm.expmonth || pm.expirationMonth || (pm.expiry ? pm.expiry.split('/')[0] : '01')).toString().padStart(2, '0'),
             expYear: (pm.expYear || pm.expyear || pm.expirationYear || (pm.expiry ? pm.expiry.split('/')[1] : '2026')).toString().trim(),
             cardHolderName: (pm.cardHolderName || pm.cardName || pm.contact || '').toString().trim(),
@@ -508,7 +509,6 @@ class DataManager {
             if (existsLocally) {
                 activeEmployees = await this.countUniqueActiveEmployees(client.id);
                 expectedPayment = await this.calculateSubscriptionAmount(client.id);
-                freezeAmount = await this.calculateFreezeAmount(client.id);
             }
 
             return {
@@ -525,7 +525,6 @@ class DataManager {
                 isOrphan: gasCompanies.has(client.id) && !client.exists,
                 activeEmployees,
                 expectedPayment,
-                freezeAmount,
                 autoChargeEnabled: !!client.autoChargeEnabled,
                 paymentHistory: client.paymentHistory || [],
                 paymentMethod: client.paymentMethod || null
@@ -596,12 +595,11 @@ class DataManager {
     async calculateSubscriptionAmount(companyId, forcedEmployeeCount = null) {
         try {
             const client = await this.getClientById(companyId);
-            if (!client) return { amount: 0, breakdown: {} };
+            if (!client) return { amount: 0, shortfall: 0, upcoming: 0, breakdown: {} };
 
             const sysConfig = await this.getSystemConfig();
             const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 0;
             const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 0;
-
 
             const nextCycle = this.getNextBillingDate();
             const targetDate = new Date(nextCycle);
@@ -609,11 +607,9 @@ class DataManager {
             const targetYear = targetDate.getFullYear();
             const targetMonth = targetDate.getMonth();
             
-            const LastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
             const employeeCount = forcedEmployeeCount !== null ? forcedEmployeeCount : await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
 
             // DEBT FORGIVENESS LOGIC:
-            // If renewing LATE (different month than target), and usage was ONLY in the 48h grace period, forgive debt.
             if (employeeCount > 0 && forcedEmployeeCount === null) {
                 const now = new Date();
                 const expiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
@@ -622,46 +618,42 @@ class DataManager {
                 if (isLateRenewal && (now - expiry) > (48 * 60 * 60 * 1000)) {
                     const onlyGrace = await this.isUsageOnlyWithinGrace(companyId, targetYear, targetMonth + 1, expiry);
                     if (onlyGrace) {
-                        this.logMaintenance('BILLING', `[Debt-Forgiveness] ${companyId} used only grace period in ${targetYear}-${targetMonth+1}. Forgiving debt.`);
-                        return { amount: 0, breakdown: { employeeCount, note: "Grace usage only - forgiven (late renewal)" } };
+                        return { amount: 0, shortfall: 0, upcoming: 0, breakdown: { employeeCount, note: "Grace usage only - forgiven" } };
                     }
                 }
             }
 
-            // Use the expiry date (when they last paid until) as the start of the coverage calculation
             const coverageStart = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : (client.subscriptionDate && client.subscriptionDate !== client.subscriptionExpiry ? new Date(client.subscriptionDate) : new Date());
-
-            // We are buying coverage from 'coverageStart' up to the next system-wide billing date.
             const nextFirst = this.getNextBillingDate();
 
-            // Calculate exact days to buy
             const daysToBuy = Math.round((nextFirst - coverageStart) / (1000 * 60 * 60 * 24));
             const daysInMonthOfCoverage = new Date(coverageStart.getFullYear(), coverageStart.getMonth() + 1, 0).getDate();
 
-            // The price is based on the active employees in the PREVIOUS calendar month relative to coverageStart
             const countYear = coverageStart.getMonth() === 0 ? coverageStart.getFullYear() - 1 : coverageStart.getFullYear();
-            const countMonth = coverageStart.getMonth() === 0 ? 12 : coverageStart.getMonth(); // 1-indexed for countUniqueActiveEmployees
-            
+            const countMonth = coverageStart.getMonth() === 0 ? 12 : coverageStart.getMonth();
             const billedEmployeeCount = forcedEmployeeCount !== null ? forcedEmployeeCount : await this.countUniqueActiveEmployees(companyId, countYear, countMonth);
 
             if (daysToBuy <= 0 || daysInMonthOfCoverage === 0) {
-                return { 
-                    amount: 0, 
-                    breakdown: { employeeCount: billedEmployeeCount, pricePerEmp, minPrice, daysToBuy, daysInMonthOfCoverage, note: "Zero days to buy" }
-                };
+                return { amount: 0, shortfall: 0, upcoming: 0, breakdown: { employeeCount: billedEmployeeCount, daysToBuy } };
             }
 
             const formulaBase = Math.max(minPrice, billedEmployeeCount * pricePerEmp);
-            
             const now = new Date();
-            const daysAccrued = Math.max(0, Math.round((now - coverageStart) / (1000 * 60 * 60 * 24)));
             
-            const accruedUsage = Math.floor(formulaBase * (daysAccrued / daysInMonthOfCoverage));
-            const totalAmount = Math.floor(formulaBase * (daysToBuy / daysInMonthOfCoverage));
+            // Shortfall: from coverageStart until Today (capped at 0)
+            const daysInPast = Math.max(0, Math.round((now - coverageStart) / (1000 * 60 * 60 * 24)));
+            const shortfall = Math.floor(formulaBase * (daysInPast / daysInMonthOfCoverage));
+            
+            // Upcoming: from Today until nextFirst
+            const daysFuture = Math.max(0, daysToBuy - daysInPast);
+            const upcoming = Math.floor(formulaBase * (daysFuture / daysInMonthOfCoverage));
+            
+            const totalAmount = shortfall + upcoming;
 
             return {
                 amount: totalAmount,
-                accruedUsage,
+                shortfall,
+                upcoming,
                 breakdown: {
                     employeeCount: billedEmployeeCount,
                     pricePerEmp,
@@ -669,64 +661,20 @@ class DataManager {
                     formulaBase,
                     daysInMonthOfCoverage,
                     daysToBuy,
-                    daysAccrued,
-                    accruedUsage,
-                    subscriptionDate: coverageStart.toISOString().split('T')[0],
-                    periodGoal: `${coverageStart.getFullYear()}-${(coverageStart.getMonth() + 1).toString().padStart(2, '0')}`
+                    daysInPast,
+                    daysFuture,
+                    shortfall,
+                    upcoming,
+                    subscriptionDate: coverageStart.toISOString().split('T')[0]
                 }
             };
         } catch (e) {
             console.error('[Billing] calculateSubscriptionAmount error:', e.message);
-            return { amount: 0, breakdown: { error: e.message } };
+            return { amount: 0, shortfall: 0, upcoming: 0, breakdown: { error: e.message } };
         }
     }
 
-    async calculateFreezeAmount(companyId) {
-        try {
-            const client = await this.getClientById(companyId);
-            if (!client) return { amount: 0, breakdown: {} };
 
-            const sysConfig = await this.getSystemConfig();
-            const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 0;
-            const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 0;
-
-            const now = new Date();
-            const targetYear = now.getFullYear();
-            const targetMonth = now.getMonth();
-
-            const lastDayOfMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-            const employeeCount = await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
-
-            const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
-
-            let activeDays = 0;
-            if (subscriptionDate.getFullYear() === targetYear && subscriptionDate.getMonth() === targetMonth) {
-                activeDays = Math.max(0, now.getDate() - subscriptionDate.getDate() + 1);
-            } else if (subscriptionDate < new Date(targetYear, targetMonth, 1)) {
-                activeDays = now.getDate();
-            }
-
-            const breakdown = {
-                employeeCount,
-                pricePerEmp,
-                minPrice,
-                lastDayOfMonth,
-                activeDays,
-                subscriptionDate: subscriptionDate.toISOString().split('T')[0],
-                freezeDate: now.toISOString().split('T')[0]
-            };
-
-            if (activeDays <= 0 || lastDayOfMonth === 0) return { amount: 0, breakdown };
-
-            const formulaBase = Math.max(minPrice, employeeCount * pricePerEmp);
-            const amount = Math.floor(formulaBase * (activeDays / lastDayOfMonth));
-
-            return { amount, breakdown: { ...breakdown, formulaBase } };
-        } catch (e) {
-            console.error('[Billing] calculateFreezeAmount error:', e.message);
-            return { amount: 0, breakdown: { error: e.message } };
-        }
-    }
 
 
     /**
