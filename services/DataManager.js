@@ -515,6 +515,7 @@ class DataManager {
             }
 
             return {
+                id: client.id,
                 companyId: client.id,
                 businessName: client.businessName || "עסק ללא שם",
                 email: client.email || '',
@@ -1989,8 +1990,8 @@ class DataManager {
                 return false;
             }
 
-            console.log(`[Restore] URL: ${gasUrl} | Requesting path=restore`);
-            const response = await axios.get(`${gasUrl}?path=restore`, { timeout: 45000 });
+            console.log(`[Restore] URL: ${gasUrl} | Requesting action=restore`);
+            const response = await axios.get(`${gasUrl}?action=restore`, { timeout: 45000 });
 
             if (!response.data || !response.data.success) {
                 const gasErr = response.data?.error || 'Unknown GAS error';
