@@ -846,80 +846,118 @@ router.post('/super-admin/sync', async (req, res) => {
 
 router.post('/super-admin/record-payment', async (req, res) => {
     try {
-        const { password, targetCompanyId, amount, months, method, reference } = req.body;
+        const { password, targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
         if (!targetCompanyId) return res.status(400).json({ success: false, error: "Missing targetCompanyId" });
 
         const client = await dataManager.getClientById(targetCompanyId);
         if (!client) return res.status(404).json({ success: false, error: "Business not found" });
 
-        // Adjust subscription expiry
+        // --- 1. CHARGE SAVED CC (ON-DEMAND) ---
+        let finalReference = reference || '';
+        if (chargeCC) {
+            const pm = client.paymentMethod;
+            if (!pm || !pm.token) return res.json({ success: false, error: "אין כרטיס אשראי שמור לעסק זה. לא ניתן לבצע סליקה." });
+            
+            const sysConfig = await dataManager.getSystemConfig();
+            const chargeRes = await tranzilaService.chargeToken({
+                supplier: sysConfig.tranzilaTerminal,
+                TranzilaTK: pm.token,
+                TranzilaPW: sysConfig.tranzilaPass,
+                sum: amount,
+                currency: '1',
+                tranmode: 'A',
+                myid: pm.cardHolderId || '',
+                company: client.businessName || '',
+                expmonth: pm.expMonth,
+                expyear: pm.expYear
+            });
+
+            if (!chargeRes.success) {
+                return res.json({ success: true, warning: `הרישום נכשל: סליקת הכרטיס בטרנזילה נכשלה (${chargeRes.data?.text || 'סיבה לא ידועה'})`, chargeFailed: true });
+            }
+            finalReference = (finalReference ? finalReference + " | " : "") + "TRZ-" + (chargeRes.data?.index || chargeRes.confirmationCode);
+        }
+
+        // --- 2. CALCULATE NEW EXPIRY ---
         const now = new Date();
         const currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
-
         let targetDate;
+        
+        const isDebtOnly = actionType === 'debt_only';
         const isFreeze = parseInt(months) === -999;
         let description = "";
         let statusDisplayName = "";
 
         if (isFreeze) {
-            // Freeze action: set expiry to NOW (exact time)
             targetDate = new Date();
             description = "הקפאת מנוי";
             statusDisplayName = "הוקפא";
+        } else if (isDebtOnly) {
+            // Debt Only: Just move expiry to TODAY if it's in the past
+            targetDate = currentExpiry < now ? new Date() : new Date(currentExpiry);
+            targetDate.setHours(4, 0, 0, 0); // Standardize time
+            description = "סגירת חוב (שימוש עד כה)";
+            statusDisplayName = "חוב נסגר";
         } else {
+            // RENEW: Add months. If expired, start from next billing date (1st of next month)
             if (currentExpiry < now) {
-                // Expired: Start from the 2nd of the next month
-                targetDate = new Date();
-                targetDate.setMonth(targetDate.getMonth() + 1);
-                targetDate.setDate(1);
-                targetDate.setHours(4, 0, 0, 0);
+                targetDate = dataManager.getNextBillingDate();
             } else {
-                // Active: Just use current expiry as base
                 targetDate = new Date(currentExpiry);
             }
-
-            // Add months (handle negative months for refund/shortening)
-            targetDate.setMonth(targetDate.getMonth() + parseInt(months));
-            // Always align to the 2nd
-            targetDate.setDate(2);
-            targetDate.setHours(23, 59, 59, 999);
-
-            description = months > 0 ? `חידוש מנוי ל-${months} חודשים` : `קיצור מנוי ב-${Math.abs(months)} חודשים`;
+            
+            const addMonths = parseInt(months) || 1;
+            targetDate.setMonth(targetDate.getMonth() + addMonths - 1); // months are 1-based buy in this system for record-payment
+            // Actually let's keep it simple: just add months to the base
+            targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 1, 4, 0, 0, 0);
+            
+            description = addMonths > 0 ? `חידוש מנוי ל-${addMonths} חודשים` : "עדכון מנוי";
             statusDisplayName = amount < 0 ? "החזר" : "שולם";
         }
 
         client.subscriptionExpiry = targetDate.toISOString();
+        if (!isDebtOnly && !isFreeze) {
+             client.subscriptionDate = new Date().toISOString(); // Reset cycle start
+        }
 
         // Record in payment history
         if (!client.paymentHistory) client.paymentHistory = [];
-        const displayMonths = isFreeze ? 0 : Math.abs(months);
         client.paymentHistory.push({
             date: new Date().toLocaleDateString('he-IL'),
             fullDate: new Date().toISOString(),
             amount: Math.abs(amount),
             currency: 'ILS',
-            period: displayMonths,
-            method: method || 'Manual',
-            reference: reference || '',
+            period: isFreeze ? 0 : Math.abs(parseInt(months) || 0),
+            method: chargeCC ? 'Credit Card (Saved)' : (method || 'Manual'),
+            reference: finalReference,
             description: description,
-            status: isFreeze ? 'FREEZE' : (amount < 0 ? 'REFUND' : 'PAID'),
+            status: isFreeze ? 'FREEZE' : (isDebtOnly ? 'DEBT_PAID' : 'PAID'),
             statusDisplayName: statusDisplayName,
             isGodAction: true
         });
 
-
         await dataManager.saveClients();
 
-        // Report to GAS (if not a freeze)
-        if (!isFreeze && amount !== 0) {
-            dataManager.reportPaymentToGAS(amount).catch(e => console.error(`[API] GAS Report Failed: ${e.message}`));
+        // --- 3. SEND EMAIL (IF REQUESTED & ENABLED) ---
+        if (sendEmail !== false) {
+             const sysConfig = await dataManager.getSystemConfig();
+             // Only send if automation is enabled or explicitly requested by admin via toggle
+             // For God actions, we honor the sendEmail toggle from the UI first.
+             if (sendEmail) {
+                 emailService.sendPaymentSuccessNotification(client.email, {
+                     businessName: client.businessName,
+                     amount: Math.abs(amount),
+                     newExpiry: targetDate.toLocaleDateString('he-IL'),
+                     description: description
+                 }).catch(e => console.error("[API] Failed to send payment email:", e.message));
+             }
         }
 
         res.json({
             success: true,
             newExpiry: targetDate.toLocaleDateString('he-IL'),
-            message: months < 0 ? 'המנוי קוצר בהצלחה' : 'המנוי חודש בהצלחה'
+            message: 'הפעולה בוצעה בהצלחה'
         });
     } catch (e) {
         console.error('[SuperAdmin] record-payment error:', e.message);
@@ -945,24 +983,8 @@ router.post('/super-admin/delete-payment', async (req, res) => {
         const lastPayment = sorted[0];
         const paymentIndex = lastPayment.i;
 
-        // --- Step 1: Tranzila Refund (if auto and confirmRefund) ---
-        let refundResult = null;
-        const isAutoPayment = paymentType === 'auto' || (!lastPayment.reference?.startsWith('MANUAL') && !lastPayment.reference?.startsWith('FREE') && !lastPayment.reference?.startsWith('PLAN') && lastPayment.reference && lastPayment.reference.length > 3);
-
-        if (isAutoPayment && confirmRefund && tranzilaIndex) {
-            const sysConfig = await dataManager.getSystemConfig();
-            refundResult = await tranzilaService.refundTransaction({
-                supplier: sysConfig.tranzilaTerminal,
-                refundPass: sysConfig.tranzilaRefundPass,
-                tranzilaIndex,
-                sum: lastPayment.amount
-            });
-
-            if (!refundResult.success) {
-                // Log but don't block – admin can decide to force-delete
-                console.warn(`[SuperAdmin] Tranzila refund attempt failed: ${refundResult.raw || refundResult.error}`);
-            }
-        }
+        // --- Step 1: No more Tranzila Refunds via UI ---
+        // Refund logic removed as per new policy. Deletion is administrative only.
 
         // --- Step 2: Revert subscription to previous renewal date ---
         // Before the last payment, what was the expiry?
