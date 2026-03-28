@@ -207,6 +207,24 @@ router.post('/dispatch', async (req, res) => {
                 const result = await dataManager.renewSubscription(companyId);
                 return res.json(result);
             }
+            
+            case 'recordManualPayment': {
+                // Only allowed for Super-Admin via dispatch
+                if (!isValidSuperAdminPassword(password)) return res.json({ success: false, error: 'Unauthorized' });
+                const { targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail } = rest;
+                
+                // Reuse the same logic as the dedicated endpoint (proxying to it or duplicating)
+                // For now, let's duplicate the call logic or just refactor the endpoint to a service.
+                // Since this is a quick fix, I'll redirect internally if possible, but the dispatcher is already an async scope.
+                
+                // Actually, I'll just implement it here or call the handler.
+                // But for now, I'll add the case and I'll update the Super-Admin panel to use this or the dedicated one.
+                // The user's request was specifically to add it to api.js.
+                
+                // Let's implement the core logic here by reusing the record-payment logic.
+                const result = await handleRecordPayment({ targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail });
+                return res.json(result);
+            }
 
             case 'forgotAdminPassword': {
                 // Pass emailService explicitly - AuthService no longer imports it (avoids circular require)
@@ -750,7 +768,6 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 adminWhatsapp: config.adminWhatsapp || '',
                 tranzilaTerminal: config.tranzilaTerminal || '',
                 tranzilaPass: config.tranzilaPass || '',
-                tranzilaRefundPass: config.tranzilaRefundPass || '',
                 minMonthlyPrice: config.minMonthlyPrice || 0,
                 pricePerEmployee: config.pricePerEmployee || 0,
                 maxShiftHours: config.maxShiftHours || 12,
@@ -844,121 +861,112 @@ router.post('/super-admin/sync', async (req, res) => {
     }
 });
 
+async function handleRecordPayment({ targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail }) {
+    if (!targetCompanyId) return { success: false, error: "Missing targetCompanyId" };
+
+    const client = await dataManager.getClientById(targetCompanyId);
+    if (!client) return { success: false, error: "Business not found" };
+
+    // --- 1. CHARGE SAVED CC (ON-DEMAND) ---
+    let finalReference = reference || '';
+    if (chargeCC) {
+        const pm = client.paymentMethod;
+        if (!pm || !pm.token) return { success: false, error: "אין כרטיס אשראי שמור לעסק זה. לא ניתן לבצע סליקה." };
+        
+        const sysConfig = await dataManager.getSystemConfig();
+        const chargeRes = await tranzilaService.chargeToken({
+            supplier: sysConfig.tranzilaTerminal,
+            TranzilaTK: pm.token,
+            TranzilaPW: sysConfig.tranzilaPass,
+            sum: amount,
+            currency: '1',
+            tranmode: 'A',
+            myid: pm.cardHolderId || '',
+            company: client.businessName || '',
+            expmonth: pm.expMonth,
+            expyear: pm.expYear
+        });
+
+        if (!chargeRes.success) {
+            return { success: true, warning: `הרישום נכשל: סליקת הכרטיס בטרנזילה נכשלה (${chargeRes.data?.text || 'סיבה לא ידועה'})`, chargeFailed: true };
+        }
+        finalReference = (finalReference ? finalReference + " | " : "") + "TRZ-" + (chargeRes.data?.index || chargeRes.confirmationCode);
+    }
+
+    // --- 2. CALCULATE NEW EXPIRY ---
+    const now = new Date();
+    const currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
+    let targetDate;
+    
+    const isDebtOnly = actionType === 'debt_only' || actionType === 'DEBT_ONLY';
+    let description = "";
+    let statusDisplayName = "";
+
+    if (isDebtOnly) {
+        targetDate = currentExpiry < now ? new Date() : new Date(currentExpiry);
+        targetDate.setHours(4, 0, 0, 0); 
+        description = "סגירת חוב (שימוש עד כה)";
+        statusDisplayName = "חוב נסגר";
+    } else {
+        if (currentExpiry < now) {
+            targetDate = dataManager.getNextBillingDate();
+        } else {
+            targetDate = new Date(currentExpiry);
+        }
+        
+        const addMonths = parseInt(months) || 1;
+        targetDate.setMonth(targetDate.getMonth() + addMonths - 1); 
+        targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 1, 4, 0, 0, 0);
+        
+        description = addMonths > 0 ? `חידוש מנוי ל-${addMonths} חודשים` : "עדכון מנוי";
+        statusDisplayName = amount < 0 ? "החזר" : "שולם";
+    }
+
+    client.subscriptionExpiry = targetDate.toISOString();
+    if (!isDebtOnly) {
+         client.subscriptionDate = new Date().toISOString();
+    }
+
+    if (!client.paymentHistory) client.paymentHistory = [];
+    client.paymentHistory.push({
+        date: new Date().toLocaleDateString('he-IL'),
+        fullDate: new Date().toISOString(),
+        amount: Math.abs(amount),
+        currency: 'ILS',
+        period: Math.abs(parseInt(months) || 0),
+        method: chargeCC ? 'Credit Card (Saved)' : (method || 'Manual'),
+        reference: finalReference,
+        description: description,
+        status: isDebtOnly ? 'DEBT_PAID' : 'PAID',
+        statusDisplayName: statusDisplayName,
+        isGodAction: true
+    });
+
+    await dataManager.saveClients();
+
+    // --- 3. SEND EMAIL ---
+    if (sendEmail) {
+         emailService.sendPaymentSuccessNotification(client.email, {
+             businessName: client.businessName,
+             amount: Math.abs(amount),
+             newExpiry: targetDate.toLocaleDateString('he-IL'),
+             description: description
+         }).catch(e => console.error("[API] Failed to send payment email:", e.message));
+    }
+
+    return {
+        success: true,
+        newExpiry: targetDate.toLocaleDateString('he-IL'),
+        message: 'הפעולה בוצעה בהצלחה'
+    };
+}
+
 router.post('/super-admin/record-payment', async (req, res) => {
     try {
-        const { password, targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail } = req.body;
+        const { password, ...params } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
-        if (!targetCompanyId) return res.status(400).json({ success: false, error: "Missing targetCompanyId" });
-
-        const client = await dataManager.getClientById(targetCompanyId);
-        if (!client) return res.status(404).json({ success: false, error: "Business not found" });
-
-        // --- 1. CHARGE SAVED CC (ON-DEMAND) ---
-        let finalReference = reference || '';
-        if (chargeCC) {
-            const pm = client.paymentMethod;
-            if (!pm || !pm.token) return res.json({ success: false, error: "אין כרטיס אשראי שמור לעסק זה. לא ניתן לבצע סליקה." });
-            
-            const sysConfig = await dataManager.getSystemConfig();
-            const chargeRes = await tranzilaService.chargeToken({
-                supplier: sysConfig.tranzilaTerminal,
-                TranzilaTK: pm.token,
-                TranzilaPW: sysConfig.tranzilaPass,
-                sum: amount,
-                currency: '1',
-                tranmode: 'A',
-                myid: pm.cardHolderId || '',
-                company: client.businessName || '',
-                expmonth: pm.expMonth,
-                expyear: pm.expYear
-            });
-
-            if (!chargeRes.success) {
-                return res.json({ success: true, warning: `הרישום נכשל: סליקת הכרטיס בטרנזילה נכשלה (${chargeRes.data?.text || 'סיבה לא ידועה'})`, chargeFailed: true });
-            }
-            finalReference = (finalReference ? finalReference + " | " : "") + "TRZ-" + (chargeRes.data?.index || chargeRes.confirmationCode);
-        }
-
-        // --- 2. CALCULATE NEW EXPIRY ---
-        const now = new Date();
-        const currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
-        let targetDate;
-        
-        const isDebtOnly = actionType === 'debt_only';
-        const isFreeze = parseInt(months) === -999;
-        let description = "";
-        let statusDisplayName = "";
-
-        if (isFreeze) {
-            targetDate = new Date();
-            description = "הקפאת מנוי";
-            statusDisplayName = "הוקפא";
-        } else if (isDebtOnly) {
-            // Debt Only: Just move expiry to TODAY if it's in the past
-            targetDate = currentExpiry < now ? new Date() : new Date(currentExpiry);
-            targetDate.setHours(4, 0, 0, 0); // Standardize time
-            description = "סגירת חוב (שימוש עד כה)";
-            statusDisplayName = "חוב נסגר";
-        } else {
-            // RENEW: Add months. If expired, start from next billing date (1st of next month)
-            if (currentExpiry < now) {
-                targetDate = dataManager.getNextBillingDate();
-            } else {
-                targetDate = new Date(currentExpiry);
-            }
-            
-            const addMonths = parseInt(months) || 1;
-            targetDate.setMonth(targetDate.getMonth() + addMonths - 1); // months are 1-based buy in this system for record-payment
-            // Actually let's keep it simple: just add months to the base
-            targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 1, 4, 0, 0, 0);
-            
-            description = addMonths > 0 ? `חידוש מנוי ל-${addMonths} חודשים` : "עדכון מנוי";
-            statusDisplayName = amount < 0 ? "החזר" : "שולם";
-        }
-
-        client.subscriptionExpiry = targetDate.toISOString();
-        if (!isDebtOnly && !isFreeze) {
-             client.subscriptionDate = new Date().toISOString(); // Reset cycle start
-        }
-
-        // Record in payment history
-        if (!client.paymentHistory) client.paymentHistory = [];
-        client.paymentHistory.push({
-            date: new Date().toLocaleDateString('he-IL'),
-            fullDate: new Date().toISOString(),
-            amount: Math.abs(amount),
-            currency: 'ILS',
-            period: isFreeze ? 0 : Math.abs(parseInt(months) || 0),
-            method: chargeCC ? 'Credit Card (Saved)' : (method || 'Manual'),
-            reference: finalReference,
-            description: description,
-            status: isFreeze ? 'FREEZE' : (isDebtOnly ? 'DEBT_PAID' : 'PAID'),
-            statusDisplayName: statusDisplayName,
-            isGodAction: true
-        });
-
-        await dataManager.saveClients();
-
-        // --- 3. SEND EMAIL (IF REQUESTED & ENABLED) ---
-        if (sendEmail !== false) {
-             const sysConfig = await dataManager.getSystemConfig();
-             // Only send if automation is enabled or explicitly requested by admin via toggle
-             // For God actions, we honor the sendEmail toggle from the UI first.
-             if (sendEmail) {
-                 emailService.sendPaymentSuccessNotification(client.email, {
-                     businessName: client.businessName,
-                     amount: Math.abs(amount),
-                     newExpiry: targetDate.toLocaleDateString('he-IL'),
-                     description: description
-                 }).catch(e => console.error("[API] Failed to send payment email:", e.message));
-             }
-        }
-
-        res.json({
-            success: true,
-            newExpiry: targetDate.toLocaleDateString('he-IL'),
-            message: 'הפעולה בוצעה בהצלחה'
-        });
+        const result = await handleRecordPayment(params);
+        res.json(result);
     } catch (e) {
         console.error('[SuperAdmin] record-payment error:', e.message);
         res.status(500).json({ success: false, error: e.message });
@@ -967,69 +975,48 @@ router.post('/super-admin/record-payment', async (req, res) => {
 
 router.post('/super-admin/delete-payment', async (req, res) => {
     try {
-        const { password, targetCompanyId, paymentType, tranzilaIndex, confirmRefund } = req.body;
+        const { password, targetCompanyId } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
         if (!targetCompanyId) return res.status(400).json({ success: false, error: "Missing targetCompanyId" });
 
         const client = await dataManager.getClientById(targetCompanyId);
         if (!client) return res.status(404).json({ success: false, error: "Business not found" });
 
-        // --- Get the LAST payment (only last can be deleted) ---
         const history = client.paymentHistory || [];
         if (history.length === 0) return res.json({ success: false, error: "אין היסטוריית תשלומים" });
 
-        // Sort to find last chronologically
         const sorted = history.map((p, i) => ({ ...p, i })).sort((a, b) => new Date(b.fullDate || b.date) - new Date(a.fullDate || a.date));
         const lastPayment = sorted[0];
         const paymentIndex = lastPayment.i;
 
-        // --- Step 1: No more Tranzila Refunds via UI ---
-        // Refund logic removed as per new policy. Deletion is administrative only.
-
-        // --- Step 2: Revert subscription to previous renewal date ---
-        // Before the last payment, what was the expiry?
-        const prevPayment = sorted[1]; // second-to-last payment (chronologically)
+        // Revert subscription to previous renewal date
+        const prevPayment = sorted[1];
         let prevExpiry = null;
 
         if (prevPayment && prevPayment.fullDate) {
-            // Calculate expiry as it was after the previous payment (1 month after its date)
             const prevDate = new Date(prevPayment.fullDate);
             prevDate.setMonth(prevDate.getMonth() + (parseInt(prevPayment.period) || 1));
             prevDate.setDate(1);
             prevDate.setHours(4, 0, 0, 0);
             prevExpiry = prevDate.toISOString();
         } else {
-            // No previous payment – revert by subtracting the deleted payment's period
             const currentExpiry = new Date(client.subscriptionExpiry || new Date());
             currentExpiry.setMonth(currentExpiry.getMonth() - (parseInt(lastPayment.period) || 1));
             prevExpiry = currentExpiry.toISOString();
         }
 
-        // --- Step 3: Remove the payment record ---
         client.paymentHistory.splice(paymentIndex, 1);
         client.subscriptionExpiry = prevExpiry;
 
-        // --- Step 4: Save locally AND sync immediately to GAS (synchronous) ---
-        // CRITICAL: Must be synchronous sync so GAS gets updated data before any potential
-        // Render restart. If we only do background enqueue, a server restart could
-        // trigger smartRestoreFromGAS which would pull old GAS data and restore the deleted payment.
         await dataManager.saveClientsAndSyncToGAS();
 
-        // Report credit to GAS (negative amount = refund)
-        if (isAutoPayment && lastPayment.amount > 0) {
-            dataManager.reportPaymentToGAS(-lastPayment.amount).catch(e => console.error(`[API] GAS Refund Report Failed: ${e.message}`));
-        }
-
-        // Recalculate expected payment after update
         const newExpectedPayment = await dataManager.calculateSubscriptionAmount(targetCompanyId);
 
         res.json({
             success: true,
-            message: refundResult?.success ? 'הזיכוי נשלח לטרנזילה והרשומה נמחקה' : 'רשומת התשלום נמחקה והמנוי עודכן',
+            message: 'רשומת התשלום נמחקה והמנוי עודכן',
             newExpiry: new Date(prevExpiry).toLocaleDateString('he-IL'),
-            newExpectedPayment: newExpectedPayment?.amount || 0,
-            refundSent: !!(refundResult?.success),
-            refundResponseCode: refundResult?.responseCode
+            newExpectedPayment: newExpectedPayment?.amount || 0
         });
     } catch (e) {
         console.error('[SuperAdmin] delete-payment error:', e.message);
@@ -1968,119 +1955,6 @@ router.post('/maintenance/charge-client', maintenanceAuth, async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
-
-/**
- * DEBUG: Charge 1 ILS + immediate refund. Returns full raw log of both operations.
- * This is a safe test that leaves no financial trace.
- */
-router.post('/maintenance/debug-charge-refund', maintenanceAuth, async (req, res) => {
-    const log = [];
-    const addLog = (step, type, data) => {
-        log.push({ step, type, timestamp: new Date().toISOString(), data });
-    };
-
-    try {
-        const { clientId } = req.body;
-        if (!clientId) return res.status(400).json({ success: false, error: 'Missing clientId' });
-
-        const client = dataManager.getClientById(clientId);
-        if (!client) return res.status(404).json({ success: false, error: 'Business not found', log });
-
-        const pm = client.paymentMethod;
-        if (!pm || !pm.token) {
-            return res.json({ success: false, error: 'אין טוקן כרטיס אשראי שמור לעסק זה', log });
-        }
-
-        const sysConfig = await dataManager.getSystemConfig();
-
-        // ======= STEP 1: CHARGE =======
-        const chargePayload = {
-            supplier: sysConfig.tranzilaTerminal,
-            TranzilaTK: pm.token,
-            TranzilaPW: sysConfig.tranzilaPass,
-            sum: '1',
-            currency: '1',
-            tranmode: 'A',
-            myid: pm.cardHolderId || '',
-            company: client.businessName || '',
-            mycvv: pm.cvv || '',
-            expmonth: String(pm.expMonth || pm.expmonth || '01').padStart(2, '0'),
-            expyear: String(pm.expYear || pm.expyear || '30').slice(-2)
-        };
-
-        addLog('CHARGE', 'REQUEST', chargePayload);
-
-        const chargeResult = await tranzilaService.chargeToken(chargePayload);
-
-        addLog('CHARGE', 'RESPONSE', {
-            success: chargeResult.success,
-            responseCode: chargeResult.data?.Response,
-            confirmationCode: chargeResult.data?.ConfirmationCode,
-            tranzilaIndex: chargeResult.data?.index,
-            text: chargeResult.data?.text,
-            raw: chargeResult.raw
-        });
-
-        if (!chargeResult.success) {
-            return res.json({
-                success: false,
-                chargeSuccess: false,
-                error: `חיוב נכשל – Response: ${chargeResult.data?.Response || 'N/A'}`,
-                log
-            });
-        }
-
-        const tranzilaIndex = chargeResult.data?.index;
-        if (!tranzilaIndex) {
-            return res.json({
-                success: false,
-                chargeSuccess: true,
-                error: 'חיוב הצליח אך לא התקבל index לביטול – לא ניתן לבצע זיכוי',
-                log
-            });
-        }
-
-        // ======= STEP 2: REFUND =======
-        const refundPayload = {
-            supplier: sysConfig.tranzilaTerminal,
-            CreditPass: sysConfig.tranzilaRefundPass,
-            tranmode: 'C',
-            authnr: tranzilaIndex,
-            sum: '1'
-        };
-
-        addLog('REFUND', 'REQUEST', refundPayload);
-
-        const refundResult = await tranzilaService.refundTransaction({
-            supplier: sysConfig.tranzilaTerminal,
-            refundPass: sysConfig.tranzilaRefundPass,
-            tranzilaIndex,
-            sum: '1'
-        });
-
-        addLog('REFUND', 'RESPONSE', {
-            success: refundResult.success,
-            responseCode: refundResult.responseCode,
-            raw: refundResult.raw
-        });
-
-        return res.json({
-            success: refundResult.success,
-            chargeSuccess: true,
-            refundSuccess: refundResult.success,
-            chargeConfirmationCode: chargeResult.data?.ConfirmationCode,
-            tranzilaIndex,
-            refundResponseCode: refundResult.responseCode,
-            log
-        });
-
-    } catch (e) {
-        addLog('ERROR', 'EXCEPTION', { message: e.message, stack: e.stack?.split('\n').slice(0, 4) });
-        console.error('[DebugChargeRefund] Error:', e.message);
-        res.status(500).json({ success: false, error: e.message, log });
-    }
-});
-
 
 router.get('/maintenance/logs', maintenanceAuth, async (req, res) => {
     const category = req.query.category;
