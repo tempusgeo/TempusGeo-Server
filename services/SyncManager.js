@@ -95,14 +95,9 @@ class SyncManager {
                 break;
             
             case 'CONFIG':
-                // For global config backups, we can use the existing archive flow or a specialized one
-                // For now, let's just use the 'archive' action if it's meant for a file
-                action = 'archive'; // Assuming GAS Code.gs handles generic 'archive' with companyId/year/month
-                // Actually, settings are usually in config.json. 
-                // Let's assume we want to push the full config to GAS
                 postData.action = 'archive';
-                postData.year = 'config'; // specialized "year"
-                postData.month = 'json';  // specialized "month"
+                postData.year = 'config'; 
+                postData.month = 'json';  
                 postData.data = JSON.stringify(payload);
                 break;
 
