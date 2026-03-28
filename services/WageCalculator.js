@@ -175,7 +175,18 @@ class WageCalculator {
                 let ratePercent = 100;
 
                 if (min.isSpecial) {
-                    let addedRate = weMapObj[`h${hourIndex}`] !== undefined ? parseFloat(weMapObj[`h${hourIndex}`]) : (hourIndex >= 9 ? 0.75 : 0.5);
+                    let addedRate = 0;
+                    const ranges = salarySettings.weekendRanges || [];
+                    
+                    if (ranges.length > 0) {
+                        const minInShift = i;
+                        const match = ranges.find(r => minInShift >= timeToMinutes(r.start) && minInShift < timeToMinutes(r.end));
+                        if (match) addedRate = parseFloat(match.addRate);
+                        else addedRate = parseFloat(ranges[ranges.length - 1].addRate); // Fallback to last
+                    } else {
+                        let addedRateLegacy = weMapObj[`h${hourIndex}`] !== undefined ? parseFloat(weMapObj[`h${hourIndex}`]) : (hourIndex >= 9 ? 0.75 : 0.5);
+                        addedRate = addedRateLegacy;
+                    }
                     ratePercent = 100 + (addedRate * 100);
                 } else {
                     const loc = getLocalized(min.ts);
@@ -189,30 +200,39 @@ class WageCalculator {
                     if (i < thresholdMins) {
                         addedRate = 0;
                     } else {
-                        const mapToUse = (isFriday || isHolidayEve) 
-                            ? (workWeekType === '6day' ? frMap6 : frMap5)
-                            : (workWeekType === '6day' ? otMap6 : otMap5);
+                        const ranges = (isFriday || isHolidayEve) 
+                            ? (workWeekType === '6day' ? salarySettings.fridayRanges6 : salarySettings.fridayRanges5)
+                            : (workWeekType === '6day' ? salarySettings.overtimeRanges6 : salarySettings.overtimeRanges5);
 
-                        if (mapToUse[`h${hourIndex}`] !== undefined) {
-                            addedRate = parseFloat(mapToUse[`h${hourIndex}`]);
-                        } else if (!(isFriday || isHolidayEve) && otMapArr && otMapArr[hourIndex - 1] !== undefined) {
-                            // Only apply legacy array to weekdays
-                            addedRate = parseFloat(otMapArr[hourIndex - 1]);
-                            // Also force 0 if below threshold for legacy
-                            if (i < thresholdMins) addedRate = 0;
+                        if (ranges && ranges.length > 0) {
+                            const minInShift = i;
+                            const match = ranges.find(r => minInShift >= timeToMinutes(r.start) && minInShift < timeToMinutes(r.end));
+                            if (match) addedRate = parseFloat(match.addRate);
+                            else addedRate = parseFloat(ranges[ranges.length - 1].addRate);
                         } else {
-                            // Default logic
-                            if (isFriday || isHolidayEve) {
-                                if (hourIndex === 8 || hourIndex === 9) addedRate = 0.25;
-                                else if (hourIndex >= 10) addedRate = 0.5;
+                            // Legacy hourly mapping fallback
+                            const mapToUse = (isFriday || isHolidayEve) 
+                                ? (workWeekType === '6day' ? frMap6 : frMap5)
+                                : (workWeekType === '6day' ? otMap6 : otMap5);
+
+                            if (mapToUse[`h${hourIndex}`] !== undefined) {
+                                addedRate = parseFloat(mapToUse[`h${hourIndex}`]);
+                            } else if (!(isFriday || isHolidayEve) && otMapArr && otMapArr[hourIndex - 1] !== undefined) {
+                                addedRate = parseFloat(otMapArr[hourIndex - 1]);
+                                if (i < thresholdMins) addedRate = 0;
                             } else {
-                                if (workWeekType === '6day') {
-                                    if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
-                                    else if (hourIndex >= 11) addedRate = 0.5;
+                                // Default logic
+                                if (isFriday || isHolidayEve) {
+                                    if (hourIndex === 8 || hourIndex === 9) addedRate = 0.25;
+                                    else if (hourIndex >= 10) addedRate = 0.5;
                                 } else {
-                                    // 5-day default (applied after 8.6h)
-                                    if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
-                                    else if (hourIndex >= 11) addedRate = 0.5;
+                                    if (workWeekType === '6day') {
+                                        if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
+                                        else if (hourIndex >= 11) addedRate = 0.5;
+                                    } else {
+                                        if (hourIndex === 9 || hourIndex === 10) addedRate = 0.25;
+                                        else if (hourIndex >= 11) addedRate = 0.5;
+                                    }
                                 }
                             }
                         }
