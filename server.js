@@ -5,6 +5,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const config = require('./config');
 const apiRoutes = require('./routes/api');
+const dataManager = require('./services/DataManager');
 
 const app = express();
 
@@ -45,7 +46,16 @@ app.use((req, res) => {
 
 // Start Server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+
+dataManager.init()
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`Server running on port ${PORT}`);
+            console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+            console.log(`Data Directory: ${dataManager.dataDir}`);
+        });
+    })
+    .catch(err => {
+        console.error('CRITICAL: DataManager failed to initialize:', err);
+        process.exit(1);
+    });
