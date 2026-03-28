@@ -312,8 +312,9 @@ class DataManager {
         // Ensure token is trimmed of any newlines or whitespace
         const rawToken = (pm.token || pm.TranzilaTK || pm.TranzilaToken || '').toString().trim();
         
+        // Ensure last4 is exactly 4 digits
         let last4 = (pm.last4 || (pm.cardNumber ? pm.cardNumber.slice(-4) : '') || '').toString().trim();
-        if (last4) last4 = last4.slice(-4).padStart(4, '0');
+        last4 = last4.replace(/\D/g, '').slice(-4).padStart(4, '0');
 
         return {
             token: rawToken,
@@ -507,8 +508,6 @@ class DataManager {
             // New: Active Employees & Expected Payment
             let activeEmployees = 0;
             let expectedPayment = { amount: 0, breakdown: {} };
-            let freezeAmount = { amount: 0, breakdown: {} };
-            
             if (existsLocally) {
                 activeEmployees = await this.countUniqueActiveEmployees(client.id);
                 expectedPayment = await this.calculateSubscriptionAmount(client.id);
@@ -2060,7 +2059,7 @@ class DataManager {
                             
                             // Apply whitelist filter
                             const allowedKeys = [
-                                'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass', 'tranzilaRefundPass',
+                                'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
                                 'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
                                 'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
                                 'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
@@ -2294,7 +2293,7 @@ class DataManager {
             subscriptionDate: new Date().toISOString(), // Initial registration date
             joinedAt: new Date().toISOString(),
 
-            autoChargeEnabled: true, // Default to true as per requirement
+            autoChargeEnabled: true, // Force true by default for all new businesses
             paymentMethod: pMethodSafe
         };
 
