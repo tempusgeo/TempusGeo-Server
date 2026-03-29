@@ -643,6 +643,7 @@ class DataManager {
             }
 
             if (SubscriptionDaysInLastMonth <= 0 || LastMonthDays === 0) {
+                this.logMaintenance('DEBUG', `[Billing] Zero amount for ${companyId}: SubscriptionDays=${SubscriptionDaysInLastMonth}, LastMonthDays=${LastMonthDays}`);
                 return { amount: 0, breakdown: { employeeCount, SubscriptionDaysInLastMonth } };
             }
 
@@ -2992,16 +2993,23 @@ class DataManager {
     }
 
     async getFileContent(fileName) {
-        if (!fileName.endsWith('.json')) {
-            throw new Error('Only JSON files can be read through this interface.');
-        }
-
-        const safeName = path.basename(fileName);
+        // Sanitize path to prevent breakout
+        const safeName = fileName.replace(/\.\./g, '');
         const filePath = path.join(this.dataDir, safeName);
+        
+        // Safety check: must still be inside dataDir
+        if (!filePath.startsWith(this.dataDir)) {
+            throw new Error('Access denied: path outside of data directory.');
+        }
 
         try {
             const data = await fs.readFile(filePath, 'utf8');
-            return JSON.parse(data);
+            try {
+                return JSON.parse(data);
+            } catch (jsonErr) {
+                // If not JSON, return as plain text
+                return data;
+            }
         } catch (e) {
             throw new Error('File not found or unreadable: ' + fileName);
         }
