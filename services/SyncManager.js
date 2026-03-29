@@ -109,6 +109,13 @@ class SyncManager {
                 postData.data = JSON.stringify(payload);
                 break;
 
+            case 'LEDGER':
+                postData.action = 'archive';
+                postData.year = 'ledger';
+                postData.month = 'json';
+                postData.data = JSON.stringify(payload.ledger);
+                break;
+
             default:
                 throw new Error(`Unknown sync type: ${type}`);
         }
