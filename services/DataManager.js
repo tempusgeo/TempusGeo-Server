@@ -545,54 +545,100 @@ class DataManager {
         }));
     }
 
+    async isMonthPaid(companyId, year, month) {
+        const client = await this.getClientById(companyId);
+        if (!client || !client.paymentHistory) return false;
+
+        const periodKey = `${year}-${String(month).padStart(2, '0')}`;
+        // Also check for standard format in history (e.g., "03/2024" or the period property)
+        return client.paymentHistory.some(p => 
+            (p.status === 'PAID' || p.status === 'SUCCESS' || p.statusDisplayName === 'חודשי') && 
+            (p.period === periodKey || p.period === `${month}/${year}`)
+        );
+    }
+
+    async updateBillingLedger(companyId, year, month, names) {
+        if (!companyId || !names || names.length === 0) return;
+        const companyDir = path.join(this.dataDir, 'companies', companyId);
+        const ledgerPath = path.join(companyDir, 'billing_ledger.json');
+        
+        let ledger = {};
+        try {
+            const data = await fs.readFile(ledgerPath, 'utf8');
+            ledger = JSON.parse(data);
+        } catch (e) {}
+
+        const periodKey = `${year}-${String(month).padStart(2, '0')}`;
+        const existingNames = new Set(ledger[periodKey] || []);
+        let changed = false;
+        
+        names.forEach(n => {
+            if (n && !existingNames.has(n)) {
+                existingNames.add(n);
+                changed = true;
+            }
+        });
+
+        if (changed) {
+            ledger[periodKey] = Array.from(existingNames);
+            await fs.mkdir(companyDir, { recursive: true });
+            await fs.writeFile(ledgerPath, JSON.stringify(ledger, null, 2));
+
+            // Sync Ledger to GAS
+            const bizConfig = await this.getCompanyConfig(companyId);
+            const gasUrl = bizConfig.gasUrl || config.GAS_COLD_STORAGE_URL;
+            if (gasUrl) {
+                syncManager.enqueue('LEDGER', { ledger }, { companyId, gasUrl, password: bizConfig.password });
+            }
+        }
+    }
+
     async countUniqueActiveEmployees(companyId, year = null, month = null) {
         if (!companyId || companyId === 'NEW_SETUP') return 0;
         try {
             const now = new Date();
-            const activeSet = new Set();
-            
             let targetYear, targetMonth;
 
             if (year !== null && month !== null) {
                 targetYear = year;
                 targetMonth = month;
             } else {
-                const sysConfig = await this.getSystemConfig();
-                const chargeDay = parseInt(sysConfig.chargeDay) || 1;
-                const chargeTime = sysConfig.chargeTime || "00:00";
                 const nextCycle = this.getNextBillingDate();
-                
-                // The month to count for is the calendar month before the next cycle
                 const targetDate = new Date(nextCycle);
                 targetDate.setMonth(targetDate.getMonth() - 1);
                 targetYear = targetDate.getFullYear();
                 targetMonth = targetDate.getMonth() + 1;
             }
 
+            // Priority 1: Billing Ledger (Un-deleteable)
+            const companyDir = path.join(this.dataDir, 'companies', companyId);
+            const ledgerPath = path.join(companyDir, 'billing_ledger.json');
+            try {
+                const ledgerData = await fs.readFile(ledgerPath, 'utf8');
+                const ledger = JSON.parse(ledgerData);
+                const periodKey = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+                if (ledger[periodKey]) {
+                    return ledger[periodKey].length;
+                }
+            } catch (e) {}
+
+            // Priority 2: Live Shifts (Fallback)
+            const activeSet = new Set();
             const shifts = await this.getShifts(companyId, targetYear, targetMonth);
             
-            // Handle both legacy array format and object format
             if (Array.isArray(shifts)) {
-                // If it's a flat array of shifts, we need to count unique employee names/IDs
                 shifts.forEach(s => {
                     const empName = s.workerName || s.name || s.userId;
                     if (empName) activeSet.add(empName);
                 });
             } else if (typeof shifts === 'object' && shifts !== null) {
-                // Modern format: { "Employee Name": [shifts...] }
-                const employees = Object.keys(shifts);
-                employees.forEach(emp => {
-                    const empShifts = shifts[emp] || [];
-                    if (Array.isArray(empShifts) && empShifts.length > 0) {
-                        activeSet.add(emp);
-                    }
+                Object.keys(shifts).forEach(emp => {
+                    if (shifts[emp] && shifts[emp].length > 0) activeSet.add(emp);
                 });
             }
 
-            this.logMaintenance('DEBUG', `[Billing] Counted ${activeSet.size} active employees for ${companyId} in ${targetYear}-${targetMonth}.`);
             return activeSet.size;
         } catch (e) {
-            this.logMaintenance('ERROR', `[DataManager] Failed to count active employees for ${companyId}: ${e.message}`);
             return 0;
         }
     }
@@ -614,53 +660,78 @@ class DataManager {
         return true;
     }
 
-    async calculateSubscriptionAmount(companyId, forcedEmployeeCount = null) {
+    async calculateSubscriptionAmount(companyId) {
         try {
             const client = await this.getClientById(companyId);
             if (!client) return { amount: 0, breakdown: {} };
 
             const sysConfig = await this.getSystemConfig();
-            const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 0;
-            const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 0;
+            const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 50;
+            const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 5;
 
-            const nextCycle = this.getNextBillingDate();
-            const targetDate = new Date(nextCycle);
-            targetDate.setMonth(targetDate.getMonth() - 1);
-            const targetYear = targetDate.getFullYear();
-            const targetMonth = targetDate.getMonth();
+            let totalDue = 0;
+            const explanations = [];
+
+            // 1. Unpaid Past Months (The Chain)
+            // We iterate from JoinedAt/SubscriptionDate until last month
+            let checkDate = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
+            const now = new Date();
             
-            const LastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
-            const employeeCount = forcedEmployeeCount !== null ? forcedEmployeeCount : await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
+            // Advance in monthly steps
+            while (checkDate < new Date(now.getFullYear(), now.getMonth(), 1)) {
+                const y = checkDate.getFullYear();
+                const m = checkDate.getMonth() + 1; // 1-indexed
 
-            // OLD FORMULA restoration: SubscriptionDate is joinedAt or similar
+                if (!(await this.isMonthPaid(companyId, y, m))) {
+                    const workers = await this.countUniqueActiveEmployees(companyId, y, m);
+                    if (workers > 0) {
+                        const monthBase = Math.max(minPrice, workers * pricePerEmp);
+                        totalDue += monthBase;
+                        explanations.push(`חוב ${m}/${y}: ₪${monthBase} (${workers} עובדים)`);
+                    } else {
+                        explanations.push(`שוטף ${m}/${y}: ₪0 (אין פעילות עובדים)`);
+                    }
+                }
+                
+                checkDate.setMonth(checkDate.getMonth() + 1);
+            }
+
+            // 2. Current Month (Live Calculation / Pro-rata)
+            const targetYear = now.getFullYear();
+            const targetMonth = now.getMonth(); // 0-indexed
+            const lastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
+            const workers = await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
+            
             const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
-
-            let SubscriptionDaysInLastMonth = 0;
+            
+            let activeDays = 0;
             if (subscriptionDate.getFullYear() === targetYear && subscriptionDate.getMonth() === targetMonth) {
-                SubscriptionDaysInLastMonth = Math.max(0, LastMonthDays - subscriptionDate.getDate());
+                // Pro-rata based on registration/renewal middle of month
+                activeDays = Math.max(0, lastMonthDays - subscriptionDate.getDate() + 1);
             } else if (subscriptionDate < new Date(targetYear, targetMonth, 1)) {
-                SubscriptionDaysInLastMonth = LastMonthDays;
+                activeDays = lastMonthDays;
             }
 
-            if (SubscriptionDaysInLastMonth <= 0 || LastMonthDays === 0) {
-                this.logMaintenance('DEBUG', `[Billing] Zero amount for ${companyId}: SubscriptionDays=${SubscriptionDaysInLastMonth}, LastMonthDays=${LastMonthDays}`);
-                return { amount: 0, breakdown: { employeeCount, SubscriptionDaysInLastMonth } };
+            const currentFormulaBase = workers > 0 ? Math.max(minPrice, workers * pricePerEmp) : 0;
+            const currentAmount = Math.floor(currentFormulaBase * (activeDays / lastMonthDays));
+            
+            totalDue += currentAmount;
+            if (workers === 0) {
+                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪0 (אין פעילות עובדים)`);
+            } else if (activeDays < lastMonthDays) {
+                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (יחסי: ${activeDays}/${lastMonthDays} ימים במערכת)`);
+            } else {
+                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (חודש מלא)`);
             }
-
-            // EXACT ZIP FORMULA
-            const formulaBase = Math.max(minPrice, employeeCount * pricePerEmp);
-            const amount = Math.floor(formulaBase * (SubscriptionDaysInLastMonth / LastMonthDays));
 
             return {
-                amount,
+                amount: totalDue,
                 breakdown: {
-                    employeeCount,
-                    pricePerEmp,
-                    minPrice,
-                    formulaBase,
-                    LastMonthDays,
-                    SubscriptionDaysInLastMonth,
-                    periodGoal: `${targetYear}-${(targetMonth + 1).toString().padStart(2, '0')}`
+                    totalDue,
+                    details: explanations,
+                    employeeCount: workers,
+                    activeDays,
+                    lastMonthDays
                 }
             };
         } catch (e) {
@@ -952,6 +1023,18 @@ class DataManager {
         } catch (e) { }
 
         await fs.writeFile(targetFilePath, JSON.stringify(shiftsData, null, 2));
+        
+        // Ledger logic: Capture unique names for billing (Unhackable history)
+        const employeeNames = [];
+        if (Array.isArray(shiftsData)) {
+            shiftsData.forEach(s => { if (s.workerName || s.name) employeeNames.push(s.workerName || s.name); });
+        } else if (typeof shiftsData === 'object' && shiftsData !== null) {
+            Object.keys(shiftsData).forEach(name => {
+                if (Array.isArray(shiftsData[name]) && shiftsData[name].length > 0) employeeNames.push(name);
+            });
+        }
+        await this.updateBillingLedger(companyId, year, month, employeeNames);
+
         await this.updateLastWriteTime();
 
         // Update local metadata cache (Instant UI update)
@@ -2448,29 +2531,52 @@ class DataManager {
             const client = await this.getClientById(companyId);
             if (!client) return { success: false, error: "Business not found" };
 
-            const sysConfig = await this.getSystemConfig();
+            // Calculate the total due and the chain breakdown
+            const billing = await this.calculateSubscriptionAmount(companyId);
+            const totalAmount = billing.amount;
 
-            // Calculate next expiry: 2nd of the next month (as seen in record-payment)
-            // or according to chargeDay from sysConfig. 
-            // התשלום הבא יתבצע באופן יחסי - ועלייך לעדכן את ה-SubscriptionDate לזמן הנוכחי
-            // Let's set it to the 2nd of the next month.
-            // Target is always the 1st of the NEXT month at 04:00
+            // 1. Mark all unpaid months in the chain as PAID
+            if (!client.paymentHistory) client.paymentHistory = [];
+            
+            // From breakdown.details we can extract the periods (e.g., "חוב 2/2026")
+            if (billing.breakdown && billing.breakdown.details) {
+                billing.breakdown.details.forEach(detail => {
+                    const match = detail.match(/חוב (\d+)\/(\d+)/);
+                    if (match) {
+                        const m = match[1];
+                        const y = match[2];
+                        client.paymentHistory.push({
+                            date: new Date().toLocaleDateString('he-IL'),
+                            fullDate: new Date().toISOString(),
+                            amount: 0, // Individual month amounts are summed in the total
+                            currency: 'ILS',
+                            period: `${y}-${String(m).padStart(2, '0')}`,
+                            method: 'Settlement',
+                            status: 'PAID',
+                            statusDisplayName: 'חודשי'
+                        });
+                    }
+                });
+            }
+
+            // 2. Set the NEW basis
+            const now = new Date();
             const nextExpiry = this.getNextBillingDate();
 
             client.subscriptionExpiry = nextExpiry.toISOString();
-            client.subscriptionDate = new Date().toISOString(); // Crucial for proration in next cycle
+            client.subscriptionDate = now.toISOString(); // Restart the proration clock
             client.billingFailed = false;
 
-            // Record in payment history
-            if (!client.paymentHistory) client.paymentHistory = [];
+            // Record the actual payment for the "Current" renewal
+            const currentPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
             client.paymentHistory.push({
                 date: new Date().toLocaleDateString('he-IL'),
                 fullDate: new Date().toISOString(),
-                amount: 0,
+                amount: totalAmount,
                 currency: 'ILS',
-                period: 1,
+                period: currentPeriod,
                 method: 'Manual Renewal',
-                description: 'חידוש מנוי ידני (ללא חוב)',
+                description: `חידוש מנוי (סילוק חובות + חודש שוטף). סה"כ: ₪${totalAmount}`,
                 status: 'PAID',
                 statusDisplayName: 'חודשי',
                 reference: 'MANUAL-RENEW'
@@ -2478,18 +2584,25 @@ class DataManager {
 
             await this.saveClients();
 
-            // Notify
-            const recipients = [client.email, 'tempusgeo@gmail.com'];
-            recipients.forEach(email => {
-                emailService.sendPaymentSuccessNotification(email, {
-                    businessName: client.businessName,
-                    amount: 0,
-                    activeEmployees: 0,
-                    newExpiry: nextExpiry.toLocaleDateString('he-IL')
-                }).catch(console.error);
-            });
+            // Report to GAS
+            if (totalAmount > 0) {
+                this.reportPaymentToGAS(totalAmount).catch(e => console.error(`[DataManager] GAS Report Failed:`, e.message));
+            }
 
-            return { success: true, newExpiry: nextExpiry.toLocaleDateString('he-IL') };
+            // Notify
+            if (emailService) {
+                const recipients = [client.email, 'tempusgeo@gmail.com'];
+                recipients.forEach(email => {
+                    emailService.sendPaymentSuccessNotification(email, {
+                        businessName: client.businessName,
+                        amount: totalAmount,
+                        activeEmployees: billing.breakdown.employeeCount || 0,
+                        newExpiry: nextExpiry.toLocaleDateString('he-IL')
+                    }).catch(console.error);
+                });
+            }
+
+            return { success: true, newExpiry: nextExpiry.toLocaleDateString('he-IL'), amount: totalAmount };
         } catch (e) {
             console.error('[DataManager] renewSubscription error:', e.message);
             return { success: false, error: e.message };
@@ -2619,6 +2732,7 @@ class DataManager {
         targetDate.setDate(1);
         targetDate.setHours(4, 0, 0, 0);
 
+        client.subscriptionDate = now.toISOString(); // Reset base on manual extension
         client.subscriptionExpiry = targetDate.toISOString();
 
         // Reset the billing baseline after a successful manual payment/settlement
@@ -2846,43 +2960,12 @@ class DataManager {
             }
 
             if (chargeRes.success) {
-                client.billingFailed = false;
-                this.logMaintenance('BILLING', `✅ Payment approved for ${client.businessName} (₪${amount})`);
+                this.logMaintenance('BILLING', `✅ Automated Payment approved for ${client.businessName} (₪${amount})`);
                 
-                this.reportPaymentToGAS(amount).catch(err => console.error(`[DataManager] GAS Report Failed:`, err.message));
-
-                if (!client.paymentHistory) client.paymentHistory = [];
-                client.paymentHistory.push({
-                    date: new Date().toLocaleDateString('he-IL'),
-                    fullDate: new Date().toISOString(),
-                    amount,
-                    currency: 'ILS',
-                    description: `${isManual ? 'חיוב והארכה ידנית' : 'חידוש מנוי אוטומטי'} - ${activeCount} עובדים`,
-                    method: isManual ? 'Manual-Admin' : 'Auto-Billing',
-                    status: 'PAID',
-                    statusDisplayName: 'שולם',
-                    reference: chargeRes.confirmationCode
-                });
+                // Use the shared renewal logic which is now the source of truth
+                await this.renewSubscription(client.id);
                 res.charged = true;
                 res.confirmCode = chargeRes.confirmationCode;
-
-                if (!isTest && (client.autoChargeEnabled || isManual) && globalAutoRenewal) {
-                    const nextExpiry = this.parseExpiryDate(expiry);
-                    // If far in the past, renew from TODAY instead of compounding legacy months
-                    if (expiry < now) nextExpiry.setTime(now.getTime());
-                    
-                    nextExpiry.setMonth(nextExpiry.getMonth() + 1);
-                    nextExpiry.setDate(1);
-                    nextExpiry.setHours(4, 0, 0, 0);
-
-                    client.subscriptionExpiry = nextExpiry.toISOString();
-                    client.subscriptionDate = (expiry < now ? now : expiry).toISOString();
-                    
-                    this.logMaintenance('RENEWAL', `✅ Subscription extended for ${client.businessName}. Next: ${nextExpiry.toLocaleDateString('he-IL')} 04:00`);
-                }
-
-                client.lastBilledEmployeeCount = activeCount;
-                await this.saveClients();
             } else {
                 client.billingFailed = true;
                 this.logMaintenance('BILLING', `❌ Payment rejected for ${client.businessName}: ${chargeRes.raw || 'Bank decline'}`);
