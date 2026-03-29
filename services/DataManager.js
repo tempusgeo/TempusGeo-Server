@@ -132,13 +132,20 @@ class DataManager {
             const localTime = await this.getLastWriteTime();
             console.log(`[Init] Local Data Timestamp: ${new Date(localTime).toISOString()}`);
 
-            // 3. Check GAS for Updates / Restore (Smart Sync)
-            // We always check GAS on startup to see if we are stale (e.g. reverted to old snapshot)
-            console.log(`[Init] Checking for cloud restore/sync... (Local: ${localTime})`);
-            const syncSuccess = await this.smartRestoreFromGAS(localTime);
-            if (!syncSuccess) {
-                console.warn("[Init] Cloud sync failed or skipped. Continuing with local data.");
-            }
+            // 3. Check GAS for Updates / Restore (Smart Sync) - BACKGROUNDED
+            console.log(`[Init] Starting background cloud restore/sync... (Local: ${localTime})`);
+            this.smartRestoreFromGAS(localTime)
+                .then(success => {
+                    if (success) {
+                        console.log("[Init] Background cloud sync completed successfully.");
+                        // Re-run orphan discovery and cache warmup after sync
+                        this.discoverAndReconcileOrphans();
+                        this.warmupCache();
+                    }
+                })
+                .catch(err => {
+                    console.error("[Init] Background cloud sync failed:", err.message);
+                });
 
             // 4. Discovery: Search for "Orphan" directories and reconcile them to clients.json
             await this.discoverAndReconcileOrphans();
@@ -149,10 +156,8 @@ class DataManager {
             // 6. Proactive Self-Healing: Salary Ranges
             this.selfHealSalaries();
 
-            // 7. Load All Companies into RAM (Warmup)
-            for (const client of CACHE.clients) {
-                await this.loadCompany(client.id);
-            }
+            // 7. Initial Load (Background)
+            this.warmupCache();
 
             // 6. Proactive Metadata Recovery: Sync missing history filters from GAS
             this.ensureAllBusinessesHaveMetadata().catch(err => {
@@ -528,6 +533,7 @@ class DataManager {
                 isOrphan: gasCompanies.has(client.id) && !client.exists,
                 activeEmployees,
                 expectedPayment,
+                debtAmount: await this.calculateDebtAmount(client.id),
                 autoChargeEnabled: !!client.autoChargeEnabled,
                 paymentHistory: client.paymentHistory || [],
                 paymentMethod: client.paymentMethod || null
@@ -613,31 +619,22 @@ class DataManager {
             const LastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
             const employeeCount = forcedEmployeeCount !== null ? forcedEmployeeCount : await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
 
-            const subscriptionDate = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : (client.subscriptionDate ? new Date(client.subscriptionDate) : new Date());
+            // OLD FORMULA restoration: SubscriptionDate is joinedAt or similar
+            const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
 
             let SubscriptionDaysInLastMonth = 0;
-            const now = new Date();
-            
-            // If expiry is in the past, we calculate from expiry to nextCycle
-            // If expiry is in the future, we calculate 0 (already paid)
-            if (subscriptionDate < nextCycle) {
-                const diffTime = Math.max(0, nextCycle - subscriptionDate);
-                SubscriptionDaysInLastMonth = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            if (subscriptionDate.getFullYear() === targetYear && subscriptionDate.getMonth() === targetMonth) {
+                SubscriptionDaysInLastMonth = Math.max(0, LastMonthDays - subscriptionDate.getDate());
+            } else if (subscriptionDate < new Date(targetYear, targetMonth, 1)) {
+                SubscriptionDaysInLastMonth = LastMonthDays;
             }
 
             if (SubscriptionDaysInLastMonth <= 0 || LastMonthDays === 0) {
-                return { 
-                    amount: 0, 
-                    breakdown: { 
-                        employeeCount, pricePerEmp, minPrice, LastMonthDays, SubscriptionDaysInLastMonth, 
-                        subscriptionDate: subscriptionDate.toISOString().split('T')[0],
-                        nextCycle: nextCycle.toISOString().split('T')[0]
-                    }
-                };
+                return { amount: 0, breakdown: { employeeCount, SubscriptionDaysInLastMonth } };
             }
 
+            // EXACT ZIP FORMULA
             const formulaBase = Math.max(minPrice, employeeCount * pricePerEmp);
-            // Prorate based on a standard 30-day month for simplicity or actual days in month
             const amount = Math.floor(formulaBase * (SubscriptionDaysInLastMonth / LastMonthDays));
 
             return {
@@ -649,13 +646,51 @@ class DataManager {
                     formulaBase,
                     LastMonthDays,
                     SubscriptionDaysInLastMonth,
-                    subscriptionDate: subscriptionDate.toISOString().split('T')[0],
-                    nextCycle: nextCycle.toISOString().split('T')[0]
+                    periodGoal: `${targetYear}-${(targetMonth + 1).toString().padStart(2, '0')}`
                 }
             };
         } catch (e) {
             console.error('[Billing] calculateSubscriptionAmount error:', e.message);
             return { amount: 0, breakdown: { error: e.message } };
+        }
+    }
+
+    async calculateDebtAmount(companyId) {
+        try {
+            const client = await this.getClientById(companyId);
+            if (!client) return 0;
+
+            const now = new Date();
+            const expiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
+            
+            // If not expired, no debt (assuming current month is prepaid or covered)
+            if (expiry >= now) return 0;
+
+            // Simple Debt Logic: Pro-rated cost from expiry date until today
+            const sysConfig = await this.getSystemConfig();
+            const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 50;
+            const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 5;
+
+            const employeeCount = await this.countUniqueActiveEmployees(companyId);
+            const formulaBase = Math.max(minPrice, employeeCount * pricePerEmp);
+
+            const diffTime = Math.max(0, now - expiry);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            // Debt is pro-rated by 30 days (standard month)
+            const debt = Math.floor(formulaBase * (diffDays / 30));
+            
+            return debt;
+        } catch (e) {
+            console.error('[Billing] calculateDebtAmount error:', e.message);
+            return 0;
+        }
+    }
+
+    async warmupCache() {
+        console.log("[DataManager] Warming up RAM cache for all companies...");
+        for (const client of CACHE.clients) {
+            this.loadCompany(client.id).catch(() => {});
         }
     }
 
