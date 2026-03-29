@@ -961,6 +961,20 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
     };
 }
 
+router.post('/super-admin/adminDeleteBusiness', async (req, res) => {
+    try {
+        const { password, companyId } = req.body;
+        if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
+        if (!companyId) return res.status(400).json({ success: false, error: "Missing companyId" });
+
+        await dataManager.deleteBusiness(companyId);
+        res.json({ success: true, message: "Business deleted successfully" });
+    } catch (e) {
+        console.error('[SuperAdmin] adminDeleteBusiness error:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 router.post('/super-admin/record-payment', async (req, res) => {
     try {
         const { password, ...params } = req.body;
