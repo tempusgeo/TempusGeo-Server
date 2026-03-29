@@ -899,8 +899,29 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
     let targetDate;
     
     const isDebtOnly = actionType === 'debt_only' || actionType === 'DEBT_ONLY';
+    const isRenewal = actionType === 'RENEW' || actionType === 'renewal';
     let description = "";
     let statusDisplayName = "";
+
+    if (isRenewal) {
+        // Use the unified settlement logic
+        const result = await dataManager.renewSubscription(targetCompanyId);
+        if (!result.success) return result;
+
+        // Update the last payment record with the reference if CC was charged here
+        if (chargeCC && client.paymentHistory.length > 0) {
+            const lastIdx = client.paymentHistory.length - 1;
+            client.paymentHistory[lastIdx].reference = finalReference;
+            client.paymentHistory[lastIdx].method = 'Credit Card (Saved)';
+            await dataManager.saveClients();
+        }
+        
+        return {
+            success: true,
+            newExpiry: result.newExpiry,
+            message: 'המנוי חודש והחובות הוסדרו בהצלחה'
+        };
+    }
 
     if (isDebtOnly) {
         targetDate = currentExpiry < now ? new Date() : new Date(currentExpiry);
