@@ -194,12 +194,20 @@ router.post('/dispatch', async (req, res) => {
                         
                         const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
                         result.maxShiftHours = sysConfig.maxShiftHours || 12;
+                        result.autoRenew = fullConfig.autoRenew === true;
 
                         // Fix: get latest employees list from dataManager directly
                         result.allEmployees = await dataManager.getEmployees(result.companyId).catch(() => []);
                         result.availableHolidays = await dataManager.getAvailableHolidays(result.companyId).catch(() => []);
                         result.dashboard = await dataManager.getDashboard(result.companyId).catch(() => []);
-                        result.config.expectedPayment = await dataManager.calculateSubscriptionAmount(result.companyId).catch(() => ({ amount: 0, breakdown: {} }));
+                        
+                        // Fix for UI: Admin panel expects activeEmployees and expectedPayment at the root on login
+                        const activeEmps = await dataManager.countUniqueActiveEmployees(result.companyId).catch(() => 0);
+                        const expectedSub = await dataManager.calculateSubscriptionAmount(result.companyId).catch(() => ({ amount: 0, breakdown: {} }));
+                        
+                        result.activeEmployees = activeEmps;
+                        result.expectedPayment = expectedSub.amount;
+                        result.config.expectedPayment = expectedSub; // Keep for backward compatibility fallback
                     } catch (enrichErr) {
                         console.error('[adminLogin] Enrich error:', enrichErr.message);
                     }
