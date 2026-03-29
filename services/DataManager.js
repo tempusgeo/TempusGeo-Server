@@ -21,7 +21,11 @@ const HOT_STORAGE_MONTHS = 2; // Keep current + last month
 
 class DataManager {
     constructor() {
-        this.dataDir = path.isAbsolute(config.DATA_DIR) ? config.DATA_DIR : path.resolve(__dirname, '..', config.DATA_DIR);
+        // Ensure dataDir is absolute and well-defined
+        const rawDir = config.DATA_DIR || './data';
+        this.dataDir = path.isAbsolute(rawDir) ? rawDir : path.resolve(__dirname, '..', rawDir);
+        
+        console.log(`[DataManager] Data Directory initialized at: ${this.dataDir}`);
         this.clientsFile = path.join(this.dataDir, 'clients.json');
         this.metadataFile = path.join(this.dataDir, 'metadata.json');
         this.maintenanceLogs = {
@@ -566,15 +570,24 @@ class DataManager {
             }
 
             const shifts = await this.getShifts(companyId, targetYear, targetMonth);
-            const employees = Object.keys(shifts);
-
-            employees.forEach(emp => {
-                const empShifts = shifts[emp] || [];
-                if (empShifts.length > 0) {
-                    // Just having at least one shift in this month is enough
-                    activeSet.add(emp);
-                }
-            });
+            
+            // Handle both legacy array format and object format
+            if (Array.isArray(shifts)) {
+                // If it's a flat array of shifts, we need to count unique employee names/IDs
+                shifts.forEach(s => {
+                    const empName = s.workerName || s.name || s.userId;
+                    if (empName) activeSet.add(empName);
+                });
+            } else if (typeof shifts === 'object' && shifts !== null) {
+                // Modern format: { "Employee Name": [shifts...] }
+                const employees = Object.keys(shifts);
+                employees.forEach(emp => {
+                    const empShifts = shifts[emp] || [];
+                    if (Array.isArray(empShifts) && empShifts.length > 0) {
+                        activeSet.add(emp);
+                    }
+                });
+            }
 
             this.logMaintenance('DEBUG', `[Billing] Counted ${activeSet.size} active employees for ${companyId} in ${targetYear}-${targetMonth}.`);
             return activeSet.size;
@@ -1352,6 +1365,15 @@ class DataManager {
         
         // Sort items by name for consistent UI
         stats.items.sort((a, b) => a.name.localeCompare(b.name));
+        
+        // Add human-readable summary
+        if (stats.total < 1024) {
+            stats.totalFormatted = stats.total + " Bytes";
+        } else if (stats.total < 1024 * 1024) {
+            stats.totalFormatted = (stats.total / 1024).toFixed(1) + " KB";
+        } else {
+            stats.totalFormatted = (stats.total / (1024 * 1024)).toFixed(1) + " MB";
+        }
         
         return stats;
     }
