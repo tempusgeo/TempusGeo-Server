@@ -127,6 +127,8 @@ router.post('/dispatch', async (req, res) => {
                 const client = await dataManager.getClientById(companyId);
                 const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
                 
+                const billing = await dataManager.calculateSubscriptionAmount(companyId).catch(() => ({ amount: 0, breakdown: {} }));
+
                 return res.json({ 
                     success: true, 
                     config: {
@@ -136,7 +138,8 @@ router.post('/dispatch', async (req, res) => {
                         paymentMethod: client?.paymentMethod || null,
                         autoChargeEnabled: !!client?.autoChargeEnabled,
                         expiryDate: client?.subscriptionExpiry || null,
-                        paymentHistory: client?.paymentHistory || []
+                        paymentHistory: client?.paymentHistory || [],
+                        expectedPayment: billing
                     }
                 });
             }
@@ -196,6 +199,7 @@ router.post('/dispatch', async (req, res) => {
                         result.allEmployees = await dataManager.getEmployees(result.companyId).catch(() => []);
                         result.availableHolidays = await dataManager.getAvailableHolidays(result.companyId).catch(() => []);
                         result.dashboard = await dataManager.getDashboard(result.companyId).catch(() => []);
+                        result.config.expectedPayment = await dataManager.calculateSubscriptionAmount(result.companyId).catch(() => ({ amount: 0, breakdown: {} }));
                     } catch (enrichErr) {
                         console.error('[adminLogin] Enrich error:', enrichErr.message);
                     }
