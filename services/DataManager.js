@@ -537,6 +537,8 @@ class DataManager {
                 isOrphan: gasCompanies.has(client.id) && !client.exists,
                 activeEmployees,
                 expectedPayment,
+                subscriptionDate: client.subscriptionDate || client.joinedAt || null,
+                joinedAt: client.joinedAt || null,
                 debtAmount: await this.calculateDebtAmount(client.id),
                 autoChargeEnabled: !!client.autoChargeEnabled,
                 paymentHistory: client.paymentHistory || [],
