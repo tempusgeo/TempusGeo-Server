@@ -704,25 +704,50 @@ class DataManager {
             
             const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
             
+            // Base formula never falls to 0! Minimum base subscription applies even with 0 workers
+            const currentFormulaBase = Math.max(minPrice, workers * pricePerEmp);
+            
             let activeDays = 0;
+            const monthStart = new Date(targetYear, targetMonth, 1);
+            
             if (subscriptionDate.getFullYear() === targetYear && subscriptionDate.getMonth() === targetMonth) {
-                // Pro-rata based on registration/renewal middle of month
+                // Pro-rata: subscription started mid-way through this month
                 activeDays = Math.max(0, lastMonthDays - subscriptionDate.getDate() + 1);
-            } else if (subscriptionDate < new Date(targetYear, targetMonth, 1)) {
+            } else if (subscriptionDate < monthStart) {
+                // Full month: subscription started before this month began
                 activeDays = lastMonthDays;
+            } else {
+                // subscriptionDate is in the future — corrupted data (e.g. fields were swapped during an old bug).
+                // Fall back to joinedAt for correct pro-rata calculation.
+                const joinDate = client.joinedAt ? new Date(client.joinedAt) : monthStart;
+                if (joinDate.getFullYear() === targetYear && joinDate.getMonth() === targetMonth) {
+                    // Joined this month — charge pro-rata from join date
+                    activeDays = Math.max(0, lastMonthDays - joinDate.getDate() + 1);
+                } else {
+                    // Joined before this month — full month
+                    activeDays = lastMonthDays;
+                }
             }
-
-            const currentFormulaBase = workers > 0 ? Math.max(minPrice, workers * pricePerEmp) : 0;
+            
             const currentAmount = Math.floor(currentFormulaBase * (activeDays / lastMonthDays));
             
-            totalDue += currentAmount;
-            if (workers === 0) {
-                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪0 (אין פעילות עובדים)`);
-            } else if (activeDays < lastMonthDays) {
-                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (יחסי: ${activeDays}/${lastMonthDays} ימים במערכת)`);
+            // Advance payment for the NEXT full month (מראש)
+            const advanceAmount = currentFormulaBase;
+            
+            totalDue += (currentAmount + advanceAmount);
+            
+            // Current month (pro-rata/full)
+            if (activeDays < lastMonthDays) {
+                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (יחסי: ${activeDays}/${lastMonthDays} ימים במערכת, ${workers} עובדים)`);
             } else {
-                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (חודש מלא)`);
+                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (חודש מלא, ${workers} עובדים)`);
             }
+            
+            // Next month advance (מראש)
+            let nextM = targetMonth + 2;
+            let nextY = targetYear;
+            if (nextM > 12) { nextM = 1; nextY++; }
+            explanations.push(`מראש ${nextM}/${nextY}: ₪${advanceAmount} (חודש מלא, מתחדש)`);
 
             return {
                 amount: totalDue,
