@@ -673,14 +673,12 @@ class DataManager {
             const explanations = [];
 
             // 1. Unpaid Past Months (The Chain)
-            // We iterate from JoinedAt/SubscriptionDate until last month
             let checkDate = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
             const now = new Date();
             
-            // Advance in monthly steps
             while (checkDate < new Date(now.getFullYear(), now.getMonth(), 1)) {
                 const y = checkDate.getFullYear();
-                const m = checkDate.getMonth() + 1; // 1-indexed
+                const m = checkDate.getMonth() + 1;
 
                 if (!(await this.isMonthPaid(companyId, y, m))) {
                     const workers = await this.countUniqueActiveEmployees(companyId, y, m);
@@ -688,57 +686,41 @@ class DataManager {
                         const monthBase = Math.max(minPrice, workers * pricePerEmp);
                         totalDue += monthBase;
                         explanations.push(`חוב ${m}/${y}: ₪${monthBase} (${workers} עובדים)`);
-                    } else {
-                        explanations.push(`שוטף ${m}/${y}: ₪0 (אין פעילות עובדים)`);
                     }
                 }
-                
                 checkDate.setMonth(checkDate.getMonth() + 1);
             }
 
-            // 2. Current Month (Live Calculation / Pro-rata)
+            // 2. Current Month (Pro-rata anchored to joinedAt — NEVER to new Date())
             const targetYear = now.getFullYear();
             const targetMonth = now.getMonth(); // 0-indexed
             const lastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
             const workers = await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
-            
-            const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
-            
-            // Base formula never falls to 0! Minimum base subscription applies even with 0 workers
             const currentFormulaBase = Math.max(minPrice, workers * pricePerEmp);
-            
-            let activeDays = 0;
+
+            // Anchor date: prefer joinedAt as the immutable source of truth.
+            // subscriptionDate can be corrupted by renewals — only use it if it
+            // makes sense (i.e. it is within the current month and before today).
+            const joinedAt = client.joinedAt ? new Date(client.joinedAt) : null;
+            const subDate = client.subscriptionDate ? new Date(client.subscriptionDate) : null;
             const monthStart = new Date(targetYear, targetMonth, 1);
-            
-            if (subscriptionDate.getFullYear() === targetYear && subscriptionDate.getMonth() === targetMonth) {
-                // Pro-rata: subscription started mid-way through this month
-                activeDays = Math.max(0, lastMonthDays - subscriptionDate.getDate() + 1);
-            } else if (subscriptionDate < monthStart) {
-                // Full month: subscription started before this month began
+
+            // Determine the actual start date for this billing period:
+            // Use joinedAt if it falls in this month (new customer).
+            // Otherwise charge the full month.
+            let activeDays;
+            if (joinedAt && joinedAt.getFullYear() === targetYear && joinedAt.getMonth() === targetMonth) {
+                // New customer — pro-rata from join day to end of month
+                activeDays = Math.max(0, lastMonthDays - joinedAt.getDate() + 1);
+                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${Math.floor(currentFormulaBase * (activeDays / lastMonthDays))} (יחסי: ${activeDays}/${lastMonthDays} ימים, ${workers} עובדים)`);
+            } else {
+                // Existing customer — full month
                 activeDays = lastMonthDays;
-            } else {
-                // subscriptionDate is in the future — corrupted data (e.g. fields were swapped during an old bug).
-                // Fall back to joinedAt for correct pro-rata calculation.
-                const joinDate = client.joinedAt ? new Date(client.joinedAt) : monthStart;
-                if (joinDate.getFullYear() === targetYear && joinDate.getMonth() === targetMonth) {
-                    // Joined this month — charge pro-rata from join date
-                    activeDays = Math.max(0, lastMonthDays - joinDate.getDate() + 1);
-                } else {
-                    // Joined before this month — full month
-                    activeDays = lastMonthDays;
-                }
+                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentFormulaBase} (חודש מלא, ${workers} עובדים)`);
             }
-            
+
             const currentAmount = Math.floor(currentFormulaBase * (activeDays / lastMonthDays));
-            
             totalDue += currentAmount;
-            
-            // Current month (pro-rata/full)
-            if (activeDays < lastMonthDays) {
-                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (יחסי: ${activeDays}/${lastMonthDays} ימים במערכת, ${workers} עובדים)`);
-            } else {
-                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (חודש מלא, ${workers} עובדים)`);
-            }
 
             return {
                 amount: totalDue,
@@ -2852,26 +2834,200 @@ class DataManager {
         return { success: true, sent, skip, errors };
     }
 
-    async checkSubscriptions(isManual = false) {
+    /**
+     * Determines current Israel time using Intl API (UTC-proof).
+     * Returns { day, month, year, hour, minute } in Israel timezone.
+     */
+    getIsraelTime() {
         const now = new Date();
-        const results = { expired: 0, valid: 0, charged: 0, failures: [] };
-        const sysConfig = await this.getSystemConfig();
+        const il = new Intl.DateTimeFormat('he-IL', {
+            timeZone: 'Asia/Jerusalem',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false
+        }).formatToParts(now);
+        const p = {};
+        il.forEach(({ type, value }) => { if (type !== 'literal') p[type] = parseInt(value, 10); });
+        return p; // { day, month, year, hour, minute }
+    }
 
-        this.logMaintenance('BILLING', `${isManual ? 'Manual' : 'Automated'} per-client subscription and renewal check started. (Hourly Execution)`);
+    /**
+     * processAllSubscriptions — THE single source of truth for all billing logic.
+     * Called by: (a) Background Worker (hourly) and (b) Admin Dashboard "Run Scan" button.
+     *
+     * Logic (Israel time):
+     *   - If today is the 1st of the month AND Israel hour >= 04:00:
+     *     → For each client with autoChargeEnabled=true that has NOT been charged yet this month:
+     *       Charge via Tranzila → on success: extend expiry + log payment.
+     *     → For clients without autoChargeEnabled: send expiry/block emails.
+     *   - Otherwise (any other day or before 04:00 on the 1st):
+     *     → Only send warning emails to clients nearing expiry (no charges).
+     */
+    async processAllSubscriptions() {
+        const il = this.getIsraelTime();
+        const results = { charged: 0, warned: 0, failures: [], skipped: 0 };
+        const sysConfig = await this.getSystemConfig();
+        const isBillingDay = (il.day === 1 && il.hour >= 4);
+
+        this.logMaintenance('BILLING',
+            isBillingDay
+                ? `🔴 BILLING DAY: Running full charge cycle (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2,'0')})`
+                : `🟡 Scan-only: Not billing day yet (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2,'0')})`
+        );
+
+        const currentPeriodKey = `${il.year}-${String(il.month).padStart(2, '0')}`;
 
         for (const client of CACHE.clients) {
             try {
-                const res = await this.processSingleClientSubscription(client, isManual, sysConfig, now);
-                if (res.charged) results.charged++;
-                if (res.expired) results.expired++;
-                if (res.valid) results.valid++;
-                if (res.failure) results.failures.push(res.failure.error);
+                const expiry = this.parseExpiryDate(client.subscriptionExpiry);
+                const expiryMs = expiry.getTime();
+                const nowMs = Date.now();
+                const hoursLeft = (expiryMs - nowMs) / (1000 * 60 * 60);
+                const noticeDays = parseInt(sysConfig.subscriptionExpiryNotice) || 7;
+
+                // --- BILLING DAY: Charge clients that are eligible ---
+                if (isBillingDay && client.autoChargeEnabled && client.paymentMethod?.token) {
+                    // Check if already charged this month (idempotency guard)
+                    const alreadyCharged = (client.paymentHistory || []).some(p =>
+                        (p.status === 'PAID' || p.status === 'SUCCESS') &&
+                        (p.period === currentPeriodKey || p.fullDate?.startsWith(new Date(il.year, il.month - 1, 1).toISOString().slice(0, 7)))
+                    );
+
+                    if (alreadyCharged) {
+                        results.skipped++;
+                        this.logMaintenance('BILLING', `⏭️ Already charged this month: ${client.businessName}`);
+                        continue;
+                    }
+
+                    // Execute charge
+                    const billing = await this.calculateSubscriptionAmount(client.id);
+                    const amount = billing.amount;
+
+                    if (amount < 1) {
+                        results.skipped++;
+                        continue;
+                    }
+
+                    const pMethod = this.normalizePaymentMethod(client.paymentMethod || {});
+                    const mm = String(pMethod.expMonth || pMethod.expmonth || '01').padStart(2, '0').slice(-2);
+                    const yy = String(pMethod.expYear || pMethod.expyear || '26').slice(-2);
+                    const bizConfig = await this.getCompanyConfig(client.id);
+                    const invoiceName = bizConfig.invoiceDetails || client.invoiceDetails || client.businessName;
+                    const activeCount = billing.breakdown?.employeeCount || 0;
+                    const appName = sysConfig.appName || 'TempusGeo';
+                    const pdesc = activeCount === 0 ? `מנוי ${appName}` : `${appName} - ${activeCount} עובדים`;
+
+                    this.logMaintenance('BILLING', `🔄 Charging ${client.businessName} ₪${amount}`);
+
+                    const chargeRes = await tranzilaService.chargeToken({
+                        supplier: sysConfig.tranzilaTerminal,
+                        TranzilaPW: sysConfig.tranzilaPass,
+                        TranzilaTK: pMethod.token,
+                        sum: amount,
+                        currency: 1,
+                        pdesc,
+                        expmonth: mm,
+                        expyear: yy,
+                        myid: pMethod.cardHolderId || pMethod.myid || '',
+                        company: invoiceName,
+                        email: client.email,
+                        contact: client.businessName || '',
+                        mycvv: pMethod.cvv || pMethod.mycvv || ''
+                    });
+
+                    if (chargeRes.success) {
+                        // Extend expiry by 1 month from current expiry (or from now if expired)
+                        const baseExpiry = (expiryMs < nowMs) ? new Date() : expiry;
+                        const newExpiry = new Date(baseExpiry.getFullYear(), baseExpiry.getMonth() + 1, 1, 4, 0, 0, 0);
+                        client.subscriptionExpiry = newExpiry.toISOString();
+                        client.billingFailed = false;
+
+                        if (!client.paymentHistory) client.paymentHistory = [];
+                        client.paymentHistory.push({
+                            date: new Date().toLocaleDateString('he-IL'),
+                            fullDate: new Date().toISOString(),
+                            amount,
+                            currency: 'ILS',
+                            period: currentPeriodKey,
+                            method: 'Auto-Charge (Tranzila)',
+                            description: `חיוב אוטומטי חודשי - ${currentPeriodKey}`,
+                            status: 'PAID',
+                            statusDisplayName: 'שולם אוטומטית',
+                            reference: chargeRes.confirmationCode || 'AUTO'
+                        });
+
+                        await this.saveClients();
+                        this.reportPaymentToGAS(amount).catch(console.error);
+                        this.logMaintenance('BILLING', `✅ Charged ${client.businessName} ₪${amount} — new expiry: ${newExpiry.toLocaleDateString('he-IL')}`);
+                        results.charged++;
+
+                        // Email success
+                        emailService.sendPaymentSuccessNotification(client.email, {
+                            businessName: client.businessName,
+                            amount,
+                            newExpiry: newExpiry.toLocaleDateString('he-IL')
+                        }).catch(console.error);
+
+                    } else {
+                        client.billingFailed = true;
+                        await this.saveClients();
+                        this.logMaintenance('BILLING', `❌ Charge FAILED for ${client.businessName}: ${chargeRes.raw}`);
+                        results.failures.push({ name: client.businessName, error: chargeRes.raw });
+
+                        emailService.sendPaymentFailedNotification(client.email, {
+                            businessName: client.businessName,
+                            amount,
+                            error: chargeRes.raw
+                        }).catch(console.error);
+                    }
+
+                } else if (isBillingDay && !client.autoChargeEnabled) {
+                    // Billing day but no auto-charge — send expiry notification if expired
+                    if (hoursLeft <= 0) {
+                        const bizConfig = await this.getCompanyConfig(client.id);
+                        await emailService.sendGracePeriodAlert(
+                            client.email, client.businessName, client.subscriptionExpiry,
+                            bizConfig.logoUrl, (await this.calculateSubscriptionAmount(client.id)).amount
+                        ).catch(console.error);
+                        results.warned++;
+                        this.logMaintenance('BILLING', `📧 Grace period email sent to ${client.businessName}`);
+                    }
+
+                } else if (!isBillingDay) {
+                    // Non-billing day — only send advance warning emails
+                    if (!client.autoChargeEnabled && hoursLeft > 0 && hoursLeft <= (noticeDays * 24)) {
+                        const reminderKey = `warn-${client.id}-${il.year}-${il.month}`;
+                        if (client._lastWarningKey !== reminderKey) {
+                            client._lastWarningKey = reminderKey;
+                            const bizConfig = await this.getCompanyConfig(client.id);
+                            await emailService.sendSubscriptionAlert(
+                                client.email, client.businessName, hoursLeft,
+                                client.subscriptionExpiry, bizConfig.logoUrl,
+                                (await this.calculateSubscriptionAmount(client.id)).amount
+                            ).catch(console.error);
+                            await this.saveClients();
+                            results.warned++;
+                            this.logMaintenance('BILLING', `⚠️ Expiry warning sent to ${client.businessName} (${Math.floor(hoursLeft/24)} days left)`);
+                        }
+                    }
+                }
+
             } catch (err) {
-                this.logMaintenance('ERROR', `Sub-check failed for ${client.id}: ${err.message}`);
-                results.failures.push(err.message);
+                this.logMaintenance('ERROR', `processAllSubscriptions failed for ${client.id}: ${err.message}`);
+                results.failures.push({ name: client.id, error: err.message });
             }
         }
+
+        this.logMaintenance('BILLING',
+            `Scan complete: ${results.charged} charged, ${results.warned} warned, ${results.skipped} skipped, ${results.failures.length} failures`);
         return results;
+    }
+
+    /**
+     * Legacy checkSubscriptions — kept for backward compat with the hourly setInterval.
+     * Now delegates to processAllSubscriptions().
+     */
+    async checkSubscriptions(isManual = false) {
+        return this.processAllSubscriptions();
     }
 
     /**
@@ -2883,27 +3039,13 @@ class DataManager {
     }
 
     /**
-     * Triggers a real charge and renewal for a specific client (Manual Action).
+     * chargeClientManually — REMOVED as a standalone action.
+     * Use processAllSubscriptions() for all billing operations.
+     * Kept as a thin wrapper for backward compatibility only.
      */
     async chargeClientManually(clientId, isTest = false) {
-        const client = CACHE.clients.find(c => c.id === clientId);
-        if (!client) throw new Error(`Business ID ${clientId} not found`);
- 
-        const sysConfig = await this.getSystemConfig();
-        const now = new Date();
- 
-        // Process with isManual=true to bypass the "1 day before" imminent check
-        const res = await this.processSingleClientSubscription(client, true, sysConfig, now, isTest);
-        
-        if (res.error) {
-            return { success: false, message: res.error, code: res.code };
-        }
-        
-        return { 
-            success: true, 
-            message: isTest ? "חיוב בדיקה (1 ש\"ח) בוצע בהצלחה" : `חיוב וחידוש המנוי של ${client.businessName} בוצעו בהצלחה`,
-            confirmationCode: res.confirmCode
-        };
+        // Redirect to the unified scan which is date-aware and idempotency-safe
+        return this.processAllSubscriptions();
     }
 
     /**
@@ -2958,6 +3100,8 @@ class DataManager {
                 // Priority for Invoice Name: bizConfig (from settings) > client.invoiceDetails (from card save) > businessName
                 const invoiceName = bizConfig.invoiceDetails || client.invoiceDetails || client.businessName;
 
+                // CRITICAL: All required fields must be sent to Tranzila.
+                // mycvv is mandatory — without it Tranzila returns error 004 (CVV required).
                 chargeRes = await tranzilaService.chargeToken({
                     supplier: sysConfig.tranzilaTerminal,
                     TranzilaPW: sysConfig.tranzilaPass,
@@ -2967,11 +3111,11 @@ class DataManager {
                     TranzilaTK: pMethod.token,
                     expmonth: mm,
                     expyear: yy,
-                    myid: pMethod.cardHolderId || '', 
-                    company: invoiceName, 
+                    myid: pMethod.cardHolderId || pMethod.myid || '',
+                    company: invoiceName,
                     email: client.email,
-                    contact: '', 
-                    mycvv: pMethod.cvv
+                    contact: client.businessName || '',
+                    mycvv: pMethod.cvv || pMethod.mycvv || ''
                 });
             }
 
