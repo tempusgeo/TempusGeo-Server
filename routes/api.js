@@ -1978,10 +1978,12 @@ router.post('/maintenance/auto-checkout', maintenanceAuth, async (req, res) => {
 
 router.post('/maintenance/subscription-check', maintenanceAuth, async (req, res) => {
     try {
-        dataManager.logMaintenance('BILLING', 'Admin triggered manual Subscription/Billing/Renewal Check');
-        dataManager.logMaintenance('RENEWAL', 'Admin triggered manual Subscription/Billing/Renewal Check');
-        const results = await dataManager.checkSubscriptions(true);
-        res.json({ success: true, results, logs: dataManager.maintenanceLogs.ALL });
+        dataManager.logMaintenance('BILLING', 'Admin triggered manual subscription scan (date-faithful, Israel time)');
+        // processAllSubscriptions is the single source of truth:
+        // - On billing day (1st of month >= 04:00 IL): charges + extends expiry
+        // - On any other day: sends expiry warnings only (no charges)
+        const results = await dataManager.processAllSubscriptions();
+        res.json({ success: true, results, logs: dataManager.maintenanceLogs.BILLING });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
