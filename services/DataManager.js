@@ -731,10 +731,7 @@ class DataManager {
             
             const currentAmount = Math.floor(currentFormulaBase * (activeDays / lastMonthDays));
             
-            // Advance payment for the NEXT full month (מראש)
-            const advanceAmount = currentFormulaBase;
-            
-            totalDue += (currentAmount + advanceAmount);
+            totalDue += currentAmount;
             
             // Current month (pro-rata/full)
             if (activeDays < lastMonthDays) {
@@ -742,12 +739,6 @@ class DataManager {
             } else {
                 explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentAmount} (חודש מלא, ${workers} עובדים)`);
             }
-            
-            // Next month advance (מראש)
-            let nextM = targetMonth + 2;
-            let nextY = targetYear;
-            if (nextM > 12) { nextM = 1; nextY++; }
-            explanations.push(`מראש ${nextM}/${nextY}: ₪${advanceAmount} (חודש מלא, מתחדש)`);
 
             return {
                 amount: totalDue,
