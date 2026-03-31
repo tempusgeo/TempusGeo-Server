@@ -260,8 +260,7 @@ router.post('/dispatch', async (req, res) => {
                     success: true,
                     active,
                     adminWhatsapp: sysConfig.adminWhatsapp || '',
-                    supportEnabled: sysConfig.supportEnabled === true,
-                    plans: sysConfig.tranzilaPlans || []
+                    supportEnabled: sysConfig.supportEnabled === true
                 });
             }
 
@@ -1735,23 +1734,8 @@ router.post('/payment/process', async (req, res) => {
             return res.status(500).json({ success: false, error: 'Payment Gateway not configured - tranzilaTerminal or tranzilaPass missing in system config' });
         }
 
-        // 2. Resolve plan from system config (plans stored as tranzilaPlans)
-        const allPlans = systemConfig.tranzilaPlans || systemConfig.plans || [];
-        const selectedPlan = allPlans.find(p => String(p.id) === String(planId));
-
-        let resolvedPrice = price;
-
-        if (!resolvedPrice) {
-            if (isJ5) {
-                resolvedPrice = '0.00';
-            } else if (selectedPlan) {
-                resolvedPrice = selectedPlan.price?.toString() || '0';
-                console.log(`[Payment] Resolved price for plan ${planId}: ${resolvedPrice}`);
-            } else {
-                console.warn(`[Payment] Plan ${planId} not found in system config, using price: 0`);
-                resolvedPrice = '0';
-            }
-        }
+        let resolvedPrice = price || '0';
+        console.log(`[Payment] Using price: ${resolvedPrice}`);
 
         // 3. Prepare Payload for JetServer Proxy EXACTLY like the simulator
         let mm, yy;
