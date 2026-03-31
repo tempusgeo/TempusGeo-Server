@@ -171,13 +171,13 @@ class DataManager {
             // 5. Start Automatic Maintenance Tasks
             setInterval(async () => {
                 const sysConfig = await this.getSystemConfig();
-                const freq = parseInt(sysConfig.shiftCheckFrequency) || 0.5; // default 0.5 min = 30s
+                const freq = parseFloat(sysConfig.shiftCheckFrequency) || 30; // default 30s
                 
                 // If freq is 0, disable auto-check
                 if (freq <= 0) return;
 
                 const now = Date.now();
-                if (!this._lastAutoCheckout || (now - this._lastAutoCheckout) >= (freq * 60 * 1000)) {
+                if (!this._lastAutoCheckout || (now - this._lastAutoCheckout) >= (freq * 1000)) {
                     this._lastAutoCheckout = now;
                     this.performAutoCheckout().catch(e => console.error(`[Auto-Checkout] Failed:`, e.message));
                 }
