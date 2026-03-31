@@ -13,7 +13,6 @@ const CACHE = {
     clients: [], // Array of client objects
     companies: {},
     historicalData: {}, // Cache for cold data from GAS: { companyId: { 'year-month': data } }
-    systemConfig: null
 };
 
 // HOT STORAGE CONFIG
@@ -157,7 +156,8 @@ class DataManager {
             // 5. Cleanup: If __SYSTEM__ somehow slipped into clients, remove it
             CACHE.clients = CACHE.clients.filter(c => c.id !== '__SYSTEM__');
 
-            // 6. Proactive Self-Healing: Salary Ranges
+            // 6. Load System Configuration into memory
+            await this.getSystemConfig();
             this.selfHealSalaries();
 
             // 7. Initial Load (Background)
@@ -257,7 +257,7 @@ class DataManager {
         if (gasUrl) {
             // Fix: Use a proper password (from env or default) to ensure GAS accepts the archive
             const adminPass = process.env.SUPER_ADMIN_PASS || '123456';
-            syncManager.enqueue('CLIENTS', CACHE.clients, { companyId: '__SYSTEM__', gasUrl, password: adminPass });
+            syncManager.enqueue('CLIENTS', CACHE.clients, { companyId: '__SYSTEM_CLIENTS__', gasUrl, password: adminPass });
         }
     }
 
@@ -376,9 +376,9 @@ class DataManager {
 
                         CACHE.clients.push(newClient);
                         foundNew = true;
-                        console.log(`[Orphan-Discovery] ג… Successfully reconciled: ${newClient.businessName}`);
+                        console.log(`[Orphan-Discovery] גœ… Successfully reconciled: ${newClient.businessName}`);
                     } catch (err) {
-                        console.error(`[Orphan-Discovery] ג Failed to reconcile ${companyId}:`, err.message);
+                        console.error(`[Orphan-Discovery] ג Œ Failed to reconcile ${companyId}:`, err.message);
                     }
                 }
             }
@@ -867,8 +867,6 @@ class DataManager {
     getSystemConfigSync() {
         const configFile = path.join(this.dataDir, 'system_config.json');
         try {
-            // Using require or synchronous read is tricky in async environment,
-            // but for system config it's small. Let's use a cached version.
             if (this._systemConfig) return this._systemConfig;
             
             const fsSync = require('fs');
@@ -876,38 +874,51 @@ class DataManager {
             const data = fsSync.readFileSync(configFile, 'utf8');
             const parsed = JSON.parse(data);
 
+            // Defensive check: If the file was corrupted with a clients array, ignore it
+            if (Array.isArray(parsed)) {
+                console.error('[DataManager] CRITICAL: system_config.json is corrupted (contains an array). Ignoring.');
+                return {};
+            }
+
             const allowedKeys = [
                 'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
                 'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
                 'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
                 'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
                 'autoBillingEnabled', 'autoRenewalEnabled', 'freeTrialDays',
-                'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess'
+                'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess',
+                'jetServerUrl', 'JETSERVER_PROXY_URL'
             ];
             const cleaned = {};
             allowedKeys.forEach(k => { if (parsed[k] !== undefined) cleaned[k] = parsed[k]; });
             this._systemConfig = cleaned;
             return cleaned;
         } catch (e) {
+            console.error('[DataManager] Error loading system config:', e.message);
             return {};
         }
     }
 
     async updateSystemConfig(newConfig) {
+        // Validation: Never allow saving an array to system config
+        if (Array.isArray(newConfig)) {
+            console.error('[DataManager] Refusing to update system config with an array.');
+            return this.getSystemConfig();
+        }
+
         const current = await this.getSystemConfig();
         
-        // --- CLEAN TRASH / GARBAGE COLLECTION ---
-        // Explicit whitelist of allowed system configuration keys
         const allowedKeys = [
             'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
             'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
             'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
             'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
             'autoBillingEnabled', 'autoRenewalEnabled', 'freeTrialDays',
-            'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess'
+            'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess',
+            'jetServerUrl', 'JETSERVER_PROXY_URL'
         ];
 
-        // 1. Filter existing config to keep only allowed keys (Cleaning Trash)
+        // 1. Filter existing config to keep only allowed keys
         const cleanedCurrent = {};
         allowedKeys.forEach(key => {
             if (current[key] !== undefined) cleanedCurrent[key] = current[key];
@@ -941,7 +952,7 @@ class DataManager {
             try {
                 console.log('[DataManager] Syncing System Config to GAS...');
                 await syncManager.syncNow('CONFIG', updated, { 
-                    companyId: '__SYSTEM__', 
+                    companyId: '__SYSTEM_CONFIG__', 
                     gasUrl, 
                     password: process.env.SUPER_ADMIN_PASS || '123456'
                 });
@@ -2514,10 +2525,21 @@ class DataManager {
             delete CACHE.historicalData[companyId];
         }
 
-        // 4. Delete from filesystem
+        // 4. Delete from filesystem (with Strict Guard)
         const companyDir = path.join(this.dataDir, 'companies', companyId);
+        
+        // Professional Guard: Ensure the path is actually inside the companies directory
+        const relative = path.relative(path.join(this.dataDir, 'companies'), companyDir);
+        const isSafe = relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+        
+        if (!isSafe) {
+            console.error(`[DataManager] ATTEMPTED TO DELETE PROTECTED PATH: ${companyDir}`);
+            throw new Error('Illegal deletion target');
+        }
+
         try {
             await fs.rm(companyDir, { recursive: true, force: true });
+            console.log(`[DataManager] Deleted company directory: ${companyId}`);
         } catch (e) {
             console.error(`[DataManager] Error deleting directory for ${companyId}:`, e.message);
         }
@@ -2642,7 +2664,7 @@ class DataManager {
                             const hasCustomRule = !!userConstraint.maxDuration;
                             const maxHours = hasCustomRule ? parseFloat(userConstraint.maxDuration) : globalMaxHours;
                             const enableAutoOut = hasCustomRule ? (userConstraint.enableAutoOut === true) : true;
-                            const enableAlert = hasCustomRule ? (userConstraint.enableAlert === true) : false;
+                            const enableAlert = userConstraint.enableAlert === true;
 
                             if (durationHours > maxHours) {
                                 if (enableAutoOut) {
