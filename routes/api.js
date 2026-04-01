@@ -617,6 +617,16 @@ router.post('/dispatch', async (req, res) => {
             case 'saveCardToken': {
                 const { cardName, cardId, cardNumber, expMonth, expYear, cvv, businessId } = rest.paymentDetails;
                 
+                let finalBusinessId = businessId;
+                if (!finalBusinessId && companyId) {
+                    try {
+                        const bizStatus = await dataManager.getCompanyConfig(companyId);
+                        finalBusinessId = bizStatus.invoiceDetails || bizStatus.businessName || '';
+                    } catch (e) {
+                        console.warn('[Payment] Could not fetch invoiceDetails for saveCardToken:', e.message);
+                    }
+                }
+                
                 // --- Tranzila Tokenization (J5) ---
                 // We need to ensure we send standard fields to Tranzila
                 const payload = {
@@ -631,7 +641,7 @@ router.post('/dispatch', async (req, res) => {
                     mycvv: cvv,
                     myid: cardId, // Card Holder ID
                     contact: '', // Remove contact to avoid cluttering Tranzila CRM
-                    company: businessId || '', // Invoice Details / Business Name
+                    company: finalBusinessId || '', // Invoice Details / Business Name
                     pdesc: `Token Registration - ${companyId}`
                 };
 
