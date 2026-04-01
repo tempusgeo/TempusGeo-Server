@@ -685,11 +685,15 @@ class DataManager {
             let totalDue = 0;
             const explanations = [];
 
-            // 1. Unpaid Past Months (The Chain)
+            // 1. Unpaid Past Months (The Chain) - Arrears Billing Philosophy
+            // We only charge for months that have FULLY passed (e.g. on April 1st we can charge for March).
             let checkDate = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
             const now = new Date();
             
-            while (checkDate < new Date(now.getFullYear(), now.getMonth(), 1)) {
+            // To bill retrospectively for the month that just ended, our boundary is the 1st of the current month.
+            const billingLimit = new Date(now.getFullYear(), now.getMonth(), 1);
+            
+            while (checkDate < billingLimit) {
                 const y = checkDate.getFullYear();
                 const m = checkDate.getMonth() + 1;
 
@@ -704,36 +708,36 @@ class DataManager {
                 checkDate.setMonth(checkDate.getMonth() + 1);
             }
 
-            // 2. Current Month (Pro-rata anchored to joinedAt — NEVER to new Date())
-            const targetYear = now.getFullYear();
-            const targetMonth = now.getMonth(); // 0-indexed
-            const lastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
-            const workers = await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
-            const currentFormulaBase = Math.max(minPrice, workers * pricePerEmp);
-
-            // Anchor date: prefer joinedAt as the immutable source of truth.
-            // subscriptionDate can be corrupted by renewals — only use it if it
-            // makes sense (i.e. it is within the current month and before today).
-            const joinedAt = client.joinedAt ? new Date(client.joinedAt) : null;
-            const subDate = client.subscriptionDate ? new Date(client.subscriptionDate) : null;
-            const monthStart = new Date(targetYear, targetMonth, 1);
-
-            // Determine the actual start date for this billing period:
-            // Use joinedAt if it falls in this month (new customer).
-            // Otherwise charge the full month.
-            let activeDays;
-            if (joinedAt && joinedAt.getFullYear() === targetYear && joinedAt.getMonth() === targetMonth) {
-                // New customer — pro-rata from join day to end of month
-                activeDays = Math.max(0, lastMonthDays - joinedAt.getDate() + 1);
-                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${Math.floor(currentFormulaBase * (activeDays / lastMonthDays))} (יחסי: ${activeDays}/${lastMonthDays} ימים, ${workers} עובדים)`);
+            // 2. Current/In-Arrears Month
+            // On Billing Day (the 1st), we do NOT charge for 'Today's month' until the NEXT 1st.
+            // If it's currently mid-month or if we are forced to check, calculate based on usage to date.
+            const isFirstOfMonth = now.getDate() === 1;
+            
+            if (isFirstOfMonth) {
+                // On the 1st, we only care about the chain of completed months processed above.
+                // We do NOT add the month starting today to the bill yet.
+                activeDays = 0;
+                totalDue += 0;
             } else {
-                // Existing customer — full month
-                activeDays = lastMonthDays;
-                explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentFormulaBase} (חודש מלא, ${workers} עובדים)`);
-            }
+                const targetYear = now.getFullYear();
+                const targetMonth = now.getMonth(); // 0-indexed
+                const lastMonthDays = new Date(targetYear, targetMonth + 1, 0).getDate();
+                const workers = await this.countUniqueActiveEmployees(companyId, targetYear, targetMonth + 1);
+                const currentFormulaBase = Math.max(minPrice, workers * pricePerEmp);
 
-            const currentAmount = Math.floor(currentFormulaBase * (activeDays / lastMonthDays));
-            totalDue += currentAmount;
+                const joinedAt = client.joinedAt ? new Date(client.joinedAt) : null;
+                const monthStart = new Date(targetYear, targetMonth, 1);
+
+                if (joinedAt && joinedAt.getFullYear() === targetYear && joinedAt.getMonth() === targetMonth) {
+                    activeDays = Math.max(0, lastMonthDays - joinedAt.getDate() + 1);
+                    explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${Math.floor(currentFormulaBase * (activeDays / lastMonthDays))} (יחסי: ${activeDays}/${lastMonthDays} ימים, ${workers} עובדים)`);
+                } else {
+                    activeDays = lastMonthDays;
+                    explanations.push(`שוטף ${targetMonth + 1}/${targetYear}: ₪${currentFormulaBase} (חודש מלא, ${workers} עובדים)`);
+                }
+                const currentAmount = Math.floor(currentFormulaBase * (activeDays / lastMonthDays));
+                totalDue += currentAmount;
+            }
 
             return {
                 amount: totalDue,
@@ -2893,14 +2897,23 @@ class DataManager {
         const results = { charged: 0, warned: 0, failures: [], skipped: 0 };
         const sysConfig = await this.getSystemConfig();
         const isBillingDay = (il.day === 1 && il.hour >= 4);
+        
+        // --- ARREARS BILLING LOGIC ---
+        // On the 1st of the month, we are charging for the usage period of the PREVIOUS month.
+        // For example, on April 1st, the 'currentPeriodKey' for which we are collecting is March.
+        let billingMonth = il.month;
+        let billingYear = il.year;
+        if (isBillingDay) {
+            if (il.month === 1) { billingMonth = 12; billingYear--; }
+            else { billingMonth--; }
+        }
+        const currentPeriodKey = `${billingYear}-${String(billingMonth).padStart(2, '0')}`;
 
         this.logMaintenance('BILLING',
             isBillingDay
-                ? `🔴 BILLING DAY: Running full charge cycle (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2,'0')})`
+                ? `🔴 BILLING DAY: Charging usage for ${currentPeriodKey} (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2,'0')})`
                 : `🟡 Scan-only: Not billing day yet (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2,'0')})`
         );
-
-        const currentPeriodKey = `${il.year}-${String(il.month).padStart(2, '0')}`;
 
         for (const client of CACHE.clients) {
             try {
@@ -2911,7 +2924,9 @@ class DataManager {
                 const noticeDays = parseInt(sysConfig.subscriptionExpiryNotice) || 7;
 
                 // --- BILLING DAY: Charge clients that are eligible ---
-                if (isBillingDay && client.autoChargeEnabled && client.paymentMethod?.token) {
+                // Safeguard: Only charge if today is billing day AND the subscription is actually ending (imminent/expired)
+                const isImminentOrExpired = hoursLeft <= 24; 
+                if (isBillingDay && client.autoChargeEnabled && client.paymentMethod?.token && (isImminentOrExpired || client.billingFailed)) {
                     // Check if already charged this month (idempotency guard)
                     const alreadyCharged = (client.paymentHistory || []).some(p =>
                         (p.status === 'PAID' || p.status === 'SUCCESS') &&
