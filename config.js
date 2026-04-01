@@ -2,7 +2,7 @@ require('dotenv').config();
 
 module.exports = {
     PORT: process.env.PORT || 3000,
-    APP_URL: "https://tg-users.netlify.app/#", // Production User Dashboard Link
+    APP_URL: process.env.RENDER_URL || "http://localhost:3000", // Fallback for emails
     DATA_DIR: process.env.DATA_DIR || './data',
 
     // Security
