@@ -268,7 +268,7 @@ class DataManager {
         if (gasUrl) {
             // Fix: Use a proper password (from env or default) to ensure GAS accepts the archive
             const adminPass = process.env.SUPER_ADMIN_PASS || '123456';
-            syncManager.enqueue('CLIENTS', CACHE.clients, { companyId: '__SYSTEM__', gasUrl, password: adminPass });
+            syncManager.enqueue('CLIENTS', CACHE.clients, { companyId: '__SYSTEM_CLIENTS__', gasUrl, password: adminPass });
         }
     }
 
@@ -927,7 +927,7 @@ class DataManager {
             }
         });
 
-        console.log(`[DataManager] Final system configuration to save:`, JSON.stringify(updated));
+        console.log(`[DataManager] Final system configuration to save:`, JSON.stringify(updated, null, 2));
 
         this._systemConfig = updated; // Update cache
 
@@ -2173,13 +2173,12 @@ class DataManager {
                         let localPath = file.path;
                         
                         // MAP NAMESPACED PATHS FROM GAS TO LOCAL FILES
-                        // Keep mapping just in case GAS ever returns them in new structure
-                        if (file.path.includes('__SYSTEM_CONFIG__') && file.path.includes('config')) {
+                        // GAS returns paths based on the companyId/year/month structure.
+                        const lowerPath = file.path.toLowerCase();
+                        if (lowerPath.includes('__system_config__') || lowerPath.includes('system_config')) {
                             localPath = 'system_config.json';
-                        } else if (file.path.includes('__SYSTEM_CLIENTS__') && file.path.includes('clients')) {
+                        } else if (lowerPath.includes('__system_clients__') || lowerPath.includes('clients.json')) {
                             localPath = 'clients.json';
-                        } else if (file.path === 'system_config.json' || (file.path.includes('__SYSTEM__') && file.path.includes('config'))) {
-                             localPath = 'system_config.json';
                         }
 
                         const fullPath = path.join(this.dataDir, localPath);
