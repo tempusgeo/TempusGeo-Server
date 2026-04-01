@@ -799,13 +799,21 @@ class DataManager {
      * Otherwise returns the charge day/time in the next month.
      */
     /**
-     * Always returns the 1st of the next month at 04:00 AM Israel Time.
-     * This is now the rigid system standard.
+     * Finds the next future billing date based on the system's configured charge Day and Time.
+     * If the target date/time has already passed for the current month, rolls over to the next month.
      */
-    getNextBillingDate() {
+    getNextBillingDate(targetDay = 1, targetTimeStr = "04:00") {
         const now = new Date();
-        // Move to the 1st of NEXT month (or current month if it's before the 1st @ 04:00, but usually we just want next cycle)
-        const target = new Date(now.getFullYear(), now.getMonth() + 1, 1, 4, 0, 0, 0);
+        const [hour, minute] = String(targetTimeStr).split(':').map(Number);
+        
+        // 1. Create a candidate date for the CURRENT month
+        let target = new Date(now.getFullYear(), now.getMonth(), parseInt(targetDay), hour, minute || 0, 0, 0);
+        
+        // 2. If the candidate date is in the past (already passed today or earlier this month), move to the NEXT month
+        if (target <= now) {
+            target = new Date(now.getFullYear(), now.getMonth() + 1, parseInt(targetDay), hour, minute || 0, 0, 0);
+        }
+        
         return target;
     }
 
@@ -2406,10 +2414,7 @@ class DataManager {
         const safePassword = data.password ? data.password.toString() : '';
 
         const sysConfig = await this.getSystemConfig();
-        const freeTrialDays = parseInt(sysConfig.freeTrialDays) || 0;
-        const trialExpiry = new Date();
-        trialExpiry.setDate(trialExpiry.getDate() + freeTrialDays);
-        trialExpiry.setHours(4, 0, 0, 0);
+        const trialExpiry = this.getNextBillingDate(sysConfig.chargeDay || 1, sysConfig.chargeTime || "04:00");
 
         let pMethodSafe = null;
         let invoiceDetails = null;
