@@ -15,6 +15,17 @@ const CACHE = {
     historicalData: {}, // Cache for cold data from GAS: { companyId: { 'year-month': data } }
 };
 
+// Central Whitelist for System Configuration (to prevent data loss and corruption)
+const ALLOWED_SYSTEM_CONFIG_KEYS = [
+    'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
+    'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
+    'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
+    'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
+    'autoBillingEnabled', 'autoRenewalEnabled', 'freeTrialDays',
+    'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess',
+    'jetServerUrl', 'JETSERVER_PROXY_URL'
+];
+
 // HOT STORAGE CONFIG
 const HOT_STORAGE_MONTHS = 2; // Keep current + last month
 
@@ -880,15 +891,7 @@ class DataManager {
                 return {};
             }
 
-            const allowedKeys = [
-                'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
-                'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-                'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
-                'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
-                'autoBillingEnabled', 'autoRenewalEnabled', 'freeTrialDays',
-                'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess',
-                'jetServerUrl', 'JETSERVER_PROXY_URL'
-            ];
+            const allowedKeys = ALLOWED_SYSTEM_CONFIG_KEYS;
             const cleaned = {};
             allowedKeys.forEach(k => { if (parsed[k] !== undefined) cleaned[k] = parsed[k]; });
             this._systemConfig = cleaned;
@@ -908,15 +911,7 @@ class DataManager {
 
         const current = await this.getSystemConfig();
         
-        const allowedKeys = [
-            'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
-            'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-            'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
-            'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
-            'autoBillingEnabled', 'autoRenewalEnabled', 'freeTrialDays',
-            'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess',
-            'jetServerUrl', 'JETSERVER_PROXY_URL'
-        ];
+        const allowedKeys = ALLOWED_SYSTEM_CONFIG_KEYS;
 
         // 1. Filter existing config to keep only allowed keys
         const cleanedCurrent = {};
@@ -2172,38 +2167,39 @@ class DataManager {
                 
                 console.log(`[Restore] Found ${backup.files.length} files to restore.`);
 
-                // Sort files to ensure clients.json or config files are written first if needed, 
-                // though usually order doesn't matter for disk but does for cache reload logic later.
+                // Sort files to ensure clients.json or config files are written first if needed
                 for (const file of backup.files) {
                     try {
-                        const fullPath = path.join(this.dataDir, file.path);
+                        let localPath = file.path;
+                        
+                        // MAP NAMESPACED PATHS FROM GAS TO LOCAL FILES
+                        // GAS might return paths like "__SYSTEM_CONFIG__/config/json"
+                        if (file.path.includes('__SYSTEM_CONFIG__') && file.path.includes('config')) {
+                            localPath = 'system_config.json';
+                        } else if (file.path.includes('__SYSTEM_CLIENTS__') && file.path.includes('clients')) {
+                            localPath = 'clients.json';
+                        }
+
+                        const fullPath = path.join(this.dataDir, localPath);
                         const dirPath = path.dirname(fullPath);
                         await fs.mkdir(dirPath, { recursive: true });
 
                         let contentToWrite;
                         
                         // CRITICAL FIX: Sanitize system_config.json if it was corrupted with business data
-                        if (file.path === 'system_config.json') {
+                        if (localPath === 'system_config.json') {
                             const rawContent = typeof file.content === 'object' ? file.content : JSON.parse(file.content || '{}');
                             
                             // Check if this looks like client/business data instead of system config
-                            // (system_config should NOT have 'id', 'email', 'password', 'paymentHistory', 'businessName')
                             const hasBusinessFields = rawContent.id || rawContent.email || rawContent.businessName || 
                                                       rawContent.paymentHistory || rawContent.paymentMethod;
                             if (hasBusinessFields) {
-                                console.error(`[Restore] CORRUPTION DETECTED: system_config.json contains business data! Skipping restore of this file.`);
-                                console.error(`[Restore] Bad system_config keys: ${Object.keys(rawContent).slice(0, 10).join(', ')}`);
+                                console.error(`[Restore] CORRUPTION DETECTED: ${localPath} contains business data! Skipping restore of this file.`);
                                 continue; // Skip writing this corrupted file
                             }
                             
-                            // Apply whitelist filter
-                            const allowedKeys = [
-                                'adminWhatsapp', 'tranzilaTerminal', 'tranzilaPass',
-                                'minMonthlyPrice', 'pricePerEmployee', 'chargeDay', 'chargeTime',
-                                'maxShiftHours', 'supportEnabled', 'appName', 'appLogoUrl',
-                                'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
-                                'autoBillingEnabled', 'autoRenewalEnabled'
-                            ];
+                            // Apply unified whitelist filter
+                            const allowedKeys = ALLOWED_SYSTEM_CONFIG_KEYS;
                             const sanitized = {};
                             allowedKeys.forEach(k => { if (rawContent[k] !== undefined) sanitized[k] = rawContent[k]; });
                             contentToWrite = JSON.stringify(sanitized, null, 2);
@@ -2214,7 +2210,7 @@ class DataManager {
                         }
                         
                         await fs.writeFile(fullPath, contentToWrite);
-                        // console.log(`[Restore] Restored: ${file.path}`);
+                        // console.log(`[Restore] Restored: ${localPath}`);
                     } catch (e) {
                         console.error(`[Restore] Failed to write file ${file.path}:`, e.message);
                     }
