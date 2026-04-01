@@ -96,7 +96,7 @@ class SyncManager {
             
             case 'CONFIG':
                 postData.action = 'archive';
-                postData.companyId = options.companyId || '__SYSTEM_CONFIG__';
+                postData.companyId = options.companyId || '__SYSTEM__';
                 postData.year = 'config'; 
                 postData.month = 'json';  
                 postData.data = JSON.stringify(payload);
@@ -104,7 +104,7 @@ class SyncManager {
 
             case 'CLIENTS':
                 postData.action = 'archive';
-                postData.companyId = options.companyId || '__SYSTEM_CLIENTS__';
+                postData.companyId = options.companyId || '__SYSTEM__';
                 postData.year = 'clients';
                 postData.month = 'json';
                 postData.data = JSON.stringify(payload);
