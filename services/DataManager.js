@@ -285,8 +285,9 @@ class DataManager {
         if (gasUrl) {
             const adminPass = process.env.SUPER_ADMIN_PASS || '123456';
             try {
-                // syncNow waits for GAS to acknowledge – this ensures GAS has the latest data
+                // syncNow waits for GAS to acknowledge - this ensures GAS has the latest data
                 await syncManager.syncNow('CLIENTS', CACHE.clients, { companyId: '__SYSTEM__', gasUrl, password: adminPass });
+                console.log('[DataManager] Clients synced to Cloud successfully.');
                 console.log(`[DataManager] Clients synced to GAS synchronously (timestamp: ${timestamp}).`);
             } catch (e) {
                 console.error('[DataManager] Critical: Synchronous GAS sync failed after client data change:', e.message);
@@ -947,7 +948,7 @@ class DataManager {
             try {
                 console.log('[DataManager] Syncing System Config to GAS...');
                 await syncManager.syncNow('CONFIG', updated, { 
-                    companyId: '__SYSTEM_CONFIG__', 
+                    companyId: '__SYSTEM__', 
                     gasUrl, 
                     password: process.env.SUPER_ADMIN_PASS || '123456'
                 });
@@ -2173,11 +2174,10 @@ class DataManager {
                         let localPath = file.path;
                         
                         // MAP NAMESPACED PATHS FROM GAS TO LOCAL FILES
-                        // GAS might return paths like "__SYSTEM_CONFIG__/config/json"
-                        if (file.path.includes('__SYSTEM_CONFIG__') && file.path.includes('config')) {
-                            localPath = 'system_config.json';
-                        } else if (file.path.includes('__SYSTEM_CLIENTS__') && file.path.includes('clients')) {
-                            localPath = 'clients.json';
+                        // GAS returns paths like "__SYSTEM__/config/json" or "__SYSTEM__/clients/json"
+                        if (file.path.includes('__SYSTEM__')) {
+                             if (file.path.includes('config')) localPath = 'system_config.json';
+                             else if (file.path.includes('clients')) localPath = 'clients.json';
                         }
 
                         const fullPath = path.join(this.dataDir, localPath);
