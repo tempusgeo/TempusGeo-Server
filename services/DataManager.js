@@ -2183,9 +2183,18 @@ class DataManager {
                         // MAP NAMESPACED PATHS FROM GAS TO LOCAL FILES
                         // GAS returns paths based on the companyId/year/month structure.
                         const lowerPath = file.path.toLowerCase();
+
+                        // CRITICAL: Skip __SYSTEM_CLIENTS__ archive files entirely.
+                        // The root-level clients.json is the single source of truth.
+                        // The __SYSTEM_CLIENTS__ archive may be stale/empty and must never overwrite the root file.
+                        if (lowerPath.includes('__system_clients__')) {
+                            console.log('[Restore] Skipping __SYSTEM_CLIENTS__ path - using root clients.json only.');
+                            continue;
+                        }
+
                         if (lowerPath.includes('__system_config__') || lowerPath.includes('system_config')) {
                             localPath = 'system_config.json';
-                        } else if (lowerPath.includes('__system_clients__') || lowerPath.includes('clients.json')) {
+                        } else if (lowerPath.includes('clients.json')) {
                             localPath = 'clients.json';
                         }
 
