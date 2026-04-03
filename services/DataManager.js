@@ -2433,7 +2433,18 @@ class DataManager {
         if (data.paymentMethod) {
             // Normalize the payment method immediately upon business creation
             pMethodSafe = this.normalizePaymentMethod(data.paymentMethod);
+            
+            // CRITICAL: Ensure we actually have a token!
+            if (!pMethodSafe.token) {
+                console.error('[DataManager] Registration failed: Missing payment token in provided paymentMethod.');
+                throw new Error('יש לאמת כרטיס אשראי תקין לפני הקמת העסק.');
+            }
+            
             invoiceDetails = pMethodSafe.businessId || pMethodSafe.company;
+        } else {
+             // CRITICAL: Payment method is mandatory for new businesses
+             console.error('[DataManager] Registration failed: No paymentMethod provided in payload.');
+             throw new Error('יש להזין אמצעי תשלום תקין.');
         }
 
         const client = {
