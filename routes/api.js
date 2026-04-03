@@ -1736,6 +1736,21 @@ router.post('/payment/process', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Missing required fields: companyId, planId, or paymentDetails' });
         }
 
+        // Basic Card Validation
+        const cleanCard = cardInfo.cardNumber.toString().replace(/\D/g, '');
+        if (cleanCard.length < 8 || cleanCard.length > 19) {
+            return res.status(400).json({ success: false, error: 'מספר כרטיס אשראי לא תקין' });
+        }
+
+        // ID Validation (myid)
+        const myidRaw = (cardInfo.myid || cardInfo.cardId || cardInfo.id || '').toString().trim();
+        if (!myidRaw) {
+             return res.status(400).json({ success: false, error: 'חסר מספר תעודת זהות של בעל הכרטיס' });
+        }
+        if (!/^\d{9}$/.test(myidRaw)) {
+             return res.status(400).json({ success: false, error: 'מספר תעודת זהות חייב להכיל 9 ספרות בדיוק' });
+        }
+
         // 1. Get System Config (Tranzila Credentials)
         const systemConfig = await dataManager.getSystemConfig();
         console.log('[Payment] System config loaded. Terminal:', systemConfig.tranzilaTerminal ? 'OK' : 'MISSING');
