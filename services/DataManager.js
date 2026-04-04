@@ -678,6 +678,11 @@ class DataManager {
             const client = await this.getClientById(companyId);
             if (!client) return { amount: 0, breakdown: {} };
 
+            // FREE TRIAL: no charge during trial period
+            if (client.isFreeTrial === true) {
+                return { amount: 0, breakdown: { isTrial: true, note: 'תקופת ניסיון חינם' } };
+            }
+
             const sysConfig = await this.getSystemConfig();
             const minPrice = parseFloat(sysConfig.minMonthlyPrice) || 50;
             const pricePerEmp = parseFloat(sysConfig.pricePerEmployee) || 5;
@@ -2424,9 +2429,22 @@ class DataManager {
 
         const sysConfig = await this.getSystemConfig();
         const [chargeHour, chargeMinute] = (sysConfig.chargeTime || "04:00").split(':').map(Number);
-        // Always set to the 1st of NEXT month at the configured charge time.
-        // This gives the new business a full month before their first charge (payment is always in arrears).
-        const trialExpiry = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1, chargeHour, chargeMinute || 0, 0, 0);
+        
+        // FREE TRIAL: if freeTrialDays > 0, use today + N days as expiry and mark as trial.
+        // Otherwise, default to 1st of next month (arrears billing).
+        const freeTrialDays = parseInt(sysConfig.freeTrialDays) || 0;
+        let trialExpiry;
+        let isFreeTrial = false;
+        if (freeTrialDays > 0) {
+            trialExpiry = new Date();
+            trialExpiry.setDate(trialExpiry.getDate() + freeTrialDays);
+            trialExpiry.setHours(chargeHour, chargeMinute || 0, 0, 0);
+            isFreeTrial = true;
+            console.log(`[DataManager] New business with ${freeTrialDays}-day free trial. Expiry: ${trialExpiry.toISOString()}`);
+        } else {
+            // No trial: set to 1st of next month at configured charge time
+            trialExpiry = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1, chargeHour, chargeMinute || 0, 0, 0);
+        }
 
         let pMethodSafe = null;
         let invoiceDetails = null;
@@ -2458,6 +2476,7 @@ class DataManager {
             joinedAt: new Date().toISOString(),
 
             autoChargeEnabled: true, // Force true by default for all new businesses
+            isFreeTrial: isFreeTrial, // true = trial period, billing = 0, transitions to paid on expiry
             paymentMethod: pMethodSafe
         };
 
@@ -2810,6 +2829,26 @@ class DataManager {
             }
         }
 
+        // --- FREE TRIAL TRANSITION ON MANUAL EXTENSION ---
+        if (client.isFreeTrial) {
+            client.isFreeTrial = false;
+            client.joinedAt = now.toISOString(); // From this moment, billing begins
+            if (!client.paymentHistory) client.paymentHistory = [];
+            client.paymentHistory.push({
+                date: new Date().toLocaleDateString('he-IL'),
+                fullDate: new Date().toISOString(),
+                amount: 0,
+                currency: 'ILS',
+                period: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+                method: 'Manual Extension',
+                description: 'הארכת מנוי ידנית - סיום תקופת ניסיון',
+                status: 'PAID',
+                statusDisplayName: 'הארכה ללא תשלום',
+                reference: 'ADMIN-TRIAL'
+            });
+            this.logMaintenance('BILLING', `🎁 Free trial manually ended by Admin for ${client.businessName}. Transitioned to paid subscription.`);
+        }
+
         // Log payment
         if (!client.paymentHistory) client.paymentHistory = [];
         client.paymentHistory.push({
@@ -2932,6 +2971,39 @@ class DataManager {
                 const nowMs = Date.now();
                 const hoursLeft = (expiryMs - nowMs) / (1000 * 60 * 60);
                 const noticeDays = parseInt(sysConfig.subscriptionExpiryNotice) || 7;
+
+                // --- FREE TRIAL TRANSITION ---
+                if (client.isFreeTrial === true && hoursLeft <= 1) {
+                    if (client.autoChargeEnabled) {
+                        const [h, mi] = (sysConfig.chargeTime || '04:00').split(':').map(Number);
+                        const currentMonthEnd = new Date(nowMs);
+                        const nextExpiry = new Date(currentMonthEnd.getFullYear(), currentMonthEnd.getMonth() + 1, 1, h, mi || 0, 0, 0);
+                        
+                        client.isFreeTrial = false;
+                        client.subscriptionExpiry = nextExpiry.toISOString();
+                        client.subscriptionDate = new Date().toISOString(); // Reset billing anchor
+                        client.joinedAt = new Date().toISOString(); // CRITICAL: Reset join date so pro-rata starts NOW, ignoring past trial days
+                        
+                        if (!client.paymentHistory) client.paymentHistory = [];
+                        client.paymentHistory.push({
+                            date: new Date().toLocaleDateString('he-IL'),
+                            fullDate: new Date().toISOString(),
+                            amount: 0,
+                            currency: 'ILS',
+                            period: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+                            method: 'Auto-Trial Extension',
+                            description: 'מעבר למנוי פעיל - תום תקופת הניסיון',
+                            status: 'PAID',
+                            statusDisplayName: 'הארכה ללא תשלום',
+                            reference: 'AUTO-TRIAL'
+                        });
+
+                        await this.saveClients();
+                        this.logMaintenance('BILLING', `🎁 Free trial ended for ${client.businessName}. Transitioned to paid subscription. Next expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
+                        emailService.sendSubscriptionAlert(client.email, client.businessName, 720, nextExpiry.toISOString(), null, null).catch(() => {});
+                        continue; // Skip further processing for this cycle
+                    }
+                }
 
                 // --- BILLING DAY: Charge clients that are eligible ---
                 if (isBillingDay && client.autoChargeEnabled && client.paymentMethod?.token) {
@@ -3118,6 +3190,40 @@ class DataManager {
         const expiry = this.parseExpiryDate(client.subscriptionExpiry);
         const hoursLeft = (expiry - now) / (1000 * 60 * 60);
         const daysLeft = hoursLeft / 24;
+
+        // --- FREE TRIAL TRANSITION ---
+        if (client.isFreeTrial === true && hoursLeft <= 1) {
+            if (client.autoChargeEnabled) {
+                const sysConfig2 = sysConfig || await this.getSystemConfig();
+                const [h, mi] = (sysConfig2.chargeTime || '04:00').split(':').map(Number);
+                const nextExpiry = new Date(now.getFullYear(), now.getMonth() + 1, 1, h, mi || 0, 0, 0);
+                
+                client.isFreeTrial = false;
+                client.subscriptionExpiry = nextExpiry.toISOString();
+                client.subscriptionDate = new Date().toISOString(); // Reset billing anchor
+                client.joinedAt = new Date().toISOString(); // CRITICAL: Reset join date so past trial days are ignored
+                
+                if (!client.paymentHistory) client.paymentHistory = [];
+                client.paymentHistory.push({
+                    date: new Date().toLocaleDateString('he-IL'),
+                    fullDate: new Date().toISOString(),
+                    amount: 0,
+                    currency: 'ILS',
+                    period: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+                    method: 'Auto-Trial Extension',
+                    description: 'מעבר למנוי פעיל - תום תקופת הניסיון',
+                    status: 'PAID',
+                    statusDisplayName: 'הארכה ללא תשלום',
+                    reference: 'AUTO-TRIAL'
+                });
+
+                await this.saveClients();
+                this.logMaintenance('BILLING', `🎁 Free trial ended for ${client.businessName}. Transitioned to paid subscription. Next expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
+                emailService.sendSubscriptionAlert(client.email, client.businessName, 720 /* ~30 days */, nextExpiry.toISOString(), null, null).catch(() => {});
+                return res; // Skip further processing for this cycle
+            }
+            // autoCharge is OFF: fall through → expiry alerts will fire normally below
+        }
         
         // --- PRECISION BILLING SAFEGUARDS ---
         // 1. Charge only if expiry is in <= 1 day, OR if it's a forced manual override
