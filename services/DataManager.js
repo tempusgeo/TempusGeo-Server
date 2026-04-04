@@ -2437,7 +2437,7 @@ class DataManager {
             // CRITICAL: Ensure we actually have a token!
             if (!pMethodSafe.token) {
                 console.error('[DataManager] Registration failed: Missing payment token in provided paymentMethod.');
-                throw new Error('יש לאמת כרטיס אשראי תקין לפני הקמת העסק.');
+                throw new Error('יש להזין פרטי כרטיס אשראי תקינים לפני הקמת העסק.');
             }
             
             invoiceDetails = pMethodSafe.businessId || pMethodSafe.company;
