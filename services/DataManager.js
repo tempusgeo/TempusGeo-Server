@@ -411,6 +411,15 @@ class DataManager {
         if (!companyId || companyId === 'NEW_SETUP') return; // Strict guard against ghost folders
         if (CACHE.companies[companyId]) return; // Already loaded
 
+        // --- ORPHAN PREVENTION GUARD ---
+        // Ensure that the business is actively listed in the verified clients array.
+        // If it isn't, we DO NOT create a skeleton directory on the disk to prevent ghost resurrection.
+        const isValidClient = CACHE.clients.some(c => c.id === companyId);
+        if (!isValidClient && !companyId.startsWith('__')) {
+            console.error(`[DataManager] Blocked attempt to recreate directory for invalid/deleted company: ${companyId}`);
+            throw new Error(`Business ${companyId} does not exist or has been deleted.`);
+        }
+
         const companyDir = path.join(this.dataDir, 'companies', companyId);
         await fs.mkdir(companyDir, { recursive: true });
 
@@ -452,7 +461,14 @@ class DataManager {
 
 
     async getCompanyConfig(companyId) {
-        if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
+        if (!CACHE.companies[companyId]) {
+            try {
+                await this.loadCompany(companyId);
+            } catch (err) {
+                console.error(`[DataManager] getCompanyConfig failed:`, err.message);
+                throw new Error('Business not found or deleted');
+            }
+        }
 
         const config = { ...CACHE.companies[companyId].config };
 
