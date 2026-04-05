@@ -805,7 +805,15 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 monthlyReportHour: config.monthlyReportHour || '08:00',
                 autoBillingEnabled: config.autoBillingEnabled !== undefined ? config.autoBillingEnabled : true,
                 autoRenewalEnabled: config.autoRenewalEnabled !== undefined ? config.autoRenewalEnabled : true,
-                subscriptionExpiryNotice: config.subscriptionExpiryNotice || 2
+                subscriptionExpiryNotice: config.subscriptionExpiryNotice || 2,
+                freeTrialDays: config.freeTrialDays || 0,
+
+                // Email Automation Toggles
+                emailJoinWelcome: !!config.emailJoinWelcome,
+                emailExpiry48h: !!config.emailExpiry48h,
+                emailExpired: !!config.emailExpired,
+                emailBlocked: !!config.emailBlocked,
+                emailAutoRenewSuccess: !!config.emailAutoRenewSuccess
             }
         });
     } catch (e) {
