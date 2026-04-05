@@ -2585,9 +2585,10 @@ class DataManager {
             logoUrl: data.logoUrl || null
         };
 
-        if (invoiceDetails) {
-            companyConfig.invoiceDetails = invoiceDetails;
-        }
+        // Priority for invoiceDetails: 
+        // 1. Explicit businessId from the paymentMethod
+        // 2. Default to businessName if none provided
+        companyConfig.invoiceDetails = (pMethodSafe && pMethodSafe.businessId) ? pMethodSafe.businessId : data.businessName;
 
         await this.updateCompanyConfig(newId, companyConfig);
 
