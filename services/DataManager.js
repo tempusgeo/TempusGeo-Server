@@ -2538,6 +2538,7 @@ class DataManager {
         const companyConfig = {
             companyId: newId,
             businessName: data.businessName,
+            invoiceDetails: data.businessName, // Default to business name for new accounts
             settings: {
                 salary: {
                     holidays: {
