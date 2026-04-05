@@ -568,6 +568,7 @@ class DataManager {
                 joinedAt: client.joinedAt || null,
                 debtAmount: await this.calculateDebtAmount(client.id),
                 autoChargeEnabled: !!client.autoChargeEnabled,
+                isFreeTrial: !!client.isFreeTrial, // Add isFreeTrial flag
                 paymentHistory: client.paymentHistory || [],
                 paymentMethod: client.paymentMethod || null
             };
