@@ -139,6 +139,7 @@ router.post('/dispatch', async (req, res) => {
                         autoChargeEnabled: !!client?.autoChargeEnabled,
                         expiryDate: client?.subscriptionExpiry || null,
                         paymentHistory: client?.paymentHistory || [],
+                        isFreeTrial: !!client?.isFreeTrial, // Added
                         expectedPayment: billing
                     }
                 });
