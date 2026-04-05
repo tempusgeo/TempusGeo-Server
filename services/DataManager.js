@@ -1923,9 +1923,10 @@ class DataManager {
             if (!config.settings.constraints[name]) {
                 config.settings.constraints[name] = {
                     deviceId: "",
-                    deviceIdVerified: false
+                    deviceIdVerified: false,
+                    qualifyingHolidays: [...(config.MAJOR_HOLIDAYS || [])]
                 };
-                console.log(`[DataManager] Initialized constraints for new employee: ${name}`);
+                console.log(`[DataManager] Initialized constraints and default holidays for new employee: ${name}`);
             }
 
             await this.updateCompanyConfig(companyId, config);
@@ -2536,6 +2537,36 @@ class DataManager {
             }
         } catch(e) { console.error("[DataManager] Initial holiday fetch failed:", e.message); }
 
+        const maxHours = parseInt(sysConfig.maxShiftHours) || 12;
+        const maxTimeStr = maxHours.toString().padStart(2, '0') + ":00";
+
+        const ISRAELI_DEFAULTS = {
+            overtimeRanges5: [
+                { start: "00:00", end: "08:30", addRate: 0 },
+                { start: "08:30", end: "10:30", addRate: 0.25 },
+                { start: "10:30", end: maxTimeStr, addRate: 0.5 }
+            ],
+            overtimeRanges6: [
+                { start: "00:00", end: "08:00", addRate: 0 },
+                { start: "08:00", end: "10:00", addRate: 0.25 },
+                { start: "10:00", end: maxTimeStr, addRate: 0.5 }
+            ],
+            fridayRanges5: [
+                { start: "00:00", end: "07:00", addRate: 0 },
+                { start: "07:00", end: "09:00", addRate: 0.25 },
+                { start: "09:00", end: maxTimeStr, addRate: 0.5 }
+            ],
+            fridayRanges6: [
+                { start: "00:00", end: "07:00", addRate: 0 },
+                { start: "07:00", end: "09:00", addRate: 0.25 },
+                { start: "09:00", end: maxTimeStr, addRate: 0.5 }
+            ],
+            weekendRanges: [
+                { start: "00:00", end: "08:00", addRate: 0.5 },
+                { start: "08:00", end: maxTimeStr, addRate: 0.75 }
+            ]
+        };
+
         const companyConfig = {
             companyId: newId,
             businessName: data.businessName,
@@ -2545,7 +2576,8 @@ class DataManager {
                     holidays: {
                         eligible: eligibleDefaults,
                         details: defaultHolidaysDetails.length > 0 ? defaultHolidaysDetails : eligibleDefaults.map(h => ({ name: h, date: null, allDates: [] }))
-                    }
+                    },
+                    ...ISRAELI_DEFAULTS
                 }
             },
             polygon: data.polygon || [],
