@@ -2061,6 +2061,20 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
     }
 });
 
+router.get('/public/system-config', async (req, res) => {
+    try {
+        const systemConfig = await dataManager.getSystemConfig();
+        res.json({
+            success: true,
+            appName: systemConfig.appName || 'TempusGeo',
+            appLogoUrl: systemConfig.appLogoUrl || null,
+            freeTrialDays: parseInt(systemConfig.freeTrialDays) || 0
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 router.get('/system/branding', async (req, res) => {
     try {
         const systemConfig = await dataManager.getSystemConfig();
