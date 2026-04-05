@@ -575,8 +575,10 @@ router.post('/dispatch', async (req, res) => {
 
             case 'saveAdminSettings': {
                 await dataManager.saveAdminSettings(companyId, rest.settings, rest.adminEmail);
-                if (rest.settings && rest.settings.invoiceDetails) {
-                    await dataManager.updateCompanyConfig(companyId, { invoiceDetails: rest.settings.invoiceDetails });
+                // Also update root-level invoiceDetails if provided (Standardized location)
+                const invDetails = req.body.invoiceDetails || (rest.settings && rest.settings.invoiceDetails);
+                if (invDetails !== undefined) {
+                    await dataManager.updateCompanyConfig(companyId, { invoiceDetails: invDetails });
                 }
                 return res.json({ success: true });
             }
