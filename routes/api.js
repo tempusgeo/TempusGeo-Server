@@ -567,6 +567,7 @@ router.post('/dispatch', async (req, res) => {
                     inGracePeriod: inGracePeriod,
                     paymentMethod: client?.paymentMethod || null,
                     autoChargeEnabled: client?.autoChargeEnabled || false,
+                    isFreeTrial: !!client?.isFreeTrial,
                     activeEmployees: activeEmployees,
                     expectedPayment: expectedPayment?.amount || 0,
                     breakdown: expectedPayment?.breakdown || {}
