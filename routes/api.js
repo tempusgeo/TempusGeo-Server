@@ -17,7 +17,7 @@ router.post('/dispatch', async (req, res) => {
     const { action, companyId, password, ...rest } = req.body || {};
     
     // Strict guard for ghost/temporary IDs on non-setup actions
-    const setupActions = ['initTranzilaPayment', 'checkPaymentStatus', 'saveCardToken'];
+    const setupActions = ['initTranzilaPayment', 'checkPaymentStatus', 'saveCardToken', 'processTranzilaTransaction', 'processPayment'];
     if (companyId === 'NEW_SETUP' && !setupActions.includes(action)) {
         return res.json({ success: true, data: {}, messages: [] });
     }
@@ -1791,9 +1791,15 @@ router.post('/payment/process', async (req, res) => {
         // Final fallback if everything fails
         if (!businessName || businessName === 'TempusGeo') businessName = '';
 
-        // 3b. Build proper plan description (REVERSED: Product is TenpusGeo)
+        // 3b. Build proper plan description
+        const plans = (systemConfig.tranzilaPlans || systemConfig.plans || [
+            { id: '1', title: 'מנוי חודשי', price: 29, currency: 'ILS', months: 1 },
+            { id: '2', title: 'מנוי שנתי', price: 290, currency: 'ILS', months: 12 }
+        ]);
+        const selectedPlan = plans.find(p => String(p.id) === String(planId));
+
         const planDesc = selectedPlan
-            ? `TempusGeo - מנוי ל-${selectedPlan.months || 1} חודשים`
+            ? `TempusGeo - מנוי ל-${selectedPlan?.months || 1} חודשים`
             : `TempusGeo - Plan ${planId}`;
 
         // 3d. Resolve ID (myid) - BE ROBUST
