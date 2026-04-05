@@ -41,6 +41,7 @@ class AuthService {
             expectedPayment: expectedPayment,
             isExpired: isExpired,
             expiryDate: client.subscriptionExpiry,
+            isFreeTrial: !!client.isFreeTrial, // Added
             role: 'admin'
         };
     }
