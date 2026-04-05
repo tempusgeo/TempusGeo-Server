@@ -880,6 +880,17 @@ class DataManager {
         await fs.writeFile(path.join(companyDir, 'config.json'), JSON.stringify(updated, null, 2));
         await this.updateLastWriteTime();
 
+        // SYNC TO CLIENTS (For Automated Billing)
+        if (newConfig.invoiceDetails !== undefined) {
+            const client = CACHE.clients.find(c => c.id === companyId);
+            if (client) {
+                if (!client.paymentMethod) client.paymentMethod = this.normalizePaymentMethod(null);
+                client.paymentMethod.businessId = newConfig.invoiceDetails;
+                await this.saveClients();
+                console.log(`[DataManager] Synced invoiceDetails to CLIENTS for ${companyId}`);
+            }
+        }
+
         // ASYNC: Push to GAS in background
         const gasUrl = updated.gasUrl || config.GAS_COLD_STORAGE_URL;
         if (gasUrl) {
@@ -3278,8 +3289,8 @@ class DataManager {
                 const mm = mmRaw.slice(-2);
                 const yy = yyRaw.slice(-2);
 
-                // Priority for Invoice Name: bizConfig (from settings) > client.invoiceDetails (from card save) > businessName
-                const invoiceName = bizConfig.invoiceDetails || client.invoiceDetails || client.businessName;
+                // Priority for Invoice Name: bizConfig (from settings) > client.paymentMethod.businessId > client.invoiceDetails (legacy) > businessName
+                const invoiceName = bizConfig.invoiceDetails || client.paymentMethod?.businessId || client.invoiceDetails || client.businessName;
 
                 // CRITICAL: All required fields must be sent to Tranzila.
                 // mycvv is mandatory — without it Tranzila returns error 004 (CVV required).
