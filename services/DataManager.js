@@ -23,7 +23,9 @@ const ALLOWED_SYSTEM_CONFIG_KEYS = [
     'subscriptionExpiryNotice', 'shiftCheckFrequency', 'monthlyReportDay', 'monthlyReportHour',
     'autoBillingEnabled', 'autoRenewalEnabled', 'freeTrialDays',
     'emailJoinWelcome', 'emailExpiry48h', 'emailExpired', 'emailBlocked', 'emailAutoRenewSuccess',
-    'jetServerUrl', 'JETSERVER_PROXY_URL'
+    'jetServerUrl', 'JETSERVER_PROXY_URL',
+    'emailTemplates',          // Per-email-type customizable intro text
+    'defaultHolidaysBySector'  // Configurable default holidays per religion for new employees
 ];
 
 // HOT STORAGE CONFIG
@@ -1921,12 +1923,17 @@ class DataManager {
             if (!config.settings.constraints) config.settings.constraints = {};
             
             if (!config.settings.constraints[name]) {
+                // Use admin-configurable Jewish defaults, fallback to global config MAJOR_HOLIDAYS
+                const sysConf = this.getSystemConfigSync();
+                const jewishDefaults = sysConf.defaultHolidaysBySector?.['יהדות']
+                    || require('../config').MAJOR_HOLIDAYS
+                    || [];
                 config.settings.constraints[name] = {
                     deviceId: "",
                     deviceIdVerified: false,
-                    qualifyingHolidays: [...(config.MAJOR_HOLIDAYS || [])]
+                    qualifyingHolidays: [...jewishDefaults]
                 };
-                console.log(`[DataManager] Initialized constraints and default holidays for new employee: ${name}`);
+                console.log(`[DataManager] Initialized constraints for new employee: ${name}. Default holidays: ${jewishDefaults.length} entries.`);
             }
 
             await this.updateCompanyConfig(companyId, config);
@@ -3371,30 +3378,38 @@ class DataManager {
             }
         }
 
-        // --- EXPIRY ALERTS & REMINDERS (48h, 24h, 0h) ---
+        // --- EXPIRY ALERTS & REMINDERS (one email per 24h bucket within the notice window) ---
+        // Example: subscriptionExpiryNotice=2 → emails at T-48h, T-24h; subscriptionExpiryNotice=5 → T-120h, T-96h, T-72h, T-48h, T-24h
         if (!client.autoChargeEnabled) {
-            let reminderLevel = null;
-            if (hoursLeft <= 0) reminderLevel = 0;
-            else if (hoursLeft <= 24) reminderLevel = 24;
-            else if (hoursLeft <= 48) reminderLevel = 48;
+            const noticeDays = Math.max(1, parseInt(sysConfig?.subscriptionExpiryNotice) || 7);
 
-            const reminderKey = `${client.subscriptionExpiry}_${reminderLevel}`;
+            let reminderLevel = null;
+            if (hoursLeft <= 0) {
+                reminderLevel = 0; // Expired → grace period email
+            } else if (hoursLeft <= noticeDays * 24) {
+                // Which 24h bucket are we in? ceil maps e.g. 48h→bucket2, 30h→bucket2, 24h→bucket1, 1h→bucket1
+                const dayBucket = Math.ceil(hoursLeft / 24); // 1,2,3,...noticeDays
+                reminderLevel = dayBucket * 24; // 24,48,72,...
+            }
+
+            const reminderKey = `${client.subscriptionExpiry}_r${reminderLevel}`;
             if (reminderLevel !== null && client.lastReminderLevel !== reminderKey) {
                 try {
                     const bizConfig = await this.getCompanyConfig(client.id);
                     const subRes = await this.calculateSubscriptionAmount(client.id);
-                    
+
                     if (reminderLevel === 0) {
                         await emailService.sendGracePeriodAlert(client.email, client.businessName, client.subscriptionExpiry, bizConfig.logoUrl, subRes.amount);
+                        this.logMaintenance('RENEWAL', `Sent EXPIRED grace-period alert to ${client.businessName}`);
                     } else {
                         await emailService.sendSubscriptionAlert(client.email, client.businessName, hoursLeft, client.subscriptionExpiry, bizConfig.logoUrl, subRes.amount);
+                        this.logMaintenance('RENEWAL', `Sent expiry warning (${reminderLevel / 24}d left) to ${client.businessName}`);
                     }
-                    
+
                     client.lastReminderLevel = reminderKey;
                     await this.saveClients();
-                    this.logMaintenance('RENEWAL', `Sent ${reminderLevel}h expiry alert to ${client.businessName}`);
                 } catch (e) {
-                    console.error(`[DataManager] Failed to send ${reminderLevel}h reminder to ${client.id}:`, e.message);
+                    console.error(`[DataManager] Failed to send expiry reminder to ${client.id}:`, e.message);
                 }
             }
         }
