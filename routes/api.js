@@ -15,7 +15,7 @@ const archiver = require('archiver');
 // ================================================================
 router.post('/dispatch', async (req, res) => {
     const { action, companyId, password, ...rest } = req.body || {};
-    
+
     // Strict guard for ghost/temporary IDs on non-setup actions
     const setupActions = ['initTranzilaPayment', 'checkPaymentStatus', 'saveCardToken', 'processTranzilaTransaction', 'processPayment'];
     if (companyId === 'NEW_SETUP' && !setupActions.includes(action)) {
@@ -90,7 +90,7 @@ router.post('/dispatch', async (req, res) => {
                     const holidayDates = await dataManager.getHolidayDatesForMonth(cid, year, month, name);
                     const workWeekType = bizConfig.settings?.constraints?.[name]?.workWeekType || '5day';
                     const shiftWage = WageCalculator.calculateBreakdown([lastShift], bizConfig.settings?.salary || {}, holidayDates, workWeekType);
-                    
+
                     const startDate = new Date(parseInt(lastShift.start));
                     const endDate = new Date(parseInt(lastShift.end));
                     const formatTime = d => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' });
@@ -123,14 +123,14 @@ router.post('/dispatch', async (req, res) => {
                 if (!companyId) return res.json({ success: false, error: 'Missing companyId' });
                 const config = await dataManager.getCompanyConfig(companyId);
                 if (!config) return res.json({ success: false, error: 'Company not found' });
-                
+
                 const client = await dataManager.getClientById(companyId);
                 const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
-                
+
                 const billing = await dataManager.calculateSubscriptionAmount(companyId).catch(() => ({ amount: 0, breakdown: {} }));
 
-                return res.json({ 
-                    success: true, 
+                return res.json({
+                    success: true,
                     config: {
                         ...config,
                         maxShiftHours: sysConfig.maxShiftHours || 12,
@@ -192,7 +192,7 @@ router.post('/dispatch', async (req, res) => {
                         const fullConfig = result.config || {};
                         result.adminEmail = fullConfig.adminEmail || '';
                         result.logoUrl = fullConfig.logoUrl || '';
-                        
+
                         const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
                         result.maxShiftHours = sysConfig.maxShiftHours || 12;
                         result.autoRenew = result.autoChargeEnabled === true; // Mirror the client's actual autoCharge setting
@@ -201,11 +201,11 @@ router.post('/dispatch', async (req, res) => {
                         result.allEmployees = await dataManager.getEmployees(result.companyId).catch(() => []);
                         result.availableHolidays = await dataManager.getAvailableHolidays(result.companyId).catch(() => []);
                         result.dashboard = await dataManager.getDashboard(result.companyId).catch(() => []);
-                        
+
                         // Fix for UI: Admin panel expects activeEmployees and expectedPayment at the root on login
                         const activeEmps = await dataManager.countUniqueActiveEmployees(result.companyId).catch(() => 0);
                         const expectedSub = await dataManager.calculateSubscriptionAmount(result.companyId).catch(() => ({ amount: 0, breakdown: {} }));
-                        
+
                         result.activeEmployees = activeEmps;
                         result.expectedPayment = expectedSub.amount;
                         result.config.expectedPayment = expectedSub; // Keep for backward compatibility fallback
@@ -220,15 +220,15 @@ router.post('/dispatch', async (req, res) => {
                 const result = await dataManager.renewSubscription(companyId);
                 return res.json(result);
             }
-            
+
             case 'recordManualPayment': {
                 // Only allowed for Super-Admin via dispatch
                 if (!isValidSuperAdminPassword(password)) return res.json({ success: false, error: 'Unauthorized' });
                 const { targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail } = rest;
-                
+
                 try {
-                    const result = await handleRecordPayment({ 
-                        targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail 
+                    const result = await handleRecordPayment({
+                        targetCompanyId, amount, months, method, reference, actionType, chargeCC, sendEmail
                     });
                     return res.json(result);
                 } catch (err) {
@@ -279,8 +279,8 @@ router.post('/dispatch', async (req, res) => {
                 const status = await dataManager.getEmployeeStatus(companyId, rest.name);
 
                 // Run summaries asynchronously so the user doesn't wait
-                getMonthlySummary(companyId, rest.name).catch(() => {});
-                if (type === 'OUT') getRecentShiftSummary(companyId, rest.name, 60000).catch(() => {});
+                getMonthlySummary(companyId, rest.name).catch(() => { });
+                if (type === 'OUT') getRecentShiftSummary(companyId, rest.name, 60000).catch(() => { });
 
                 // Calculate a basic fast summary for immediate UI feedback instead of the complex one
                 return res.json({
@@ -499,14 +499,14 @@ router.post('/dispatch', async (req, res) => {
                 const uniqueHolidayDates = [...new Set(holidayDates)];
 
                 const fullData = await dataManager.getFullHistoryForExport(companyId);
-                
+
                 // Enrich with weighted hours per shift
                 for (const [employeeName, shifts] of Object.entries(fullData)) {
                     // For each employee, we need their specific holiday dates
                     // getHolidayDatesForMonth(cid, year, month, name) returns for a specific month.
                     // But 'getFullHistory' might span multiple months/years.
                     // It's better to build a custom set of dates for this employee across all time.
-                    
+
                     const workWeekType = config.settings?.constraints?.[employeeName]?.workWeekType || '5day';
                     const eligibleNames = config.settings?.constraints?.[employeeName]?.qualifyingHolidays || config.settings?.salary?.holidays?.eligible;
                     const employeeHolidayDates = [];
@@ -548,7 +548,7 @@ router.post('/dispatch', async (req, res) => {
                 const now = new Date();
                 const expiryDate = client?.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
                 const graceDate = new Date(expiryDate.getTime() + 48 * 60 * 60 * 1000); // 48 hours grace
-                
+
                 const isExpired = now > graceDate;
                 const inGracePeriod = now > expiryDate && now <= graceDate;
 
@@ -571,7 +571,8 @@ router.post('/dispatch', async (req, res) => {
                     isFreeTrial: !!client?.isFreeTrial,
                     activeEmployees: activeEmployees,
                     expectedPayment: expectedPayment?.amount || 0,
-                    breakdown: expectedPayment?.breakdown || {}
+                    breakdown: expectedPayment?.breakdown || {},
+                    defaultHolidaysBySector: sysConfig.defaultHolidaysBySector || null
                 });
             }
 
@@ -620,7 +621,7 @@ router.post('/dispatch', async (req, res) => {
 
             case 'saveCardToken': {
                 const { cardName, cardId, cardNumber, expMonth, expYear, cvv, businessId } = rest.paymentDetails;
-                
+
                 let finalBusinessId = businessId;
                 if (!finalBusinessId && companyId) {
                     try {
@@ -630,7 +631,7 @@ router.post('/dispatch', async (req, res) => {
                         console.warn('[Payment] Could not fetch invoiceDetails for saveCardToken:', e.message);
                     }
                 }
-                
+
                 // --- Tranzila Tokenization (J5) ---
                 // We need to ensure we send standard fields to Tranzila
                 const payload = {
@@ -655,7 +656,7 @@ router.post('/dispatch', async (req, res) => {
                     // 2. Normalize and Save Token and Metadata
                     const trimmedToken = tranzilaRes.token.trim();
                     const last4 = cardNumber.replace(/\s/g, '').slice(-4);
-                    
+
                     const paymentMethodData = dataManager.normalizePaymentMethod({
                         token: trimmedToken,
                         last4: last4,
@@ -837,8 +838,8 @@ router.post('/super-admin/settings/update', async (req, res) => {
 
         console.log(`[SuperAdmin] System configuration updated and synced. Current maxShiftHours: ${updatedConfig.maxShiftHours}`);
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: "ההגדרות נשמרו בהצלחה במערכת ובענן (GAS)",
             settings: updatedConfig
         });
@@ -901,7 +902,7 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
     if (chargeCC) {
         const pm = client.paymentMethod;
         if (!pm || !pm.token) return { success: false, error: "אין כרטיס אשראי שמור לעסק זה. לא ניתן לבצע סליקה." };
-        
+
         const sysConfig = await dataManager.getSystemConfig();
         const chargeRes = await tranzilaService.chargeToken({
             supplier: sysConfig.tranzilaTerminal,
@@ -926,7 +927,7 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
     const now = new Date();
     const currentExpiry = client.subscriptionExpiry ? new Date(client.subscriptionExpiry) : now;
     let targetDate;
-    
+
     const isDebtOnly = actionType === 'debt_only' || actionType === 'DEBT_ONLY';
     const isRenewal = actionType === 'RENEW' || actionType === 'renewal';
     let description = "";
@@ -944,7 +945,7 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
             client.paymentHistory[lastIdx].method = 'Credit Card (Saved)';
             await dataManager.saveClients();
         }
-        
+
         return {
             success: true,
             newExpiry: result.newExpiry,
@@ -954,7 +955,7 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
 
     if (isDebtOnly) {
         targetDate = currentExpiry < now ? new Date() : new Date(currentExpiry);
-        targetDate.setHours(4, 0, 0, 0); 
+        targetDate.setHours(4, 0, 0, 0);
         description = "סגירת חוב (שימוש עד כה)";
         statusDisplayName = "חוב נסגר";
     } else {
@@ -963,18 +964,18 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
         } else {
             targetDate = new Date(currentExpiry);
         }
-        
+
         const addMonths = parseInt(months) || 1;
-        targetDate.setMonth(targetDate.getMonth() + addMonths - 1); 
+        targetDate.setMonth(targetDate.getMonth() + addMonths - 1);
         targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 1, 4, 0, 0, 0);
-        
+
         description = addMonths > 0 ? `חידוש מנוי ל-${addMonths} חודשים` : "עדכון מנוי";
         statusDisplayName = "שולם";
     }
 
     client.subscriptionExpiry = targetDate.toISOString();
     if (!isDebtOnly) {
-         client.subscriptionDate = new Date().toISOString();
+        client.subscriptionDate = new Date().toISOString();
     }
 
     if (!client.paymentHistory) client.paymentHistory = [];
@@ -996,12 +997,12 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
 
     // --- 3. SEND EMAIL ---
     if (sendEmail) {
-         emailService.sendPaymentSuccessNotification(client.email, {
-             businessName: client.businessName,
-             amount: Math.abs(amount),
-             newExpiry: targetDate.toLocaleDateString('he-IL'),
-             description: description
-         }).catch(e => console.error("[API] Failed to send payment email:", e.message));
+        emailService.sendPaymentSuccessNotification(client.email, {
+            businessName: client.businessName,
+            amount: Math.abs(amount),
+            newExpiry: targetDate.toLocaleDateString('he-IL'),
+            description: description
+        }).catch(e => console.error("[API] Failed to send payment email:", e.message));
     }
 
     return {
@@ -1356,8 +1357,8 @@ router.post('/admin/data', async (req, res) => {
             allEmployees: await dataManager.getEmployees(companyId),
             paymentHistory: client.lastPayment ? [client.lastPayment] : [],
             expiryDate: client.subscriptionExpiry ? new Date(client.subscriptionExpiry).toLocaleDateString('he-IL') : 'Unknown',
-            isExpired: client.subscriptionExpiry ? new Date(new Date(client.subscriptionExpiry).getTime() + 48*60*60*1000) < new Date() : false,
-            inGracePeriod: client.subscriptionExpiry ? (new Date(client.subscriptionExpiry) < new Date() && new Date(new Date(client.subscriptionExpiry).getTime() + 48*60*60*1000) >= new Date()) : false
+            isExpired: client.subscriptionExpiry ? new Date(new Date(client.subscriptionExpiry).getTime() + 48 * 60 * 60 * 1000) < new Date() : false,
+            inGracePeriod: client.subscriptionExpiry ? (new Date(client.subscriptionExpiry) < new Date() && new Date(new Date(client.subscriptionExpiry).getTime() + 48 * 60 * 60 * 1000) >= new Date()) : false
         });
 
     } catch (e) {
@@ -1757,10 +1758,10 @@ router.post('/payment/process', async (req, res) => {
         // ID Validation (myid)
         const myidRaw = (cardInfo.myid || cardInfo.cardId || cardInfo.id || '').toString().trim();
         if (!myidRaw) {
-             return res.status(400).json({ success: false, error: 'חסר מספר תעודת זהות של בעל הכרטיס' });
+            return res.status(400).json({ success: false, error: 'חסר מספר תעודת זהות של בעל הכרטיס' });
         }
         if (!/^\d{9}$/.test(myidRaw)) {
-             return res.status(400).json({ success: false, error: 'מספר תעודת זהות חייב להכיל 9 ספרות בדיוק' });
+            return res.status(400).json({ success: false, error: 'מספר תעודת זהות חייב להכיל 9 ספרות בדיוק' });
         }
 
         // 1. Get System Config (Tranzila Credentials)
@@ -1950,7 +1951,7 @@ router.post('/payment/process', async (req, res) => {
                     const sysConfig = await dataManager.getSystemConfig();
                     const trialExpiry = dataManager.getNextBillingDate(sysConfig.chargeDay || 1, sysConfig.chargeTime || "00:00");
                     return res.json({ success: true, newExpiry: trialExpiry.toISOString(), tranzilaResponse: fullData, paymentMethod: pMethod });
-                } catch(e) {
+                } catch (e) {
                     console.error('[Payment] NEW_SETUP trialExpiry calculation error', e);
                     return res.json({ success: true, newExpiry: null, tranzilaResponse: fullData, paymentMethod: pMethod });
                 }
@@ -1985,7 +1986,7 @@ const maintenanceAuth = (req, res, next) => {
     // Check header, body, and query for compatibility (GET requests use query)
     const token = req.headers['x-maintenance-token'] || (req.body && req.body.token) || req.query.token;
     const validToken = process.env.MAINTENANCE_TOKEN || config.JETSERVER_TOKEN || 'maintenance-secret-123';
-    
+
     if (token !== validToken) {
         console.warn(`[Maintenance] Unauthorized attempt from ${req.ip} targeting ${req.path}`);
         return res.status(401).json({ success: false, error: "Unauthorized Maintenance Token" });
@@ -2020,7 +2021,7 @@ router.post('/maintenance/charge-client', maintenanceAuth, async (req, res) => {
     try {
         const { clientId, isTest } = req.body;
         if (!clientId) return res.status(400).json({ success: false, error: 'Missing clientId' });
-        
+
         const result = await dataManager.chargeClientManually(clientId, !!isTest);
         res.json(result);
     } catch (e) {
@@ -2030,7 +2031,7 @@ router.post('/maintenance/charge-client', maintenanceAuth, async (req, res) => {
 
 router.get('/maintenance/logs', maintenanceAuth, async (req, res) => {
     const category = req.query.category;
-    
+
     // Special handling for cloud-based logs (EMAILS)
     if (category === 'EMAILS') {
         const gasRes = await dataManager.getGASLogs('EMAILS');
@@ -2043,7 +2044,7 @@ router.get('/maintenance/logs', maintenanceAuth, async (req, res) => {
     if (category && dataManager.maintenanceLogs[category]) {
         return res.json({ success: true, logs: dataManager.maintenanceLogs[category] });
     }
-    
+
     // Default to ALL local logs
     res.json({ success: true, logs: dataManager.maintenanceLogs.ALL || [] });
 });
@@ -2068,10 +2069,10 @@ router.post('/maintenance/monthly-reports', maintenanceAuth, async (req, res) =>
 
         dataManager.logMaintenance('REPORTS', `Admin triggered manual report generation for ${month}/${year}`);
         const results = await dataManager.runMonthlyReports(year, month);
-        res.json({ 
-            success: true, 
-            ...results, 
-            logs: dataManager.maintenanceLogs.REPORTS 
+        res.json({
+            success: true,
+            ...results,
+            logs: dataManager.maintenanceLogs.REPORTS
         });
 
     } catch (e) {
