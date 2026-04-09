@@ -252,9 +252,20 @@ class EmailService {
         const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
         const appName = systemConfig.appName || config.APP_NAME;
 
-        const content = `
+        // Defensive: log inputs to help debug if ever empty again
+        console.log(`[Email] sendWelcomeEmail → to=${to} businessName=${businessName} companyId=${companyId} hasPassword=${!!password} appName=${appName}`);
+
+        let html;
+        try {
+            // Use admin-configured intro if set, otherwise use default
+            const templates = systemConfig.emailTemplates || {};
+            const introHtml = templates.welcomeIntro
+                ? `<p style="text-align: right; margin-bottom: 15px;">${templates.welcomeIntro.replace(/\n/g, '<br>')}</p>`
+                : `<p style="text-align: right; margin-bottom: 15px;">אנחנו שמחים שהצטרפת למערכת <strong>${appName}</strong>! החשבון שלך נוצר בהצלחה.</p>`;
+
+            const content = `
             <p style="text-align: right; margin-bottom: 15px;">שלום <strong>${businessName}</strong>,</p>
-            <p style="text-align: right;">אנחנו שמחים שהצטרפת למערכת <strong>${appName}</strong>! החשבון שלך נוצר בהצלחה.</p>
+            ${introHtml}
             
             <div style="background: rgba(99, 102, 241, 0.1); border-right: 4px solid #6366f1; padding: 20px; margin: 20px 0; border-radius: 12px;">
                 <h3 style="color: #ffffff; font-size: 16px; margin: 0 0 15px 0; text-align: right;">פרטי ההתחברות שלך:</h3>
@@ -280,8 +291,22 @@ class EmailService {
                 <a href="${config.APP_URL || '#'}" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 14px 40px; border-radius: 12px; font-weight: 800; font-size: 16px; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);">כניסה למערכת</a>
             </div>
         `;
+            html = this.getStyledTemplate(title, content, '', null, businessName);
+        } catch (templateErr) {
+            console.error(`[Email] getStyledTemplate failed, using fallback HTML:`, templateErr.message);
+            // Fallback: minimal but always includes the critical data
+            html = `<!DOCTYPE html><html dir="rtl" lang="he"><body style="font-family:sans-serif;background:#0f172a;color:#fff;padding:20px;">
+                <h2>ברוכים הבאים ל-${appName}!</h2>
+                <p>שלום <strong>${businessName}</strong>, החשבון שלך נוצר בהצלחה.</p>
+                <hr style="border-color:#334155;">
+                <p><strong>מספר עסק:</strong> ${companyId}</p>
+                <p><strong>סיסמת מנהל:</strong> ${password}</p>
+                <hr style="border-color:#334155;">
+                <p><a href="${config.APP_URL || '#'}" style="color:#818cf8;">כניסה למערכת</a></p>
+            </body></html>`;
+        }
 
-        return this.sendEmail(to, `ברוכים הבאים ל-${appName} - ${businessName}`, this.getStyledTemplate(title, content, '', null, businessName));
+        return this.sendEmail(to, `ברוכים הבאים ל-${appName} - ${businessName}`, html);
     }
 
     async sendMonthlyReport(to, reportData, year, month, businessName, salaryConfig = {}, companyId, logoUrl = null) {
@@ -303,17 +328,17 @@ class EmailService {
 
                     let breakdownHtml = '';
                     for (const [rate, hours] of Object.entries(wageResult.breakdown)) {
-                        breakdownHtml += `<div style="font-size: 11px; margin-bottom: 1px;">
+                        breakdownHtml += `<div style="font-size: 13px; margin-bottom: 1px;">
                             <span style="font-weight: 700; color: #818cf8;">${rate}%:</span> ${hours}ש'
                         </div>`;
                     }
 
                     tableRows += `
                         <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
-                            <td style="padding: 8px 4px; font-weight: 700; color: #ffffff; font-size: 11px;">${employee}</td>
-                            <td style="padding: 8px 4px; text-align: center; color: #94a3b8; font-size: 11px;">${shifts.length}</td>
-                            <td style="padding: 8px 4px; text-align: center; color: #10b981; font-weight: 800; font-size: 11px;">${wageResult.totalHours}</td>
-                            <td style="padding: 8px 4px; text-align: center; color: #a855f7; font-weight: 800; font-size: 11px;">${wageResult.weightedTotal}</td>
+                            <td style="padding: 8px 4px; font-weight: 700; color: #ffffff; font-size: 13px;">${employee}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #94a3b8; font-size: 13px;">${shifts.length}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #10b981; font-weight: 800; font-size: 13px;">${wageResult.totalHours}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #a855f7; font-weight: 800; font-size: 13px;">${wageResult.weightedTotal}</td>
                             <td style="padding: 8px 4px; text-align: right; direction: rtl;">${breakdownHtml}</td>
                         </tr>
                     `;
@@ -323,11 +348,11 @@ class EmailService {
                     shifts.forEach(s => { if (s.start && s.end) totalHours += (new Date(s.end) - new Date(s.start)) / 3600000; });
                     tableRows += `
                         <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
-                            <td style="padding: 8px 4px; color: #ffffff; font-size: 11px;">${employee}</td>
-                            <td style="padding: 8px 4px; text-align: center; color: #94a3b8; font-size: 11px;">${shifts.length}</td>
-                            <td style="padding: 8px 4px; text-align: center; color: #ffffff; font-size: 11px;">${totalHours.toFixed(2)}</td>
-                            <td style="padding: 8px 4px; text-align: center; color: #ffffff; font-size: 11px;">-</td>
-                            <td style="padding: 8px 4px; text-align: right; color: #f43f5e; font-size: 10px;">שגיאה</td>
+                            <td style="padding: 8px 4px; color: #ffffff; font-size: 13px;">${employee}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #94a3b8; font-size: 13px;">${shifts.length}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #ffffff; font-size: 13px;">${totalHours.toFixed(2)}</td>
+                            <td style="padding: 8px 4px; text-align: center; color: #ffffff; font-size: 13px;">-</td>
+                            <td style="padding: 8px 4px; text-align: right; color: #f43f5e; font-size: 12px;">שגיאה</td>
                         </tr>
                     `;
                 }
@@ -339,7 +364,7 @@ class EmailService {
 
         const content = `
             <div class="table-wrapper" style="background: rgba(0, 0, 0, 0.1); border-radius: 10px; overflow-x: auto; -webkit-overflow-scrolling: touch;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 11px; direction: rtl; min-width: 480px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 13px; direction: rtl; min-width: 480px;">
                     <thead>
                         <tr style="background-color: rgba(255, 255, 255, 0.03); color: #94a3b8;">
                             <th style="padding: 12px 6px; text-align: right; font-weight: 700;">עובד</th>
@@ -354,7 +379,7 @@ class EmailService {
                     </tbody>
                 </table>
             </div>
-            <p style="margin-top: 20px; color: #94a3b8; font-size: 11px; text-align: center; font-style: italic;">לדוח מפורט, היכנס למערכת הניהול.</p>
+            <p style="margin-top: 20px; color: #94a3b8; font-size: 13px; text-align: center; font-style: italic;">לדוח מפורט, היכנס למערכת הניהול.</p>
         `;
 
         return this.sendEmail(to, title + ` - ${businessName}`, this.getStyledTemplate(title, content, '', logoUrl, businessName));
@@ -381,7 +406,7 @@ class EmailService {
             if (locationStr.includes('בתוך המשרד') || locationStr.includes('בטווח המורשה') || locationStr.includes('בטווח')) {
                 locColor = '#3b82f6';
                 if (!locationStr.includes('(')) {
-                    locSuffix = ' <span style="font-size: 11px; opacity: 0.8;">(בטווח המותר)</span>';
+                    locSuffix = ' <span style="font-size: 13px; opacity: 0.8;">(בטווח המותר)</span>';
                 }
             } else if (locationStr.includes('מהמשרד')) {
                 locColor = '#f43f5e';
@@ -526,6 +551,14 @@ class EmailService {
 
         const formattedDate = new Date(expiryDate).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' });
 
+        // Admin-configured intro override
+        const dataManager = require('./DataManager');
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+        const templates = systemConfig.emailTemplates || {};
+        const introText = templates.expiryIntro
+            ? `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">${templates.expiryIntro.replace(/\n/g, '<br>')}</p>`
+            : `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">תוקף המנוי למערכת הוא עד: <strong style="color: #ffffff;">${formattedDate}</strong>.</p>`;
+
         const content = `
             <div style="text-align: center; margin-bottom: 20px;">
                  <div style="display: inline-block; padding: 10px 20px; background-color: ${color}15; color: ${color}; border: 1px solid ${color}30; border-radius: 50px; font-weight: 800; font-size: 16px;">
@@ -534,7 +567,7 @@ class EmailService {
             </div>
 
             <p style="text-align: right; color: #ffffff; font-size: 15px; margin-bottom: 15px;">שלום <strong>${businessName}</strong>,</p>
-            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">תוקף המנוי למערכת הוא עד: <strong style="color: #ffffff;">${formattedDate}</strong>.</p>
+            ${introText}
             
             ${amount ? `
             <div style="background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 8px; margin: 15px 0; text-align: right;">
@@ -554,9 +587,18 @@ class EmailService {
     }
 
     async sendGracePeriodAlert(to, businessName, expiryDate, logoUrl = null, amount = null) {
-        const title = `המנוי פג - תקופת חסד של 48 שעות`;
         const color = '#f43f5e';
         const formattedDate = new Date(expiryDate).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' });
+
+        // Admin-configured intro override
+        const dataManager = require('./DataManager');
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+        const templates = systemConfig.emailTemplates || {};
+        const graceHours = (parseInt(systemConfig.subscriptionExpiryNotice) || 1) * 24; // Use configured notice period
+        const title = `המנוי פג — תקופת חסד פעילה`;
+        const introText = templates.graceIntro
+            ? `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">${templates.graceIntro.replace(/\n/g, '<br>')}</p>`
+            : `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">תוקף המנוי שלך פג בתאריך: <strong style="color: #ffffff;">${formattedDate}</strong>.</p>`;
 
         const content = `
             <div style="text-align: center; margin-bottom: 20px;">
@@ -566,10 +608,10 @@ class EmailService {
             </div>
 
             <p style="text-align: right; color: #ffffff; font-size: 15px; margin-bottom: 15px;">שלום <strong>${businessName}</strong>,</p>
-            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">תוקף המנוי שלך פג בתאריך: <strong style="color: #ffffff;">${formattedDate}</strong>.</p>
+            ${introText}
             
             <div style="background: rgba(244, 63, 94, 0.1); border-right: 4px solid #f43f5e; padding: 20px; margin: 20px 0; border-radius: 12px;">
-                <p style="margin: 0; color: #ffffff; font-weight: 700; text-align: right;">לרשותך 48 שעות של תקופת חסד לפני חסימה מלאה של המערכת.</p>
+                <p style="margin: 0; color: #ffffff; font-weight: 700; text-align: right;">לרשותך תקופת חסד לפני חסימה מלאה של המערכת.</p>
                 <p style="margin: 10px 0 0 0; color: #94a3b8; font-size: 13px; text-align: right;">שימוש במערכת במהלך תקופת החסד ייספר כפעילות במחזור החיוב הנוכחי.</p>
             </div>
 
@@ -580,7 +622,7 @@ class EmailService {
             </div>
         `;
 
-        return this.sendEmail(to, `חשוב: המנוי פג - נותרו 48 שעות לחסימה - ${businessName}`, this.getStyledTemplate('התראת תפוגה', content, '', logoUrl, businessName));
+        return this.sendEmail(to, `חשוב: המנוי פג — נדרש חידוש - ${businessName}`, this.getStyledTemplate('התראת תפוגה', content, '', logoUrl, businessName));
     }
 
     async sendPaymentSuccessNotification(to, data) {
