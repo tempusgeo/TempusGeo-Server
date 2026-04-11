@@ -220,6 +220,7 @@ router.post('/dispatch', async (req, res) => {
                         const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
                         result.maxShiftHours = sysConfig.maxShiftHours || 12;
                         result.autoRenew = result.autoChargeEnabled === true; // Mirror the client's actual autoCharge setting
+                        result.defaultHolidaysBySector = mergeDefaultHolidaysBySector(sysConfig.defaultHolidaysBySector);
 
                         // Fix: get latest employees list from dataManager directly
                         result.allEmployees = await dataManager.getEmployees(result.companyId).catch(() => []);
