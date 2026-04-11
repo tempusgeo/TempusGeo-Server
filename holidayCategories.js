@@ -37,6 +37,9 @@ window.ADMIN_HOLIDAY_CATEGORIES = {
     "ערב עיד אל-פיטר": "אסלאם",
     "עיד אל-אדחא": "אסלאם",
     "עיד אל-פיטר": "אסלאם",
+    "Eid al-Fitr": "אסלאם",
+    "Eid al-Adha": "אסלאם",
+    "Ramadan": "אסלאם",
     "ראש השנה המוסלמי": "אסלאם",
     "רמדאן": "אסלאם",
     "Eid al-Khader": "דרוזים",
@@ -111,4 +114,57 @@ window.ADMIN_HOLIDAY_CATEGORIES = {
     "Holocaust Remembrance Day": "ממלכתי וכללי",
     "Memorial Day": "ממלכתי וכללי",
     "Independence Day": "ממלכתי וכללי"
+};
+
+/** סנכרון עם RENDER/config.js — HOLIDAY_MAPPING (אנגלית כמו בלוח שנה / Google → עברית במערכת) */
+window.HOLIDAY_EN_TO_HE = {
+    "Rosh Hashana": "ראש השנה",
+    "Yom Kippur": "יום כיפור",
+    "Sukkot": "סוכות",
+    "Simchat Torah": "שמחת תורה",
+    "Hanukkah": "חנוכה",
+    "Purim": "פורים",
+    "Seventh day of Passover": "שביעי של פסח",
+    "Passover": "פסח",
+    "Mimouna": "מימונה",
+    "Shavuot": "שבועות",
+    "Tisha B'Av": "תשעה באב",
+    "Tu B'Av": "ט\"ו באב",
+    "Lag BaOmer": "ל\"ג בעומר",
+    "Ramadan": "רמדאן",
+    "Eid al-Fitr": "עיד אל-פיטר",
+    "Eid al-Adha": "עיד אל-אדחא",
+    "Muharram": "ראש השנה המוסלמי",
+    "Prophet's Birthday": "יום הולדת הנביא",
+    "Independence Day": "יום העצמאות",
+    "Holocaust Remembrance Day": "יום השואה",
+    "Memorial Day": "יום הזיכרון"
+};
+
+/** שם עברי קנוני לשמירה ותצוגה (שמות באנגלית מהקטלוג מתורגמים) */
+window.holidayCanonicalHebrew = function (catalogName) {
+    const M = window.HOLIDAY_EN_TO_HE;
+    const s = String(catalogName || '').trim();
+    if (!s) return '';
+    if (M && M[s]) return M[s];
+    if (M) {
+        for (const he of Object.values(M)) {
+            if (he === s) return s;
+        }
+    }
+    return s;
+};
+
+/** מחרוזת חיפוש משולבת: עברית + אנגלית + מפתחות מקור */
+window.holidaySearchBlob = function (catalogName) {
+    const raw = String(catalogName || '').trim();
+    const he = window.holidayCanonicalHebrew(raw);
+    const parts = [raw, he];
+    const M = window.HOLIDAY_EN_TO_HE;
+    if (M) {
+        for (const [en, h] of Object.entries(M)) {
+            if (h === he || en === raw) parts.push(en);
+        }
+    }
+    return parts.filter(Boolean).join(' ').toLowerCase();
 };
