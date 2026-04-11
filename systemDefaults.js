@@ -7,7 +7,7 @@ const config = require('./config');
 
 const SECTORS = ['יהדות', 'אסלאם', 'דרוזים', 'נצרות'];
 
-/** Same list as CLIENT_USER when loading sector "יהדות" without admin config */
+/** ברירת מחדל קשיחה רק כשב־SYSTEM_CONFIG אין מערך לסקטור יהדות (mergeDefaultHolidaysBySector). */
 const DEFAULT_JEWISH_HOLIDAYS = [
     'פסח', 'מימונה', 'סוכות', 'ראש השנה', 'יום כיפור', 'שבועות', 'יום העצמאות', 'שמחת תורה'
 ];
@@ -23,9 +23,7 @@ const ISLAMIC_STATUTORY_HOLIDAYS_IL = ['יום העצמאות', 'עיד אל-פ�
  */
 const CHRISTIAN_CORE_HOLIDAYS_IL = ['יום העצמאות', 'חג המולד', 'פסחא', 'יום שישי הטוב'];
 
-/**
- * Mirrors CLIENT_USER getHolidaysBySector for דרוזים בלבד (לא משמש לאסלאם / נצרות).
- */
+/** רשימת דרוזים לברירת מחדל קשיחה (כשאין מערך ב־SYSTEM_CONFIG לסקטור דרוזים). */
 function holidaysForSector(sector) {
     const holidays = ['יום העצמאות', 'Yom HaAtzmaut'];
     const categoryMap = {
