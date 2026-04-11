@@ -1,7 +1,12 @@
 const nodemailer = require('nodemailer');
 const axios = require('axios');
 const config = require('../config');
-const { getEmailTemplatePlainDefaults } = require('../systemDefaults');
+const {
+    buildWelcomeEmailDefaults,
+    applyEmailPlaceholders,
+    escapeHtmlAttr,
+    getEmailTemplatePlainDefaults
+} = require('../systemDefaults');
 
 class EmailService {
     constructor() {
@@ -247,68 +252,98 @@ class EmailService {
         return this.sendEmail(to, `איפוס סיסמה - ${appName}`, this.getStyledTemplate(title, content));
     }
 
+    _welcomeWorkLocationsHtml(polygon) {
+        if (!polygon || !Array.isArray(polygon) || polygon.length === 0) {
+            return '<p style="margin:0;color:#64748b;font-size:13px;text-align:right;">לא הוגדרו עדיין מיקומי דיווח — ניתן להגדירם במערכת לאחר ההתחברות הראשונה.</p>';
+        }
+        const n = polygon.length;
+        return `<p style="margin:0;color:#94a3b8;font-size:13px;text-align:right;">במערכת הוגדרו <strong>${n}</strong> נקודות/אזורי מפה לדיווח נוכחות. לעריכה מלאה היכנס להגדרות המשרד.</p>`;
+    }
+
     async sendWelcomeEmail(to, businessName, companyId, password) {
-        const title = 'ברוכים הבאים למערכת!';
         const dataManager = require('./DataManager');
         const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
         const appName = systemConfig.appName || config.APP_NAME;
+        const templates = systemConfig.emailTemplates || {};
+        const defaults = buildWelcomeEmailDefaults(appName);
 
-        // Defensive: log inputs to help debug if ever empty again
         console.log(`[Email] sendWelcomeEmail → to=${to} businessName=${businessName} companyId=${companyId} hasPassword=${!!password} appName=${appName}`);
 
-        let html;
+        let biz = {};
         try {
-            // Use admin-configured intro if set, otherwise use default
-            const templates = systemConfig.emailTemplates || {};
-            const plainDefaults = getEmailTemplatePlainDefaults(appName);
-            const introHtml = templates.welcomeIntro
-                ? `<p style="text-align: right; margin-bottom: 15px;">${templates.welcomeIntro.replace(/\n/g, '<br>')}</p>`
-                : `<p style="text-align: right; margin-bottom: 15px;">${plainDefaults.welcomeIntro.replace(/\n/g, '<br>')}</p>`;
+            biz = await dataManager.getCompanyConfig(companyId);
+        } catch (e) {
+            console.warn(`[Email] sendWelcomeEmail: could not load company config for ${companyId}:`, e.message);
+        }
 
-            const content = `
-            <p style="text-align: right; margin-bottom: 15px;">שלום <strong>${businessName}</strong>,</p>
+        const logoUrlRaw = (biz && biz.logoUrl) || systemConfig.appLogoUrl || '';
+        const logoUrlSafe = /^https?:\/\//i.test(String(logoUrlRaw)) ? String(logoUrlRaw) : '';
+        const logoImg = logoUrlSafe
+            ? `<img src="${escapeHtmlAttr(logoUrlSafe)}" alt="Logo" style="max-height:48px;margin-bottom:10px;border-radius:8px;">`
+            : '';
+
+        const map = {
+            businessName: escapeHtmlAttr(businessName),
+            systemAppName: escapeHtmlAttr(appName),
+            companyId: escapeHtmlAttr(companyId),
+            adminPassword: escapeHtmlAttr(password),
+            logoUrl: escapeHtmlAttr(logoUrlSafe),
+            logoImg,
+            workLocationsHtml: this._welcomeWorkLocationsHtml(biz.polygon),
+            appUrl: escapeHtmlAttr(config.APP_URL || '#'),
+            emailTitle: escapeHtmlAttr('ברוכים הבאים למערכת!'),
+            currentYear: String(new Date().getFullYear())
+        };
+
+        let html;
+        let subject;
+
+        try {
+            const customHtml = (templates.welcomeHtml && String(templates.welcomeHtml).trim()) || '';
+            const customSubject = (templates.welcomeSubject && String(templates.welcomeSubject).trim()) || '';
+
+            if (customHtml) {
+                html = applyEmailPlaceholders(customHtml, map);
+                subject = applyEmailPlaceholders(customSubject || defaults.welcomeSubject, map);
+            } else if (templates.welcomeIntro && String(templates.welcomeIntro).trim()) {
+                const title = 'ברוכים הבאים למערכת!';
+                const introHtml = `<p style="text-align: right; margin-bottom: 15px;">${String(templates.welcomeIntro).replace(/\n/g, '<br>')}</p>`;
+                const content = `
+            <p style="text-align: right; margin-bottom: 15px;">שלום <strong>${escapeHtmlAttr(businessName)}</strong>,</p>
             ${introHtml}
-            
             <div style="background: rgba(99, 102, 241, 0.1); border-right: 4px solid #6366f1; padding: 20px; margin: 20px 0; border-radius: 12px;">
                 <h3 style="color: #ffffff; font-size: 16px; margin: 0 0 15px 0; text-align: right;">פרטי ההתחברות שלך:</h3>
                 <table style="width: 100%; color: #ffffff; font-size: 14px;">
                     <tr>
                         <td style="color: #94a3b8; text-align: right; padding: 5px 0;">מספר עסק:</td>
-                        <td style="text-align: left; font-weight: 700;">${companyId}</td>
+                        <td style="text-align: left; font-weight: 700;">${escapeHtmlAttr(companyId)}</td>
                     </tr>
                     <tr>
                         <td style="color: #94a3b8; text-align: right; padding: 5px 0;">סיסמת מנהל:</td>
-                        <td style="text-align: left; font-weight: 700;">${password}</td>
+                        <td style="text-align: left; font-weight: 700;">${escapeHtmlAttr(password)}</td>
                     </tr>
                 </table>
             </div>
-
             <p style="text-align: right; font-size: 14px; color: #94a3b8; line-height: 1.6;">
-                כעת ניתן להתחבר ללוח הבקרה ולהתחיל לנהל את נוכחות העובדים שלך בקלות.
-                <br>
+                כעת ניתן להתחבר ללוח הבקרה ולהתחיל לנהל את נוכחות העובדים שלך בקלות.<br>
                 מומלץ לשנות את הסיסמה לאחר ההתחברות הראשונית באזור ההגדרות.
             </p>
-            
             <div style="text-align: center; margin-top: 30px;">
-                <a href="${config.APP_URL || '#'}" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 14px 40px; border-radius: 12px; font-weight: 800; font-size: 16px; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);">כניסה למערכת</a>
-            </div>
-        `;
-            html = this.getStyledTemplate(title, content, '', null, businessName);
+                <a href="${escapeHtmlAttr(config.APP_URL || '#')}" style="display: inline-block; background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 14px 40px; border-radius: 12px; font-weight: 800; font-size: 16px; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);">כניסה למערכת</a>
+            </div>`;
+                html = this.getStyledTemplate(title, content, '', logoUrlSafe || null, businessName);
+                subject = `ברוכים הבאים ל-${appName} - ${businessName}`;
+            } else {
+                html = applyEmailPlaceholders(defaults.welcomeHtml, map);
+                subject = applyEmailPlaceholders(defaults.welcomeSubject, map);
+            }
         } catch (templateErr) {
-            console.error(`[Email] getStyledTemplate failed, using fallback HTML:`, templateErr.message);
-            // Fallback: minimal but always includes the critical data
-            html = `<!DOCTYPE html><html dir="rtl" lang="he"><body style="font-family:sans-serif;background:#0f172a;color:#fff;padding:20px;">
-                <h2>ברוכים הבאים ל-${appName}!</h2>
-                <p>שלום <strong>${businessName}</strong>, החשבון שלך נוצר בהצלחה.</p>
-                <hr style="border-color:#334155;">
-                <p><strong>מספר עסק:</strong> ${companyId}</p>
-                <p><strong>סיסמת מנהל:</strong> ${password}</p>
-                <hr style="border-color:#334155;">
-                <p><a href="${config.APP_URL || '#'}" style="color:#818cf8;">כניסה למערכת</a></p>
-            </body></html>`;
+            console.error(`[Email] sendWelcomeEmail template failed:`, templateErr.message);
+            html = applyEmailPlaceholders(defaults.welcomeHtml, map);
+            subject = applyEmailPlaceholders(defaults.welcomeSubject, map);
         }
 
-        return this.sendEmail(to, `ברוכים הבאים ל-${appName} - ${businessName}`, html);
+        return this.sendEmail(to, subject, html);
     }
 
     async sendMonthlyReport(to, reportData, year, month, businessName, salaryConfig = {}, companyId, logoUrl = null) {
