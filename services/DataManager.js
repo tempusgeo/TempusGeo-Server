@@ -3,6 +3,7 @@ const path = require('path');
 const config = require('../config');
 const axios = require('axios');
 const emailService = require('./EmailService');
+const { mergeDefaultHolidaysBySector } = require('../systemDefaults');
 const WageCalculator = require('./WageCalculator');
 const syncManager = require('./SyncManager');
 const tranzilaService = require('./TranzilaService');
@@ -1977,9 +1978,8 @@ class DataManager {
             if (!config.settings.constraints[name]) {
                 // Use admin-configurable Jewish defaults, fallback to global config MAJOR_HOLIDAYS
                 const sysConf = this.getSystemConfigSync();
-                const jewishDefaults = sysConf.defaultHolidaysBySector?.['יהדות']
-                    || require('../config').MAJOR_HOLIDAYS
-                    || [];
+                const bySector = mergeDefaultHolidaysBySector(sysConf.defaultHolidaysBySector);
+                const jewishDefaults = bySector['יהדות'] || [];
                 config.settings.constraints[name] = {
                     deviceId: "",
                     deviceIdVerified: false,
