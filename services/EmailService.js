@@ -627,14 +627,20 @@ class EmailService {
 
     async sendPaymentSuccessNotification(to, data) {
         const title = 'תשלום בוצע בהצלחה';
+        const dataManager = require('./DataManager');
+        const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
+        const templates = systemConfig.emailTemplates || {};
+        const successIntro = templates.paymentSuccessIntro
+            ? `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">${templates.paymentSuccessIntro.replace(/\n/g, '<br>')}</p>`
+            : `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">שמחים לעדכן כי התשלום החודשי עבור המנוי בוצע בהצלחה.</p>`;
         const content = `
             <p style="text-align: right; color: #ffffff; font-size: 15px; margin-bottom: 15px;">שלום <strong>${data.businessName}</strong>,</p>
-            <p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">שמחים לעדכן כי התשלום החודשי עבור המנוי בוצע בהצלחה.</p>
+            ${successIntro}
             
             <div style="background: rgba(16, 185, 129, 0.1); border-right: 4px solid #10b981; padding: 15px; margin: 20px 0; border-radius: 8px;">
                 <table style="width: 100%; color: #ffffff; font-size: 14px;">
                     <tr><td style="color: #94a3b8; text-align: right;">סכום לחיוב:</td><td style="text-align: left; font-weight: 700;">₪${data.amount}</td></tr>
-                    <tr><td style="color: #94a3b8; text-align: right;">עובדים פעילים:</td><td style="text-align: left;">${data.activeEmployees}</td></tr>
+                    <tr><td style="color: #94a3b8; text-align: right;">עובדים פעילים:</td><td style="text-align: left;">${data.activeEmployees != null && data.activeEmployees !== '' ? data.activeEmployees : '—'}</td></tr>
                     <tr><td style="color: #94a3b8; text-align: right;">תוקף מנוי חדש:</td><td style="text-align: left; font-weight: 700;">${data.newExpiry}</td></tr>
                 </table>
             </div>
