@@ -8,10 +8,20 @@ const WageCalculator = require('../services/WageCalculator');
 const config = require('../config');
 const {
     mergeDefaultHolidaysBySector,
-    getEmailTemplatePlainDefaults
+    getEmailTemplatePlainDefaults,
+    getEmbeddedDefaultHolidaysBySector
 } = require('../systemDefaults');
 const axios = require('axios');
 const archiver = require('archiver');
+
+/** טקסונומיית חגים — מקור יחיד: RENDER/config.js (מסופק ללקוח משתמש ולמודאלים). */
+router.get('/holiday-taxonomy', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({
+        categoryMap: config.HOLIDAY_CATEGORY_MAP || {},
+        enToHe: config.HOLIDAY_MAPPING || {}
+    });
+});
 
 // ================================================================
 // UNIVERSAL ACTION DISPATCHER
@@ -809,6 +819,9 @@ function buildHolidayNameCatalog() {
         if (en) set.add(String(en).trim());
         if (he) set.add(String(he).trim());
     }
+    for (const k of Object.keys(config.HOLIDAY_CATEGORY_MAP || {})) {
+        if (k) set.add(String(k).trim());
+    }
     return [...set].filter(Boolean).sort((a, b) => String(a).localeCompare(String(b), 'he'));
 }
 
@@ -855,7 +868,10 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 emailTemplates: sysCfg.emailTemplates || {},
                 emailTemplateDefaults: getEmailTemplatePlainDefaults(appNameForDefaults),
                 defaultHolidaysBySector: mergedHolidays,
-                holidayNameCatalog: buildHolidayNameCatalog()
+                holidayNameCatalog: buildHolidayNameCatalog(),
+                embeddedDefaultHolidaysBySector: getEmbeddedDefaultHolidaysBySector(),
+                holidayCategoryMap: config.HOLIDAY_CATEGORY_MAP || {},
+                holidayEnToHe: config.HOLIDAY_MAPPING || {}
             }
         });
     } catch (e) {
