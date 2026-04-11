@@ -121,8 +121,18 @@ router.post('/dispatch', async (req, res) => {
             // === AUTH ===
             case 'getBusinessConfig': {
                 if (!companyId) return res.json({ success: false, error: 'Missing companyId' });
-                const config = await dataManager.getCompanyConfig(companyId);
-                if (!config) return res.json({ success: false, error: 'Company not found' });
+                let config;
+                try {
+                    config = await dataManager.getCompanyConfig(companyId);
+                } catch (err) {
+                    const gone = /not found|deleted/i.test(err.message || '');
+                    return res.status(gone ? 403 : 500).json({
+                        success: false,
+                        error: err.message || 'Company not found',
+                        revokedAccess: gone || undefined
+                    });
+                }
+                if (!config) return res.json({ success: false, error: 'Company not found', revokedAccess: true });
 
                 const client = await dataManager.getClientById(companyId);
                 const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
@@ -696,8 +706,14 @@ router.post('/dispatch', async (req, res) => {
                 return res.json({ success: false, error: `Unknown action: ${action}` });
         }
     } catch (e) {
-        console.error(`[Dispatch] Error in action ${action}:`, e.message);
-        return res.status(500).json({ success: false, error: e.message });
+        const msg = e.message || '';
+        console.error(`[Dispatch] Error in action ${action}:`, msg);
+        const revokedAccess = /does not exist or has been deleted|Business not found or deleted|Company not found|Business not found/i.test(msg);
+        return res.status(revokedAccess ? 403 : 500).json({
+            success: false,
+            error: msg,
+            revokedAccess: revokedAccess || undefined
+        });
     }
 });
 
