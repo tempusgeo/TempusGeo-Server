@@ -1,6 +1,7 @@
 const nodemailer = require('nodemailer');
 const axios = require('axios');
 const config = require('../config');
+const { getEmailTemplatePlainDefaults } = require('../systemDefaults');
 
 class EmailService {
     constructor() {
@@ -259,9 +260,10 @@ class EmailService {
         try {
             // Use admin-configured intro if set, otherwise use default
             const templates = systemConfig.emailTemplates || {};
+            const plainDefaults = getEmailTemplatePlainDefaults(appName);
             const introHtml = templates.welcomeIntro
                 ? `<p style="text-align: right; margin-bottom: 15px;">${templates.welcomeIntro.replace(/\n/g, '<br>')}</p>`
-                : `<p style="text-align: right; margin-bottom: 15px;">אנחנו שמחים שהצטרפת למערכת <strong>${appName}</strong>! החשבון שלך נוצר בהצלחה.</p>`;
+                : `<p style="text-align: right; margin-bottom: 15px;">${plainDefaults.welcomeIntro.replace(/\n/g, '<br>')}</p>`;
 
             const content = `
             <p style="text-align: right; margin-bottom: 15px;">שלום <strong>${businessName}</strong>,</p>
@@ -630,9 +632,10 @@ class EmailService {
         const dataManager = require('./DataManager');
         const systemConfig = dataManager.getSystemConfigSync ? dataManager.getSystemConfigSync() : {};
         const templates = systemConfig.emailTemplates || {};
+        const plainPay = getEmailTemplatePlainDefaults(systemConfig.appName || config.APP_NAME);
         const successIntro = templates.paymentSuccessIntro
             ? `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">${templates.paymentSuccessIntro.replace(/\n/g, '<br>')}</p>`
-            : `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">שמחים לעדכן כי התשלום החודשי עבור המנוי בוצע בהצלחה.</p>`;
+            : `<p style="text-align: right; color: #94a3b8; line-height: 1.6; font-size: 14px;">${plainPay.paymentSuccessIntro.replace(/\n/g, '<br>')}</p>`;
         const content = `
             <p style="text-align: right; color: #ffffff; font-size: 15px; margin-bottom: 15px;">שלום <strong>${data.businessName}</strong>,</p>
             ${successIntro}
