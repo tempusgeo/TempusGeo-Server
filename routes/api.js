@@ -6,6 +6,10 @@ const tranzilaService = require('../services/TranzilaService');
 const emailService = require('../services/EmailService');
 const WageCalculator = require('../services/WageCalculator');
 const config = require('../config');
+const {
+    mergeDefaultHolidaysBySector,
+    getEmailTemplatePlainDefaults
+} = require('../systemDefaults');
 const axios = require('axios');
 const archiver = require('archiver');
 
@@ -552,6 +556,7 @@ router.post('/dispatch', async (req, res) => {
             case 'getAdminSettings': {
                 const config = await dataManager.getCompanyConfig(companyId);
                 const sysConfig = await dataManager.getSystemConfig().catch(() => ({}));
+                const mergedHolidays = mergeDefaultHolidaysBySector(sysConfig.defaultHolidaysBySector);
                 const holidays = await dataManager.getAvailableHolidays(companyId).catch(() => []);
                 const client = await dataManager.getClientById(companyId);
 
@@ -582,7 +587,7 @@ router.post('/dispatch', async (req, res) => {
                     activeEmployees: activeEmployees,
                     expectedPayment: expectedPayment?.amount || 0,
                     breakdown: expectedPayment?.breakdown || {},
-                    defaultHolidaysBySector: sysConfig.defaultHolidaysBySector || null
+                    defaultHolidaysBySector: mergedHolidays
                 });
             }
 
@@ -813,6 +818,8 @@ router.post('/super-admin/settings/get', async (req, res) => {
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
 
         const sysCfg = await dataManager.getSystemConfig();
+        const appNameForDefaults = sysCfg.appName || config.APP_NAME;
+        const mergedHolidays = mergeDefaultHolidaysBySector(sysCfg.defaultHolidaysBySector);
         res.json({
             success: true,
             settings: {
@@ -846,7 +853,8 @@ router.post('/super-admin/settings/get', async (req, res) => {
                 emailAutoRenewSuccess: !!sysCfg.emailAutoRenewSuccess,
 
                 emailTemplates: sysCfg.emailTemplates || {},
-                defaultHolidaysBySector: sysCfg.defaultHolidaysBySector || null,
+                emailTemplateDefaults: getEmailTemplatePlainDefaults(appNameForDefaults),
+                defaultHolidaysBySector: mergedHolidays,
                 holidayNameCatalog: buildHolidayNameCatalog()
             }
         });
