@@ -778,43 +778,60 @@ router.post('/super-admin/businesses', async (req, res) => {
     }
 });
 
+function buildHolidayNameCatalog() {
+    const set = new Set();
+    (config.MAJOR_HOLIDAYS || []).forEach((h) => {
+        if (h) set.add(String(h).trim());
+    });
+    const map = config.HOLIDAY_MAPPING || {};
+    for (const [en, he] of Object.entries(map)) {
+        if (en) set.add(String(en).trim());
+        if (he) set.add(String(he).trim());
+    }
+    return [...set].filter(Boolean).sort((a, b) => String(a).localeCompare(String(b), 'he'));
+}
+
 router.post('/super-admin/settings/get', async (req, res) => {
     try {
         const { password } = req.body;
         if (!isValidSuperAdminPassword(password)) return res.status(401).json({ success: false, error: "Unauthorized" });
 
-        const config = await dataManager.getSystemConfig();
+        const sysCfg = await dataManager.getSystemConfig();
         res.json({
             success: true,
             settings: {
-                adminWhatsapp: config.adminWhatsapp || '',
-                tranzilaTerminal: config.tranzilaTerminal || '',
-                tranzilaPass: config.tranzilaPass || '',
-                minMonthlyPrice: config.minMonthlyPrice || 0,
-                pricePerEmployee: config.pricePerEmployee || 0,
-                maxShiftHours: config.maxShiftHours || 12,
-                chargeDay: config.chargeDay || 1,
-                chargeTime: config.chargeTime || '00:00',
+                adminWhatsapp: sysCfg.adminWhatsapp || '',
+                tranzilaTerminal: sysCfg.tranzilaTerminal || '',
+                tranzilaPass: sysCfg.tranzilaPass || '',
+                minMonthlyPrice: sysCfg.minMonthlyPrice || 0,
+                pricePerEmployee: sysCfg.pricePerEmployee || 0,
+                maxShiftHours: sysCfg.maxShiftHours || 12,
+                chargeDay: sysCfg.chargeDay || 1,
+                chargeTime: sysCfg.chargeTime || '00:00',
 
-                supportEnabled: config.supportEnabled || false,
-                appName: config.appName || '',
-                appLogoUrl: config.appLogoUrl || '',
+                supportEnabled: sysCfg.supportEnabled || false,
+                appName: sysCfg.appName || '',
+                appLogoUrl: sysCfg.appLogoUrl || '',
 
                 // Automation & Reports Settings
-                shiftCheckFrequency: config.shiftCheckFrequency || 0.5,
-                monthlyReportDay: config.monthlyReportDay || 1,
-                monthlyReportHour: config.monthlyReportHour || '08:00',
-                autoBillingEnabled: config.autoBillingEnabled !== undefined ? config.autoBillingEnabled : true,
-                autoRenewalEnabled: config.autoRenewalEnabled !== undefined ? config.autoRenewalEnabled : true,
-                subscriptionExpiryNotice: config.subscriptionExpiryNotice || 2,
-                freeTrialDays: config.freeTrialDays || 0,
+                shiftCheckFrequency: sysCfg.shiftCheckFrequency || 0.5,
+                monthlyReportDay: sysCfg.monthlyReportDay || 1,
+                monthlyReportHour: sysCfg.monthlyReportHour || '08:00',
+                autoBillingEnabled: sysCfg.autoBillingEnabled !== undefined ? sysCfg.autoBillingEnabled : true,
+                autoRenewalEnabled: sysCfg.autoRenewalEnabled !== undefined ? sysCfg.autoRenewalEnabled : true,
+                subscriptionExpiryNotice: sysCfg.subscriptionExpiryNotice || 2,
+                freeTrialDays: sysCfg.freeTrialDays || 0,
 
                 // Email Automation Toggles
-                emailJoinWelcome: !!config.emailJoinWelcome,
-                emailExpiry48h: !!config.emailExpiry48h,
-                emailExpired: !!config.emailExpired,
-                emailBlocked: !!config.emailBlocked,
-                emailAutoRenewSuccess: !!config.emailAutoRenewSuccess
+                emailJoinWelcome: !!sysCfg.emailJoinWelcome,
+                emailExpiry48h: !!sysCfg.emailExpiry48h,
+                emailExpired: !!sysCfg.emailExpired,
+                emailBlocked: !!sysCfg.emailBlocked,
+                emailAutoRenewSuccess: !!sysCfg.emailAutoRenewSuccess,
+
+                emailTemplates: sysCfg.emailTemplates || {},
+                defaultHolidaysBySector: sysCfg.defaultHolidaysBySector || null,
+                holidayNameCatalog: buildHolidayNameCatalog()
             }
         });
     } catch (e) {
@@ -994,6 +1011,11 @@ async function handleRecordPayment({ targetCompanyId, amount, months, method, re
     });
 
     await dataManager.saveClients();
+
+    const paidAmount = Math.abs(parseFloat(amount) || 0);
+    if (paidAmount > 0) {
+        dataManager.reportPaymentToGAS(paidAmount).catch((e) => console.error('[API] GAS payment report:', e.message));
+    }
 
     // --- 3. SEND EMAIL ---
     if (sendEmail) {
