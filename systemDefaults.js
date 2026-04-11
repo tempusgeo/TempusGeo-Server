@@ -18,7 +18,13 @@ const DEFAULT_JEWISH_HOLIDAYS = [
 const ISLAMIC_STATUTORY_HOLIDAYS_IL = ['יום העצמאות', 'עיד אל-פיטר', 'עיד אל-אדחא', 'ראש השנה המוסלמי'];
 
 /**
- * Mirrors CLIENT_USER getHolidaysBySector for דרוזים / נצרות (לא משמש לאסלאם).
+ * ברירת מחדל מצומצמת לנצרות (חג לאומי + המועדים המרכזיים בעברית — בלי עשרות וריאנטים לפי עדה).
+ * שאר החגים זמינים במודאל הבחירה באדמין.
+ */
+const CHRISTIAN_CORE_HOLIDAYS_IL = ['יום העצמאות', 'חג המולד', 'פסחא', 'יום שישי הטוב'];
+
+/**
+ * Mirrors CLIENT_USER getHolidaysBySector for דרוזים בלבד (לא משמש לאסלאם / נצרות).
  */
 function holidaysForSector(sector) {
     const holidays = ['יום העצמאות', 'Yom HaAtzmaut'];
@@ -26,8 +32,7 @@ function holidaysForSector(sector) {
         "חנוכה": "יהדות", "יום כיפור": "יהדות", "סוכות": "יהדות", "פורים": "יהדות", "פסח": "יהדות", "ראש השנה": "יהדות", "שבועות": "יהדות", "שמחת תורה": "יהדות",
         "17th of Tammuz": "יהדות", "Asarah B'Tevet (Tenth of Tevet)": "יהדות", "Fast of Esther": "יהדות", "Gedaliah Fast": "יהדות", "Sigd": "יהדות", "ל״ג בעומר": "יהדות", "מימונה": "יהדות", "תשעה באב": "יהדות",
         "עיד אל-אדחא": "אסלאם", "עיד אל-פיטר": "אסלאם", "ראש השנה המוסלמי": "אסלאם", "יום הולדת הנביא": "אסלאם", "Al Isra' wal Miraj": "אסלאם", "Al Isra' wal Miraj (tentative)": "אסלאם", "Ashura": "אסלאם", "Ashura (tentative)": "אסלאם", "Lailat al-Qadr": "אסלאם", "ליילאת אל מיראז'": "אסלאם",
-        "Eid al-Khader": "דרוזים", "Feast of Prophet Sabalan": "דרוזים", "Prophet Shuaib's Feast": "דרוזים", "Prophet Shuaib's Feast Holiday": "דרוזים",
-        "חג המולד": "נצרות", "All Saints' Day": "נצרות", "All Souls' Day": "נצרות", "Armenian Feast of the Annunciation": "נצרות", "Armenian/Orthodox Ascension Day": "נצרות", "Armenian/Orthodox Holy Saturday": "נצרות", "Armenian/Orthodox Maundy Thursday": "נצרות", "Armenian/Orthodox Pentecost": "נצרות", "Armenian/Orthodox Pentecost Monday": "נצרות", "Ascension Day": "נצרות", "Assumption of Mary": "נצרות", "Catholic/Protestant Ascension Day": "נצרות", "Catholic/Protestant Boxing Day": "נצרות", "Catholic/Protestant Epiphany": "נצרות", "Catholic/Protestant Feast of the Annunciation": "נצרות", "Catholic/Protestant Holy Saturday": "נצרות", "Catholic/Protestant Maundy Thursday": "נצרות", "Catholic/Protestant Pentecost": "נצרות", "Catholic/Protestant Pentecost Monday": "נצרות", "Corpus Christi": "נצרות", "Epiphany": "נצרות", "Feast of Our Lady of Guadalupe": "נצרות", "Feast of St Francis of Assisi": "נצרות", "Feast of the Immaculate Conception": "נצרות", "First Sunday of Advent": "נצרות", "Holy Saturday": "נצרות", "Maundy Thursday": "נצרות", "Orthodox Epiphany Day": "נצרות", "Orthodox Feast of the Annunciation": "נצרות", "Orthodox New Year": "נצרות", "Pentecost": "נצרות", "Shrove Tuesday/Mardi Gras": "נצרות", "Trinity Sunday": "נצרות", "Whit Monday": "נצרות", "יום ראשון של כפות התמרים": "נצרות", "יום רביעי של האפר": "נצרות"
+        "Eid al-Khader": "דרוזים", "Feast of Prophet Sabalan": "דרוזים", "Prophet Shuaib's Feast": "דרוזים", "Prophet Shuaib's Feast Holiday": "דרוזים"
     };
     for (const [key, val] of Object.entries(categoryMap)) {
         if (val === sector) holidays.push(key);
@@ -40,7 +45,7 @@ function getEmbeddedDefaultHolidaysBySector() {
         'יהדות': [...DEFAULT_JEWISH_HOLIDAYS],
         'אסלאם': [...ISLAMIC_STATUTORY_HOLIDAYS_IL],
         'דרוזים': holidaysForSector('דרוזים'),
-        'נצרות': holidaysForSector('נצרות')
+        'נצרות': [...CHRISTIAN_CORE_HOLIDAYS_IL]
     };
 }
 
