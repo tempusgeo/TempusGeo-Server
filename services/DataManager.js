@@ -40,6 +40,9 @@ class DataManager {
         console.log(`[DataManager] Data Directory initialized at: ${this.dataDir}`);
         this.clientsFile = path.join(this.dataDir, 'clients.json');
         this.metadataFile = path.join(this.dataDir, 'metadata.json');
+        /** Company IDs removed by admin — blocks orphan-folder "resurrection" and stale clients */
+        this.deletedCompanyIdsFile = path.join(this.dataDir, 'deleted_company_ids.json');
+        this._deletedCompanyIds = null;
         this.maintenanceLogs = {
             CHECKOUT: [],
             BILLING: [],
@@ -253,11 +256,38 @@ class DataManager {
 
     // --- CLIENTS / AUTH ---
 
-    async getClientById(id) {
-        return CACHE.clients.find(c => c.id === id);
+    async getDeletedCompanyIdsSet() {
+        if (this._deletedCompanyIds instanceof Set) return this._deletedCompanyIds;
+        try {
+            const raw = await fs.readFile(this.deletedCompanyIdsFile, 'utf8');
+            const j = JSON.parse(raw);
+            const arr = Array.isArray(j?.ids) ? j.ids : [];
+            this._deletedCompanyIds = new Set(arr.map(String));
+        } catch {
+            this._deletedCompanyIds = new Set();
+        }
+        return this._deletedCompanyIds;
     }
 
-    async getAllClients() {
+    async markCompanyIdAsDeleted(companyId) {
+        if (!companyId || companyId === 'NEW_SETUP' || String(companyId).startsWith('__')) return;
+        const set = await this.getDeletedCompanyIdsSet();
+        set.add(String(companyId));
+        this._deletedCompanyIds = set;
+        await fs.mkdir(this.dataDir, { recursive: true });
+        await fs.writeFile(this.deletedCompanyIdsFile, JSON.stringify({
+            ids: [...set],
+            updatedAt: new Date().toISOString()
+        }, null, 2));
+    }
+
+    async isCompanyIdDeleted(companyId) {
+        if (!companyId) return false;
+        const set = await this.getDeletedCompanyIdsSet();
+        return set.has(String(companyId));
+    }
+
+    getAllClients() {
         return CACHE.clients;
     }
 
@@ -362,11 +392,29 @@ class DataManager {
             await fs.mkdir(companiesDir, { recursive: true });
             const folders = await fs.readdir(companiesDir);
             let foundNew = false;
+            const tombstoned = await this.getDeletedCompanyIdsSet();
 
             for (const companyId of folders) {
                 // Check if folder is in CACHE.clients OR is a protected internal folder
                 const existsInMaster = CACHE.clients.some(c => c.id === companyId);
                 const isInternal = companyId.startsWith('__') || companyId === 'NEW_SETUP'; // Ignore __SYSTEM__, NEW_SETUP, etc.
+
+                if (tombstoned.has(String(companyId))) {
+                    const orphanPath = path.join(companiesDir, companyId);
+                    console.log(`[Orphan-Discovery] Tombstoned ID ${companyId} — removing leftover folder (no auto-reconcile).`);
+                    try {
+                        await fs.rm(orphanPath, { recursive: true, force: true });
+                    } catch (e) {
+                        try {
+                            const quarantine = path.join(companiesDir, `__deleted__${companyId}__${Date.now()}`);
+                            await fs.rename(orphanPath, quarantine);
+                            console.log(`[Orphan-Discovery] Quarantined folder for ${companyId} → ${path.basename(quarantine)}`);
+                        } catch (e2) {
+                            console.error(`[Orphan-Discovery] Could not remove tombstoned folder ${companyId}:`, e2.message);
+                        }
+                    }
+                    continue;
+                }
 
                 if (!existsInMaster && !isInternal) {
                     console.log(`[Orphan-Discovery] Found ghost client: ${companyId}. Attempting reconciliation...`);
@@ -412,6 +460,10 @@ class DataManager {
     async loadCompany(companyId) {
         if (!companyId || companyId === 'NEW_SETUP') return; // Strict guard against ghost folders
         if (CACHE.companies[companyId]) return; // Already loaded
+
+        if (await this.isCompanyIdDeleted(companyId)) {
+            throw new Error(`Business ${companyId} does not exist or has been deleted.`);
+        }
 
         // --- ORPHAN PREVENTION GUARD ---
         // Ensure that the business is actively listed in the verified clients array.
@@ -2285,6 +2337,19 @@ class DataManager {
                     console.error("[Restore] Critical: Could not reload clients.json into cache after restoration:", e.message);
                 }
 
+                // Strip tombstoned IDs from a possibly stale cloud snapshot (prevents "undelete" via restore)
+                try {
+                    const tomb = await this.getDeletedCompanyIdsSet();
+                    const before = CACHE.clients.length;
+                    CACHE.clients = CACHE.clients.filter(c => !tomb.has(String(c.id)));
+                    if (CACHE.clients.length !== before) {
+                        await this.saveClients();
+                        console.log(`[Restore] Dropped ${before - CACHE.clients.length} tombstoned client(s) from restored clients.json`);
+                    }
+                } catch (e) {
+                    console.error('[Restore] Tombstone filter failed:', e.message);
+                }
+
                 // Clear companies cache and reload them
                 CACHE.companies = {};
                 for (const client of CACHE.clients) {
@@ -2609,6 +2674,9 @@ class DataManager {
     }
 
     async deleteBusiness(companyId) {
+        // 0. Tombstone first so orphan discovery / stray API traffic cannot resurrect this ID
+        await this.markCompanyIdAsDeleted(companyId);
+
         // 1. Notify GAS Cold Storage to delete data there
         const gasUrl = config.GAS_COLD_STORAGE_URL;
         if (gasUrl) {
@@ -2626,9 +2694,10 @@ class DataManager {
         CACHE.clients = CACHE.clients.filter(c => c.id !== companyId);
 
         if (CACHE.clients.length === initialLen) {
-            throw new Error('Business not found');
+            console.warn(`[DataManager] deleteBusiness: ${companyId} was not in clients.json — applying tombstone + disk cleanup anyway (idempotent delete).`);
+        } else {
+            await this.saveClientsAndSyncToGAS();
         }
-        await this.saveClients();
 
         // 3. Remove from active cache
         if (CACHE.companies[companyId]) {
@@ -2650,11 +2719,27 @@ class DataManager {
             throw new Error('Illegal deletion target');
         }
 
-        try {
-            await fs.rm(companyDir, { recursive: true, force: true });
-            console.log(`[DataManager] Deleted company directory: ${companyId}`);
-        } catch (e) {
-            console.error(`[DataManager] Error deleting directory for ${companyId}:`, e.message);
+        let removed = false;
+        for (let attempt = 1; attempt <= 4; attempt++) {
+            try {
+                await fs.rm(companyDir, { recursive: true, force: true });
+                removed = true;
+                console.log(`[DataManager] Deleted company directory: ${companyId} (attempt ${attempt})`);
+                break;
+            } catch (e) {
+                console.error(`[DataManager] rm attempt ${attempt} failed for ${companyId}:`, e.message);
+                if (attempt < 4) await new Promise(r => setTimeout(r, 400 * attempt));
+            }
+        }
+        if (!removed) {
+            try {
+                const parent = path.join(this.dataDir, 'companies');
+                const quarantine = path.join(parent, `__deleted__${companyId}__${Date.now()}`);
+                await fs.rename(companyDir, quarantine);
+                console.warn(`[DataManager] Could not delete folder; quarantined: ${path.basename(quarantine)}`);
+            } catch (e) {
+                console.error(`[DataManager] CRITICAL: Could not delete or quarantine directory for ${companyId}:`, e.message);
+            }
         }
 
         await this.updateLastWriteTime();
