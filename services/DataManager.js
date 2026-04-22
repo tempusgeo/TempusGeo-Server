@@ -3507,8 +3507,13 @@ class DataManager {
     }
     async reportPaymentToGAS(amount) {
         const sysConfig = await this.getSystemConfig();
-        const gasUrl = config.GAS_COLD_STORAGE_URL;
-        if (!gasUrl) return;
+        // Uses the dedicated GAS tracker URL (user's personal tracker)
+        const gasUrl = config.MY_GAS_URL;
+        
+        if (!gasUrl) {
+            console.warn('[DataManager] GAS Payment URL is missing! Ensure MY_GAS_URL is set in Render environment variables.');
+            return;
+        }
 
         try {
             await axios.post(gasUrl, {
