@@ -1766,8 +1766,12 @@ class DataManager {
             return new Date(t).getTime();
         };
 
-        const targetStart = safeGetTime(originalStart);
-        const shiftIndex = shifts[name].findIndex(s => safeGetTime(s.start) === targetStart);
+        let shiftIndex = -1;
+        if (originalStart) {
+            const targetStart = safeGetTime(originalStart);
+            shiftIndex = shifts[name].findIndex(s => safeGetTime(s.start) === targetStart);
+        }
+        
         if (shiftIndex !== -1) {
             shifts[name][shiftIndex].start = newStart;
             shifts[name][shiftIndex].end = newEnd;
