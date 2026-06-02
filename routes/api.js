@@ -479,7 +479,7 @@ router.post('/dispatch', async (req, res) => {
                     year: rest.year,
                     month: rest.month,
                     name: rest.name,
-                    originalStart: rest.originalStart || rest.start,
+                    originalStart: rest.originalStart,
                     newStart: rest.start,
                     newEnd: rest.end
                 });
