@@ -37,7 +37,7 @@ class DataManager {
         // Ensure dataDir is absolute and well-defined
         const rawDir = config.DATA_DIR || './data';
         this.dataDir = path.isAbsolute(rawDir) ? rawDir : path.resolve(__dirname, '..', rawDir);
-        
+
         console.log(`[DataManager] Data Directory initialized at: ${this.dataDir}`);
         this.clientsFile = path.join(this.dataDir, 'clients.json');
         this.metadataFile = path.join(this.dataDir, 'metadata.json');
@@ -62,15 +62,15 @@ class DataManager {
             message,
             details
         };
-        
+
         // Ensure category exists
         if (!this.maintenanceLogs[category]) {
             this.maintenanceLogs[category] = [];
         }
-        
+
         this.maintenanceLogs[category].unshift(entry);
         if (this.maintenanceLogs[category].length > 100) this.maintenanceLogs[category].pop(); // Keep last 100 as per user request
-        
+
         // Also keep a global "all" log for compatibility/backup if needed, but let's stick to categories
         if (!this.maintenanceLogs.ALL) this.maintenanceLogs.ALL = [];
         this.maintenanceLogs.ALL.unshift(entry);
@@ -126,7 +126,7 @@ class DataManager {
             try {
                 const data = await fs.readFile(this.clientsFile, 'utf8');
                 CACHE.clients = JSON.parse(data);
-                
+
                 // DATA REPAIR & NORMALIZATION (One-time and proactive)
                 let repairedCount = 0;
                 CACHE.clients.forEach(client => {
@@ -136,7 +136,7 @@ class DataManager {
                         if (JSON.stringify(client.paymentMethod) !== original) repairedCount++;
                     }
                 });
-                
+
                 if (repairedCount > 0) {
                     console.log(`[Init] Self-Healing: Repaired/Normalized ${repairedCount} client payment methods.`);
                     await this.saveClients(); // Persist fixes
@@ -189,7 +189,7 @@ class DataManager {
             setInterval(async () => {
                 const sysConfig = await this.getSystemConfig();
                 const freq = parseFloat(sysConfig.shiftCheckFrequency) || 30; // default 30s
-                
+
                 // If freq is 0, disable auto-check
                 if (freq <= 0) return;
 
@@ -243,7 +243,7 @@ class DataManager {
 
                 this.performAutoCheckout().catch(e => console.error(`[Startup Auto-Checkout] Failed:`, e.message));
                 this.checkSubscriptions().catch(e => console.error(`[Startup Sub-Check] Failed:`, e.message));
-                
+
                 // Global Archive Cycle replacement:
                 for (const client of CACHE.clients) {
                     this.archiveAndCleanup(client.id).catch(e => console.error(`[Startup Clean] Failed for ${client.id}:`, e.message));
@@ -331,7 +331,7 @@ class DataManager {
 
     async saveClientPaymentMethod(companyId, paymentMethod) {
         if (!companyId || companyId === 'NEW_SETUP') return; // Strict guard
-        
+
         const client = await this.getClientById(companyId);
         if (!client) throw new Error("Client not found");
 
@@ -342,7 +342,7 @@ class DataManager {
         // Store inclusive of businessId (for automated billing receipts)
         client.paymentMethod = normalized;
         client.autoChargeEnabled = true; // Auto-enable on card save
-        
+
         // Also ensure invoiceDetails is on the client object for quick access in auto-tasks
         if (normalized.businessId) {
             client.invoiceDetails = normalized.businessId;
@@ -361,10 +361,10 @@ class DataManager {
      */
     normalizePaymentMethod(pm) {
         if (!pm) return { token: '', last4: '', expMonth: '01', expYear: '2026', cardHolderName: '', cardHolderId: '', cvv: '', businessId: '' };
-        
+
         // Ensure token is trimmed of any newlines or whitespace
         const rawToken = (pm.token || pm.TranzilaTK || pm.TranzilaToken || '').toString().trim();
-        
+
         // Ensure last4 is exactly 4 digits
         let last4 = (pm.last4 || (pm.cardNumber ? pm.cardNumber.slice(-4) : '') || '').toString().trim();
         last4 = last4.replace(/\D/g, '').slice(-4).padStart(4, '0');
@@ -534,7 +534,7 @@ class DataManager {
 
             // GRACE PERIOD LOGIC: Hard block only after 48 hours
             const hoursSinceExpiry = (now - expiry) / (1000 * 60 * 60);
-            
+
             config.subscriptionExpired = hoursSinceExpiry > 48;
             config.inGracePeriod = hoursSinceExpiry > 0 && hoursSinceExpiry <= 48;
             config.expiryDate = expiry.toLocaleDateString('he-IL');
@@ -636,8 +636,8 @@ class DataManager {
 
         const periodKey = `${year}-${String(month).padStart(2, '0')}`;
         // Also check for standard format in history (e.g., "03/2024" or the period property)
-        return client.paymentHistory.some(p => 
-            (p.status === 'PAID' || p.status === 'SUCCESS' || p.statusDisplayName === 'חודשי') && 
+        return client.paymentHistory.some(p =>
+            (p.status === 'PAID' || p.status === 'SUCCESS' || p.statusDisplayName === 'חודשי') &&
             (p.period === periodKey || p.period === `${month}/${year}`)
         );
     }
@@ -646,17 +646,17 @@ class DataManager {
         if (!companyId || !names || names.length === 0) return;
         const companyDir = path.join(this.dataDir, 'companies', companyId);
         const ledgerPath = path.join(companyDir, 'billing_ledger.json');
-        
+
         let ledger = {};
         try {
             const data = await fs.readFile(ledgerPath, 'utf8');
             ledger = JSON.parse(data);
-        } catch (e) {}
+        } catch (e) { }
 
         const periodKey = `${year}-${String(month).padStart(2, '0')}`;
         const existingNames = new Set(ledger[periodKey] || []);
         let changed = false;
-        
+
         names.forEach(n => {
             if (n && !existingNames.has(n)) {
                 existingNames.add(n);
@@ -705,12 +705,12 @@ class DataManager {
                 if (ledger[periodKey]) {
                     return ledger[periodKey].length;
                 }
-            } catch (e) {}
+            } catch (e) { }
 
             // Priority 2: Live Shifts (Fallback)
             const activeSet = new Set();
             const shifts = await this.getShifts(companyId, targetYear, targetMonth);
-            
+
             if (Array.isArray(shifts)) {
                 shifts.forEach(s => {
                     const empName = s.workerName || s.name || s.userId;
@@ -734,7 +734,7 @@ class DataManager {
         if (employeeNames.length === 0) return true;
 
         const graceEnd = new Date(expiryDate).getTime() + (48 * 60 * 60 * 1000);
-        
+
         for (const name of employeeNames) {
             const empShifts = shifts[name] || [];
             for (const s of empShifts) {
@@ -765,7 +765,7 @@ class DataManager {
             // 1. Unpaid Past Months (The Chain)
             let checkDate = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
             const now = new Date();
-            
+
             while (checkDate < new Date(now.getFullYear(), now.getMonth(), 1)) {
                 const y = checkDate.getFullYear();
                 const m = checkDate.getMonth() + 1;
@@ -835,7 +835,7 @@ class DataManager {
 
             const now = new Date();
             const expiry = this.parseExpiryDate(client.subscriptionExpiry || client.expiryDate);
-            
+
             // If not expired, no debt (assuming current month is prepaid or covered)
             if (expiry >= now) return 0;
 
@@ -849,10 +849,10 @@ class DataManager {
 
             const diffTime = Math.max(0, now - expiry);
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            
+
             // Debt is pro-rated by 30 days (standard month)
             const debt = Math.floor(formulaBase * (diffDays / 30));
-            
+
             return debt;
         } catch (e) {
             console.error('[Billing] calculateDebtAmount error:', e.message);
@@ -863,7 +863,7 @@ class DataManager {
     async warmupCache() {
         console.log("[DataManager] Warming up RAM cache for all companies...");
         for (const client of CACHE.clients) {
-            this.loadCompany(client.id).catch(() => {});
+            this.loadCompany(client.id).catch(() => { });
         }
     }
 
@@ -882,15 +882,15 @@ class DataManager {
     getNextBillingDate(targetDay = 1, targetTimeStr = "04:00") {
         const now = new Date();
         const [hour, minute] = String(targetTimeStr).split(':').map(Number);
-        
+
         // 1. Create a candidate date for the CURRENT month
         let target = new Date(now.getFullYear(), now.getMonth(), parseInt(targetDay), hour, minute || 0, 0, 0);
-        
+
         // 2. If the candidate date is in the past (already passed today or earlier this month), move to the NEXT month
         if (target <= now) {
             target = new Date(now.getFullYear(), now.getMonth() + 1, parseInt(targetDay), hour, minute || 0, 0, 0);
         }
-        
+
         return target;
     }
 
@@ -917,7 +917,7 @@ class DataManager {
 
     async updateCompanyConfig(companyId, newConfig) {
         if (!companyId || companyId === 'NEW_SETUP') return; // Prevent ghost company creation
-        
+
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
         // Merge deep
@@ -975,7 +975,7 @@ class DataManager {
         const configFile = path.join(this.dataDir, 'system_config.json');
         try {
             if (this._systemConfig) return this._systemConfig;
-            
+
             const fsSync = require('fs');
             if (!fsSync.existsSync(configFile)) return {};
             const data = fsSync.readFileSync(configFile, 'utf8');
@@ -1006,7 +1006,7 @@ class DataManager {
         }
 
         const current = await this.getSystemConfig();
-        
+
         const allowedKeys = ALLOWED_SYSTEM_CONFIG_KEYS;
 
         // 1. Filter existing config to keep only allowed keys
@@ -1031,7 +1031,7 @@ class DataManager {
         if (emailService && emailService.setSystemConfig) {
             emailService.setSystemConfig(updated);
         }
-        
+
         const configFile = path.join(this.dataDir, 'system_config.json');
         await fs.mkdir(this.dataDir, { recursive: true });
         await fs.writeFile(configFile, JSON.stringify(updated, null, 2));
@@ -1042,9 +1042,9 @@ class DataManager {
         if (gasUrl) {
             try {
                 console.log('[DataManager] Syncing System Config to GAS...');
-                await syncManager.syncNow('CONFIG', updated, { 
-                    companyId: '__SYSTEM__', 
-                    gasUrl, 
+                await syncManager.syncNow('CONFIG', updated, {
+                    companyId: '__SYSTEM__',
+                    gasUrl,
                     password: process.env.SUPER_ADMIN_PASS || '123456'
                 });
                 console.log('[DataManager] System Config synced to GAS successfully.');
@@ -1125,7 +1125,7 @@ class DataManager {
         } catch (e) { }
 
         await fs.writeFile(targetFilePath, JSON.stringify(shiftsData, null, 2));
-        
+
         // Ledger logic: Capture unique names for billing (Unhackable history)
         const employeeNames = [];
         if (Array.isArray(shiftsData)) {
@@ -1276,7 +1276,7 @@ class DataManager {
     }
 
     async getEmployees(companyId) {
-        if (!companyId || companyId === 'NEW_SETUP') return []; 
+        if (!companyId || companyId === 'NEW_SETUP') return [];
         if (!CACHE.companies[companyId]) await this.loadCompany(companyId);
 
         const config = CACHE.companies[companyId].config;
@@ -1297,7 +1297,7 @@ class DataManager {
         // 1. Employee Verification & Device ID Locking
         const companyConfig = await this.getCompanyConfig(companyId);
         const employees = companyConfig.employees || [];
-        
+
         // Ensure employee is on the manager's list
         if (!employees.includes(employeeName)) {
             return {
@@ -1352,7 +1352,7 @@ class DataManager {
             if (companyConfig.settings?.constraints?.[employeeName]) {
                 const c = companyConfig.settings.constraints[employeeName];
                 const nowIL = new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' });
-                
+
                 // minStart check
                 if (c.minStart && nowIL < c.minStart) {
                     return {
@@ -1362,7 +1362,7 @@ class DataManager {
                         limit: `מותר רק החל מ-${c.minStart}`
                     };
                 }
-                
+
                 // maxStart check
                 if (c.maxStart && nowIL > c.maxStart) {
                     return {
@@ -1547,11 +1547,11 @@ class DataManager {
             }
         };
 
-        await getDirStats(this.dataDir).catch(() => {});
-        
+        await getDirStats(this.dataDir).catch(() => { });
+
         // Sort items by name for consistent UI
         stats.items.sort((a, b) => a.name.localeCompare(b.name));
-        
+
         // Add human-readable summary
         if (stats.total < 1024) {
             stats.totalFormatted = stats.total + " Bytes";
@@ -1560,7 +1560,7 @@ class DataManager {
         } else {
             stats.totalFormatted = (stats.total / (1024 * 1024)).toFixed(1) + " MB";
         }
-        
+
         return stats;
     }
 
@@ -1970,11 +1970,11 @@ class DataManager {
 
         if (!config.employees.includes(name)) {
             config.employees.push(name);
-            
+
             // Initialize constraints for the new employee to allow controlled Device ID locking
             if (!config.settings) config.settings = {};
             if (!config.settings.constraints) config.settings.constraints = {};
-            
+
             if (!config.settings.constraints[name]) {
                 // Use admin-configurable Jewish defaults, fallback to global config MAJOR_HOLIDAYS
                 const sysConf = this.getSystemConfigSync();
@@ -2013,15 +2013,15 @@ class DataManager {
 
         // Determine the billing cycle start date (subscription renewal date)
         const subscriptionDate = client.subscriptionDate ? new Date(client.subscriptionDate) : (client.joinedAt ? new Date(client.joinedAt) : new Date());
-        
+
         // Load current and previous month shifts to check for activity since renewal
         const now = new Date();
         const currentYear = now.getFullYear();
         const currentMonth = now.getMonth() + 1;
         const currentShifts = await this.getShifts(companyId, currentYear, currentMonth);
-        
+
         const userShifts = currentShifts[name] || [];
-        
+
         // Check if there are any shifts on or after the subscriptionDate in the current month
         for (const shift of userShifts) {
             const shiftDate = shift.start ? new Date(shift.start) : new Date(shift.date); // Fallback to date if start missing
@@ -2048,7 +2048,7 @@ class DataManager {
         await this.updateCompanyConfig(companyId, config);
 
         // DO NOT delete from shifts history (periods loop removed) to ensure accurate billing for past work.
-        
+
         return { success: true };
     }
 
@@ -2265,14 +2265,14 @@ class DataManager {
                     console.warn("[Restore] Skipping restore: Backup has empty clients.json but local has data.");
                     return false;
                 }
-                
+
                 console.log(`[Restore] Found ${backup.files.length} files to restore.`);
 
                 // Sort files to ensure clients.json or config files are written first if needed
                 for (const file of backup.files) {
                     try {
                         let localPath = file.path;
-                        
+
                         // MAP NAMESPACED PATHS FROM GAS TO LOCAL FILES
                         // GAS returns paths based on the companyId/year/month structure.
                         const lowerPath = file.path.toLowerCase();
@@ -2296,19 +2296,19 @@ class DataManager {
                         await fs.mkdir(dirPath, { recursive: true });
 
                         let contentToWrite;
-                        
+
                         // CRITICAL FIX: Sanitize system_config.json if it was corrupted with business data
                         if (localPath === 'system_config.json') {
                             const rawContent = typeof file.content === 'object' ? file.content : JSON.parse(file.content || '{}');
-                            
+
                             // Check if this looks like client/business data instead of system config
-                            const hasBusinessFields = rawContent.id || rawContent.email || rawContent.businessName || 
-                                                      rawContent.paymentHistory || rawContent.paymentMethod;
+                            const hasBusinessFields = rawContent.id || rawContent.email || rawContent.businessName ||
+                                rawContent.paymentHistory || rawContent.paymentMethod;
                             if (hasBusinessFields) {
                                 console.error(`[Restore] CORRUPTION DETECTED: ${localPath} contains business data! Skipping restore of this file.`);
                                 continue; // Skip writing this corrupted file
                             }
-                            
+
                             // Apply unified whitelist filter
                             const allowedKeys = ALLOWED_SYSTEM_CONFIG_KEYS;
                             const sanitized = {};
@@ -2319,7 +2319,7 @@ class DataManager {
                             // If content is already an object, stringify it. If it's a string, write directly.
                             contentToWrite = typeof file.content === 'object' ? JSON.stringify(file.content, null, 2) : file.content;
                         }
-                        
+
                         await fs.writeFile(fullPath, contentToWrite);
                         // console.log(`[Restore] Restored: ${localPath}`);
                     } catch (e) {
@@ -2530,7 +2530,7 @@ class DataManager {
 
         const sysConfig = await this.getSystemConfig();
         const [chargeHour, chargeMinute] = (sysConfig.chargeTime || "04:00").split(':').map(Number);
-        
+
         // FREE TRIAL: if freeTrialDays > 0, use today + N days as expiry and mark as trial.
         // Otherwise, default to 1st of next month (arrears billing).
         const freeTrialDays = parseInt(sysConfig.freeTrialDays) || 0;
@@ -2552,18 +2552,18 @@ class DataManager {
         if (data.paymentMethod) {
             // Normalize the payment method immediately upon business creation
             pMethodSafe = this.normalizePaymentMethod(data.paymentMethod);
-            
+
             // CRITICAL: Ensure we actually have a token!
             if (!pMethodSafe.token) {
                 console.error('[DataManager] Registration failed: Missing payment token in provided paymentMethod.');
                 throw new Error('יש להזין פרטי כרטיס אשראי תקינים לפני הקמת העסק.');
             }
-            
+
             invoiceDetails = pMethodSafe.businessId || pMethodSafe.company;
         } else {
-             // CRITICAL: Payment method is mandatory for new businesses
-             console.error('[DataManager] Registration failed: No paymentMethod provided in payload.');
-             throw new Error('יש להזין אמצעי תשלום תקין.');
+            // CRITICAL: Payment method is mandatory for new businesses
+            console.error('[DataManager] Registration failed: No paymentMethod provided in payload.');
+            throw new Error('יש להזין אמצעי תשלום תקין.');
         }
 
         const client = {
@@ -2596,18 +2596,18 @@ class DataManager {
                 if (response?.data?.success && response.data.events) {
                     const events = response.data.events;
                     eligibleDefaults.forEach(hName => {
-                       const translated = config.HOLIDAY_MAPPING?.[hName] || hName;
-                       const allDates = Object.keys(events).filter(d => events[d].includes(hName) || events[d].includes(translated)).sort();
-                       let hDate = null;
-                       if (allDates.length > 0) {
-                           const nowStr = new Date().toISOString().split('T')[0];
-                           hDate = allDates.find(d => d >= nowStr) || allDates[allDates.length - 1];
-                       }
-                       defaultHolidaysDetails.push({ name: hName, date: hDate, allDates });
+                        const translated = config.HOLIDAY_MAPPING?.[hName] || hName;
+                        const allDates = Object.keys(events).filter(d => events[d].includes(hName) || events[d].includes(translated)).sort();
+                        let hDate = null;
+                        if (allDates.length > 0) {
+                            const nowStr = new Date().toISOString().split('T')[0];
+                            hDate = allDates.find(d => d >= nowStr) || allDates[allDates.length - 1];
+                        }
+                        defaultHolidaysDetails.push({ name: hName, date: hDate, allDates });
                     });
                 }
             }
-        } catch(e) { console.error("[DataManager] Initial holiday fetch failed:", e.message); }
+        } catch (e) { console.error("[DataManager] Initial holiday fetch failed:", e.message); }
 
         const maxHours = parseInt(sysConfig.maxShiftHours) || 12;
         const maxTimeStr = maxHours.toString().padStart(2, '0') + ":00";
@@ -2709,11 +2709,11 @@ class DataManager {
 
         // 4. Delete from filesystem (with Strict Guard)
         const companyDir = path.join(this.dataDir, 'companies', companyId);
-        
+
         // Professional Guard: Ensure the path is actually inside the companies directory
         const relative = path.relative(path.join(this.dataDir, 'companies'), companyDir);
         const isSafe = relative && !relative.startsWith('..') && !path.isAbsolute(relative);
-        
+
         if (!isSafe) {
             console.error(`[DataManager] ATTEMPTED TO DELETE PROTECTED PATH: ${companyDir}`);
             throw new Error('Illegal deletion target');
@@ -2757,7 +2757,7 @@ class DataManager {
 
             // 1. Mark all unpaid months in the chain as PAID
             if (!client.paymentHistory) client.paymentHistory = [];
-            
+
             // From breakdown.details we can extract the periods (e.g., "חוב 2/2026")
             if (billing.breakdown && billing.breakdown.details) {
                 billing.breakdown.details.forEach(detail => {
@@ -2977,7 +2977,7 @@ class DataManager {
                 businessId: businessId || pMethodSafe.businessId // Keep for automated receipts
             };
             client.autoChargeEnabled = true; // Auto-enable if card added/updated
-            
+
             if (businessId) {
                 await this.updateCompanyConfig(companyId, { invoiceDetails: businessId });
             }
@@ -3105,206 +3105,216 @@ class DataManager {
      *     → Only send warning emails to clients nearing expiry (no charges).
      */
     async processAllSubscriptions() {
-        const il = this.getIsraelTime();
-        const results = { charged: 0, warned: 0, failures: [], skipped: 0 };
-        const sysConfig = await this.getSystemConfig();
-        const isBillingDay = (il.day === 1 && il.hour >= 4);
+        if (this._billingInProgress) {
+            this.logMaintenance('BILLING', '⚠️ Billing scan already in progress, skipping concurrent request.');
+            return { charged: 0, warned: 0, failures: [], skipped: 0 };
+        }
+        this._billingInProgress = true;
+        try {
+            const il = this.getIsraelTime();
+            const results = { charged: 0, warned: 0, failures: [], skipped: 0 };
+            const sysConfig = await this.getSystemConfig();
+            const isBillingDay = (il.day === 1 && il.hour >= 4);
 
-        this.logMaintenance('BILLING',
-            isBillingDay
-                ? `🔴 BILLING DAY: Running full charge cycle (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2,'0')})`
-                : `🟡 Scan-only: Not billing day yet (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2,'0')})`
-        );
+            this.logMaintenance('BILLING',
+                isBillingDay
+                    ? `🔴 BILLING DAY: Running full charge cycle (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2, '0')})`
+                    : `🟡 Scan-only: Not billing day yet (Israel ${il.day}/${il.month}/${il.year} ${il.hour}:${String(il.minute).padStart(2, '0')})`
+            );
 
-        const currentPeriodKey = `${il.year}-${String(il.month).padStart(2, '0')}`;
+            const currentPeriodKey = `${il.year}-${String(il.month).padStart(2, '0')}`;
 
-        for (const client of CACHE.clients) {
-            try {
-                const expiry = this.parseExpiryDate(client.subscriptionExpiry);
-                const expiryMs = expiry.getTime();
-                const nowMs = Date.now();
-                const hoursLeft = (expiryMs - nowMs) / (1000 * 60 * 60);
-                const noticeDays = parseInt(sysConfig.subscriptionExpiryNotice) || 7;
+            for (const client of CACHE.clients) {
+                try {
+                    const expiry = this.parseExpiryDate(client.subscriptionExpiry);
+                    const expiryMs = expiry.getTime();
+                    const nowMs = Date.now();
+                    const hoursLeft = (expiryMs - nowMs) / (1000 * 60 * 60);
+                    const noticeDays = parseInt(sysConfig.subscriptionExpiryNotice) || 7;
 
-                // --- FREE TRIAL TRANSITION ---
-                if (client.isFreeTrial === true && hoursLeft <= 1) {
-                    if (client.autoChargeEnabled) {
-                        const [h, mi] = (sysConfig.chargeTime || '04:00').split(':').map(Number);
-                        const currentMonthEnd = new Date(nowMs);
-                        const nextExpiry = new Date(currentMonthEnd.getFullYear(), currentMonthEnd.getMonth() + 1, 1, h, mi || 0, 0, 0);
-                        
-                        client.isFreeTrial = false;
-                        client.subscriptionExpiry = nextExpiry.toISOString();
-                        client.subscriptionDate = new Date().toISOString(); // Reset billing anchor
-                        client.joinedAt = new Date().toISOString(); // CRITICAL: Reset join date so pro-rata starts NOW, ignoring past trial days
-                        
-                        if (!client.paymentHistory) client.paymentHistory = [];
-                        client.paymentHistory.push({
-                            date: new Date().toLocaleDateString('he-IL'),
-                            fullDate: new Date().toISOString(),
-                            amount: 0,
-                            currency: 'ILS',
-                            period: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
-                            method: 'Auto-Trial Extension',
-                            description: 'מעבר למנוי פעיל - תום תקופת הניסיון',
-                            status: 'PAID',
-                            statusDisplayName: 'הארכה ללא תשלום',
-                            reference: 'AUTO-TRIAL'
-                        });
+                    // --- FREE TRIAL TRANSITION ---
+                    if (client.isFreeTrial === true && hoursLeft <= 1) {
+                        if (client.autoChargeEnabled) {
+                            const [h, mi] = (sysConfig.chargeTime || '04:00').split(':').map(Number);
+                            const currentMonthEnd = new Date(nowMs);
+                            const nextExpiry = new Date(currentMonthEnd.getFullYear(), currentMonthEnd.getMonth() + 1, 1, h, mi || 0, 0, 0);
 
-                        await this.saveClients();
-                        this.logMaintenance('BILLING', `🎁 Free trial ended for ${client.businessName}. Transitioned to paid subscription. Next expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
-                        emailService.sendSubscriptionAlert(client.email, client.businessName, 720, nextExpiry.toISOString(), null, null).catch(() => {});
-                        continue; // Skip further processing for this cycle
-                    }
-                }
+                            client.isFreeTrial = false;
+                            client.subscriptionExpiry = nextExpiry.toISOString();
+                            client.subscriptionDate = new Date().toISOString(); // Reset billing anchor
+                            client.joinedAt = new Date().toISOString(); // CRITICAL: Reset join date so pro-rata starts NOW, ignoring past trial days
 
-                // --- BILLING DAY: Charge clients that are eligible ---
-                if (isBillingDay && client.autoChargeEnabled && client.paymentMethod?.token) {
-                    // Guard 1: Was a payment already recorded for THIS billing period?
-                    // (e.g. charges for April are recorded on April 1st with period "2026-04")
-                    const alreadyCharged = (client.paymentHistory || []).some(p =>
-                        (p.status === 'PAID' || p.status === 'SUCCESS') &&
-                        (p.period === currentPeriodKey || p.fullDate?.startsWith(new Date(il.year, il.month - 1, 1).toISOString().slice(0, 7)))
-                    );
+                            if (!client.paymentHistory) client.paymentHistory = [];
+                            client.paymentHistory.push({
+                                date: new Date().toLocaleDateString('he-IL'),
+                                fullDate: new Date().toISOString(),
+                                amount: 0,
+                                currency: 'ILS',
+                                period: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+                                method: 'Auto-Trial Extension',
+                                description: 'מעבר למנוי פעיל - תום תקופת הניסיון',
+                                status: 'PAID',
+                                statusDisplayName: 'הארכה ללא תשלום',
+                                reference: 'AUTO-TRIAL'
+                            });
 
-                    if (alreadyCharged) {
-                        results.skipped++;
-                        this.logMaintenance('BILLING', `⏭️ Already charged this month: ${client.businessName}`);
-                        continue;
-                    }
-
-                    // Guard 2: Did the business join DURING the current billing period?
-                    // If so, there is no prior month to charge for — skip until next cycle.
-                    const joinedThisPeriod = client.joinedAt && client.joinedAt.startsWith(currentPeriodKey);
-                    if (joinedThisPeriod) {
-                        results.skipped++;
-                        this.logMaintenance('BILLING', `⏭️ Skipped new business (joined this period): ${client.businessName}`);
-                        continue;
-                    }
-
-                    // Execute charge
-                    const billing = await this.calculateSubscriptionAmount(client.id);
-                    const amount = billing.amount;
-
-                    if (amount < 1) {
-                        results.skipped++;
-                        continue;
-                    }
-
-                    const pMethod = this.normalizePaymentMethod(client.paymentMethod || {});
-                    const mm = String(pMethod.expMonth || pMethod.expmonth || '01').padStart(2, '0').slice(-2);
-                    const yy = String(pMethod.expYear || pMethod.expyear || '26').slice(-2);
-                    const bizConfig = await this.getCompanyConfig(client.id);
-                    const invoiceName = bizConfig.invoiceDetails || client.invoiceDetails || client.businessName;
-                    const activeCount = billing.breakdown?.employeeCount || 0;
-                    const appName = sysConfig.appName || 'TempusGeo';
-                    const pdesc = activeCount === 0 ? `מנוי ${appName}` : `${appName} - ${activeCount} עובדים`;
-
-                    this.logMaintenance('BILLING', `🔄 Charging ${client.businessName} ₪${amount}`);
-
-                    const chargeRes = await tranzilaService.chargeToken({
-                        supplier: sysConfig.tranzilaTerminal,
-                        TranzilaPW: sysConfig.tranzilaPass,
-                        TranzilaTK: pMethod.token,
-                        sum: amount,
-                        currency: 1,
-                        pdesc,
-                        expmonth: mm,
-                        expyear: yy,
-                        myid: pMethod.cardHolderId || pMethod.myid || '',
-                        company: invoiceName,
-                        email: client.email,
-                        contact: client.businessName || '',
-                        mycvv: pMethod.cvv || pMethod.mycvv || ''
-                    });
-
-                    if (chargeRes.success) {
-                        // Extend expiry by 1 month from current expiry (or from now if expired)
-                        const baseExpiry = (expiryMs < nowMs) ? new Date() : expiry;
-                        const newExpiry = new Date(baseExpiry.getFullYear(), baseExpiry.getMonth() + 1, 1, 4, 0, 0, 0);
-                        client.subscriptionExpiry = newExpiry.toISOString();
-                        client.billingFailed = false;
-
-                        if (!client.paymentHistory) client.paymentHistory = [];
-                        client.paymentHistory.push({
-                            date: new Date().toLocaleDateString('he-IL'),
-                            fullDate: new Date().toISOString(),
-                            amount,
-                            currency: 'ILS',
-                            period: currentPeriodKey,
-                            method: 'Auto-Charge (Tranzila)',
-                            description: `חיוב אוטומטי חודשי - ${currentPeriodKey}`,
-                            status: 'PAID',
-                            statusDisplayName: 'שולם אוטומטית',
-                            reference: chargeRes.confirmationCode || 'AUTO'
-                        });
-
-                        await this.saveClients();
-                        this.reportPaymentToGAS(amount).catch(console.error);
-                        this.logMaintenance('BILLING', `✅ Charged ${client.businessName} ₪${amount} — new expiry: ${newExpiry.toLocaleDateString('he-IL')}`);
-                        results.charged++;
-
-                        // Email success
-                        emailService.sendPaymentSuccessNotification(client.email, {
-                            businessName: client.businessName,
-                            amount,
-                            newExpiry: newExpiry.toLocaleDateString('he-IL')
-                        }).catch(console.error);
-
-                    } else {
-                        client.billingFailed = true;
-                        await this.saveClients();
-                        this.logMaintenance('BILLING', `❌ Charge FAILED for ${client.businessName}: ${chargeRes.raw}`);
-                        results.failures.push({ name: client.businessName, error: chargeRes.raw });
-
-                        emailService.sendPaymentFailedNotification(client.email, {
-                            businessName: client.businessName,
-                            amount,
-                            error: chargeRes.raw
-                        }).catch(console.error);
-                    }
-
-                } else if (isBillingDay && !client.autoChargeEnabled) {
-                    // Billing day but no auto-charge — send expiry notification if expired
-                    if (hoursLeft <= 0) {
-                        const bizConfig = await this.getCompanyConfig(client.id);
-                        await emailService.sendGracePeriodAlert(
-                            client.email, client.businessName, client.subscriptionExpiry,
-                            bizConfig.logoUrl, (await this.calculateSubscriptionAmount(client.id)).amount
-                        ).catch(console.error);
-                        results.warned++;
-                        this.logMaintenance('BILLING', `📧 Grace period email sent to ${client.businessName}`);
-                    }
-
-                } else if (!isBillingDay) {
-                    // Non-billing day — only send advance warning emails
-                    if (!client.autoChargeEnabled && hoursLeft > 0 && hoursLeft <= (noticeDays * 24)) {
-                        const reminderKey = `warn-${client.id}-${il.year}-${il.month}`;
-                        if (client._lastWarningKey !== reminderKey) {
-                            client._lastWarningKey = reminderKey;
-                            const bizConfig = await this.getCompanyConfig(client.id);
-                            await emailService.sendSubscriptionAlert(
-                                client.email, client.businessName, hoursLeft,
-                                client.subscriptionExpiry, bizConfig.logoUrl,
-                                (await this.calculateSubscriptionAmount(client.id)).amount
-                            ).catch(console.error);
                             await this.saveClients();
-                            results.warned++;
-                            this.logMaintenance('BILLING', `⚠️ Expiry warning sent to ${client.businessName} (${Math.floor(hoursLeft/24)} days left)`);
+                            this.logMaintenance('BILLING', `🎁 Free trial ended for ${client.businessName}. Transitioned to paid subscription. Next expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
+                            emailService.sendSubscriptionAlert(client.email, client.businessName, 720, nextExpiry.toISOString(), null, null).catch(() => { });
+                            continue; // Skip further processing for this cycle
                         }
                     }
+
+                    // --- BILLING DAY: Charge clients that are eligible ---
+                    if (isBillingDay && client.autoChargeEnabled && client.paymentMethod?.token) {
+                        // Guard 1: Was a payment already recorded for THIS billing period?
+                        // (e.g. charges for April are recorded on April 1st with period "2026-04")
+                        const alreadyCharged = (client.paymentHistory || []).some(p =>
+                            (p.status === 'PAID' || p.status === 'SUCCESS') &&
+                            (p.period === currentPeriodKey || p.fullDate?.startsWith(new Date(il.year, il.month - 1, 1).toISOString().slice(0, 7)))
+                        );
+
+                        if (alreadyCharged) {
+                            results.skipped++;
+                            this.logMaintenance('BILLING', `⏭️ Already charged this month: ${client.businessName}`);
+                            continue;
+                        }
+
+                        // Guard 2: Did the business join DURING the current billing period?
+                        // If so, there is no prior month to charge for — skip until next cycle.
+                        const joinedThisPeriod = client.joinedAt && client.joinedAt.startsWith(currentPeriodKey);
+                        if (joinedThisPeriod) {
+                            results.skipped++;
+                            this.logMaintenance('BILLING', `⏭️ Skipped new business (joined this period): ${client.businessName}`);
+                            continue;
+                        }
+
+                        // Execute charge
+                        const billing = await this.calculateSubscriptionAmount(client.id);
+                        const amount = billing.amount;
+
+                        if (amount < 1) {
+                            results.skipped++;
+                            continue;
+                        }
+
+                        const pMethod = this.normalizePaymentMethod(client.paymentMethod || {});
+                        const mm = String(pMethod.expMonth || pMethod.expmonth || '01').padStart(2, '0').slice(-2);
+                        const yy = String(pMethod.expYear || pMethod.expyear || '26').slice(-2);
+                        const bizConfig = await this.getCompanyConfig(client.id);
+                        const invoiceName = bizConfig.invoiceDetails || client.invoiceDetails || client.businessName;
+                        const activeCount = billing.breakdown?.employeeCount || 0;
+                        const appName = sysConfig.appName || 'TempusGeo';
+                        const pdesc = activeCount === 0 ? `מנוי ${appName}` : `${appName} - ${activeCount} עובדים`;
+
+                        this.logMaintenance('BILLING', `🔄 Charging ${client.businessName} ₪${amount}`);
+
+                        const chargeRes = await tranzilaService.chargeToken({
+                            supplier: sysConfig.tranzilaTerminal,
+                            TranzilaPW: sysConfig.tranzilaPass,
+                            TranzilaTK: pMethod.token,
+                            sum: amount,
+                            currency: 1,
+                            pdesc,
+                            expmonth: mm,
+                            expyear: yy,
+                            myid: pMethod.cardHolderId || pMethod.myid || '',
+                            company: invoiceName,
+                            email: client.email,
+                            contact: client.businessName || '',
+                            mycvv: pMethod.cvv || pMethod.mycvv || ''
+                        });
+
+                        if (chargeRes.success) {
+                            // Extend expiry by 1 month from current expiry (or from now if expired)
+                            const baseExpiry = (expiryMs < nowMs) ? new Date() : expiry;
+                            const newExpiry = new Date(baseExpiry.getFullYear(), baseExpiry.getMonth() + 1, 1, 4, 0, 0, 0);
+                            client.subscriptionExpiry = newExpiry.toISOString();
+                            client.subscriptionDate = new Date().toISOString(); // Update last renewal date anchor
+                            client.billingFailed = false;
+
+                            if (!client.paymentHistory) client.paymentHistory = [];
+                            client.paymentHistory.push({
+                                date: new Date().toLocaleDateString('he-IL'),
+                                fullDate: new Date().toISOString(),
+                                amount,
+                                currency: 'ILS',
+                                period: currentPeriodKey,
+                                method: 'Auto-Charge (Tranzila)',
+                                description: `חיוב אוטומטי חודשי - ${currentPeriodKey}`,
+                                status: 'PAID',
+                                statusDisplayName: 'שולם אוטומטית',
+                                reference: chargeRes.confirmationCode || 'AUTO'
+                            });
+
+                            await this.saveClients();
+                            this.reportPaymentToGAS(amount).catch(console.error);
+                            this.logMaintenance('BILLING', `✅ Charged ${client.businessName} ₪${amount} — new expiry: ${newExpiry.toLocaleDateString('he-IL')}`);
+                            results.charged++;
+
+                            // Email success
+                            emailService.sendPaymentSuccessNotification(client.email, {
+                                businessName: client.businessName,
+                                amount,
+                                newExpiry: newExpiry.toLocaleDateString('he-IL')
+                            }).catch(console.error);
+
+                        } else {
+                            client.billingFailed = true;
+                            await this.saveClients();
+                            this.logMaintenance('BILLING', `❌ Charge FAILED for ${client.businessName}: ${chargeRes.raw}`);
+                            results.failures.push({ name: client.businessName, error: chargeRes.raw });
+
+                            emailService.sendPaymentFailedNotification(client.email, {
+                                businessName: client.businessName,
+                                amount,
+                                error: chargeRes.raw
+                            }).catch(console.error);
+                        }
+
+                    } else if (isBillingDay && !client.autoChargeEnabled) {
+                        // Billing day but no auto-charge — send expiry notification if expired
+                        if (hoursLeft <= 0) {
+                            const bizConfig = await this.getCompanyConfig(client.id);
+                            await emailService.sendGracePeriodAlert(
+                                client.email, client.businessName, client.subscriptionExpiry,
+                                bizConfig.logoUrl, (await this.calculateSubscriptionAmount(client.id)).amount
+                            ).catch(console.error);
+                            results.warned++;
+                            this.logMaintenance('BILLING', `📧 Grace period email sent to ${client.businessName}`);
+                        }
+
+                    } else if (!isBillingDay) {
+                        // Non-billing day — only send advance warning emails
+                        if (!client.autoChargeEnabled && hoursLeft > 0 && hoursLeft <= (noticeDays * 24)) {
+                            const reminderKey = `warn-${client.id}-${il.year}-${il.month}`;
+                            if (client._lastWarningKey !== reminderKey) {
+                                client._lastWarningKey = reminderKey;
+                                const bizConfig = await this.getCompanyConfig(client.id);
+                                await emailService.sendSubscriptionAlert(
+                                    client.email, client.businessName, hoursLeft,
+                                    client.subscriptionExpiry, bizConfig.logoUrl,
+                                    (await this.calculateSubscriptionAmount(client.id)).amount
+                                ).catch(console.error);
+                                await this.saveClients();
+                                results.warned++;
+                                this.logMaintenance('BILLING', `⚠️ Expiry warning sent to ${client.businessName} (${Math.floor(hoursLeft / 24)} days left)`);
+                            }
+                        }
+                    }
+
+                } catch (err) {
+                    this.logMaintenance('ERROR', `processAllSubscriptions failed for ${client.id}: ${err.message}`);
+                    results.failures.push({ name: client.id, error: err.message });
                 }
-
-            } catch (err) {
-                this.logMaintenance('ERROR', `processAllSubscriptions failed for ${client.id}: ${err.message}`);
-                results.failures.push({ name: client.id, error: err.message });
             }
-        }
 
-        this.logMaintenance('BILLING',
-            `Scan complete: ${results.charged} charged, ${results.warned} warned, ${results.skipped} skipped, ${results.failures.length} failures`);
-        return results;
+            this.logMaintenance('BILLING',
+                `Scan complete: ${results.charged} charged, ${results.warned} warned, ${results.skipped} skipped, ${results.failures.length} failures`);
+            return results;
+        } finally {
+            this._billingInProgress = false;
+        }
     }
 
     /**
@@ -3351,12 +3361,12 @@ class DataManager {
                 const sysConfig2 = sysConfig || await this.getSystemConfig();
                 const [h, mi] = (sysConfig2.chargeTime || '04:00').split(':').map(Number);
                 const nextExpiry = new Date(now.getFullYear(), now.getMonth() + 1, 1, h, mi || 0, 0, 0);
-                
+
                 client.isFreeTrial = false;
                 client.subscriptionExpiry = nextExpiry.toISOString();
                 client.subscriptionDate = new Date().toISOString(); // Reset billing anchor
                 client.joinedAt = new Date().toISOString(); // CRITICAL: Reset join date so past trial days are ignored
-                
+
                 if (!client.paymentHistory) client.paymentHistory = [];
                 client.paymentHistory.push({
                     date: new Date().toLocaleDateString('he-IL'),
@@ -3373,20 +3383,20 @@ class DataManager {
 
                 await this.saveClients();
                 this.logMaintenance('BILLING', `🎁 Free trial ended for ${client.businessName}. Transitioned to paid subscription. Next expiry: ${nextExpiry.toLocaleDateString('he-IL')}`);
-                emailService.sendSubscriptionAlert(client.email, client.businessName, 720 /* ~30 days */, nextExpiry.toISOString(), null, null).catch(() => {});
+                emailService.sendSubscriptionAlert(client.email, client.businessName, 720 /* ~30 days */, nextExpiry.toISOString(), null, null).catch(() => { });
                 return res; // Skip further processing for this cycle
             }
             // autoCharge is OFF: fall through → expiry alerts will fire normally below
         }
-        
+
         // --- PRECISION BILLING SAFEGUARDS ---
         // 1. Charge only if expiry is in <= 1 day, OR if it's a forced manual override
         const isImminentOrExpired = daysLeft <= 1;
-        const shouldForce = isManual; 
-        
+        const shouldForce = isManual;
+
         // 2. Globally auto-billing must be ON (tied to terminal credentials)
         const globalAutoBilling = !!(sysConfig.tranzilaTerminal && sysConfig.tranzilaPass);
-        
+
         // 3. System-wide auto-renewal is tied to the same credentials
         const globalAutoRenewal = globalAutoBilling;
 
@@ -3398,7 +3408,7 @@ class DataManager {
             const amount = isTest ? 1 : subRes.amount;
 
             let chargeRes = { success: true, confirmationCode: 'FREE-RENEWAL', raw: 'סכום 0 ₪ - חודש חינם' };
-            
+
             // Get App Name for product description
             const appName = sysConfig.appName || 'TempusGeo';
             // Fix: Clearer description for 0 employees
@@ -3411,7 +3421,7 @@ class DataManager {
                 const pMethod = this.normalizePaymentMethod(client.paymentMethod || {});
                 const mmRaw = String(pMethod.expMonth || pMethod.expmonth || '01').padStart(2, '0');
                 const yyRaw = String(pMethod.expYear || pMethod.expyear || '2026');
-                
+
                 // Use last 2 digits for Tranzila
                 const mm = mmRaw.slice(-2);
                 const yy = yyRaw.slice(-2);
@@ -3440,7 +3450,7 @@ class DataManager {
 
             if (chargeRes.success) {
                 this.logMaintenance('BILLING', `✅ Automated Payment approved for ${client.businessName} (₪${amount})`);
-                
+
                 // Use the shared renewal logic which is now the source of truth
                 await this.renewSubscription(client.id);
                 res.charged = true;
@@ -3451,7 +3461,7 @@ class DataManager {
                 res.error = chargeRes.raw || 'Bank decline';
                 res.code = chargeRes.confirmationCode;
                 res.failure = { id: client.id, name: client.businessName, error: res.error };
-                
+
                 // Alert client in case of automated failure
                 if (!isManual) {
                     emailService.sendPaymentFailedNotification(client.email, {
@@ -3509,7 +3519,7 @@ class DataManager {
         const sysConfig = await this.getSystemConfig();
         // Uses the dedicated GAS tracker URL (user's personal tracker)
         const gasUrl = config.MY_GAS_URL;
-        
+
         if (!gasUrl) {
             console.warn('[DataManager] GAS Payment URL is missing! Ensure MY_GAS_URL is set in Render environment variables.');
             return;
@@ -3550,9 +3560,9 @@ class DataManager {
     async deletePaymentRecord(companyId, index) {
         const client = await this.getClientById(companyId);
         if (!client) throw new Error("Client not found");
-        
+
         if (!client.paymentHistory || !client.paymentHistory[index]) throw new Error("Payment not found");
-        
+
         const payment = client.paymentHistory[index];
         // If it was a standard payment that extended the subscription, shorten it back
         if (payment.status === 'PAID' && (payment.period > 0 || !payment.period)) {
@@ -3561,7 +3571,7 @@ class DataManager {
             expiry.setMonth(expiry.getMonth() - months);
             client.subscriptionExpiry = expiry.toISOString();
         }
-        
+
         client.paymentHistory.splice(index, 1);
         await this.saveClients();
         return { success: true, message: "התשלום נמחק והתוקף עודכן" };
@@ -3571,7 +3581,7 @@ class DataManager {
         // Sanitize path to prevent breakout
         const safeName = fileName.replace(/\.\./g, '');
         const filePath = path.join(this.dataDir, safeName);
-        
+
         // Safety check: must still be inside dataDir
         if (!filePath.startsWith(this.dataDir)) {
             throw new Error('Access denied: path outside of data directory.');
@@ -3589,7 +3599,7 @@ class DataManager {
             throw new Error('File not found or unreadable: ' + fileName);
         }
     }
-    
+
     selfHealSalaries() {
         if (!CACHE.clients) return;
         const defaults = {
@@ -3602,13 +3612,13 @@ class DataManager {
         CACHE.clients.forEach(client => {
             if (!client.salary) client.salary = {};
             const sal = client.salary;
-            
+
             if (!sal.overtimeRanges5 || !Array.isArray(sal.overtimeRanges5)) sal.overtimeRanges5 = JSON.parse(JSON.stringify(defaults.overtime5));
             if (!sal.overtimeRanges6 || !Array.isArray(sal.overtimeRanges6)) sal.overtimeRanges6 = JSON.parse(JSON.stringify(defaults.overtime6));
             if (!sal.fridayRanges5 || !Array.isArray(sal.fridayRanges5)) sal.fridayRanges5 = JSON.parse(JSON.stringify(defaults.friday));
             if (!sal.fridayRanges6 || !Array.isArray(sal.fridayRanges6)) sal.fridayRanges6 = JSON.parse(JSON.stringify(defaults.friday));
             if (!sal.weekendRanges || !Array.isArray(sal.weekendRanges)) sal.weekendRanges = JSON.parse(JSON.stringify(defaults.weekend));
-            
+
             if (!sal.breaks) sal.breaks = { minShift: '06:00', weekday: '00:45', special: '00:30' };
             if (!sal.weekend) sal.weekend = { startHour: '15:00', endHour: '20:00' };
         });
